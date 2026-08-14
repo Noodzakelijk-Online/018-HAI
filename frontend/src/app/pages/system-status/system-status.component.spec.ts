@@ -94,4 +94,39 @@ describe('SystemStatusComponent polling', () => {
 
     component.ngOnDestroy();
   }));
+
+  it('ranks failures before warnings and links known subsystems to recovery controls', () => {
+    const degraded: ISystemReadiness = {
+      status: 'not_ready',
+      service: 'backend',
+      summary: { ok: 0, warn: 2, fail: 1 },
+      checks: [
+        { name: 'runtime.mode', severity: 'warn', detail: 'runtime needs review' },
+        { name: 'llm.provider', severity: 'warn', detail: 'no provider configured' },
+        { name: 'database.connection', severity: 'fail', detail: 'database unavailable' },
+      ],
+    };
+    const statusService = service(of(degraded));
+    const notification = jasmine.createSpyObj('NzNotificationService', ['error', 'success']);
+    const component = new SystemStatusComponent(statusService, notification, document);
+
+    component.ngOnInit();
+
+    expect(component.recommendedActions.map((action) => action.checkName)).toEqual([
+      'database.connection',
+      'llm.provider',
+      'runtime.mode',
+    ]);
+    expect(component.recommendedActions[0].route).toBeUndefined();
+    expect(component.recommendedActions[1]).toEqual(jasmine.objectContaining({
+      route: '/llm-policy',
+      actionLabel: 'Open model controls',
+    }));
+    expect(component.recommendedActions[2]).toEqual(jasmine.objectContaining({
+      route: '/runtime-control',
+      actionLabel: 'Open runtime controls',
+    }));
+
+    component.ngOnDestroy();
+  });
 });

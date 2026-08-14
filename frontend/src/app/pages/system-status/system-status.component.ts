@@ -25,6 +25,21 @@ interface CheckGroup {
   worst: SystemCheckSeverity;
 }
 
+interface RecommendedAction {
+  checkName: string;
+  detail: string;
+  severity: SystemCheckSeverity;
+  route?: string;
+  actionLabel?: string;
+}
+
+const RECOVERY_ROUTES: Record<string, { route: string; label: string }> = {
+  llm: { route: '/llm-policy', label: 'Open model controls' },
+  runtime: { route: '/runtime-control', label: 'Open runtime controls' },
+  security: { route: '/governance-control', label: 'Review governance' },
+  events: { route: '/system-status#event-delivery', label: 'Inspect delivery' },
+};
+
 // A subsystem prefix ("database.connection" -> "database") mapped to a heading.
 const GROUP_TITLES: Record<string, string> = {
   server: 'Gateway & server',
@@ -54,7 +69,7 @@ const EVENT_DELIVERY_TIMEOUT_MS = 10000;
 export class SystemStatusComponent implements OnInit, OnDestroy {
   readiness?: ISystemReadiness;
   groups: CheckGroup[] = [];
-  recommendedActions: string[] = [];
+  recommendedActions: RecommendedAction[] = [];
   loading = false;
   loadError = false;
   lastUpdated?: Date;
@@ -280,11 +295,22 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   // Each non-healthy check already carries a human-readable cause in `detail`;
   // pair it with its subsystem so the operator has a concrete to-do list rather
   // than a wall of green ticks and one buried red one.
-  private buildRecommendedActions(checks: ISystemCheck[]): string[] {
+  private buildRecommendedActions(checks: ISystemCheck[]): RecommendedAction[] {
+    const rank: Record<SystemCheckSeverity, number> = { fail: 0, warn: 1, ok: 2 };
     return checks
       .filter((c) => c.severity !== 'ok')
-      .sort((a, b) => (a.severity === 'fail' ? -1 : 1))
-      .map((c) => `${c.name}: ${c.detail}`);
+      .sort((a, b) => rank[a.severity] - rank[b.severity] || a.name.localeCompare(b.name))
+      .map((check) => {
+        const subsystem = check.name.split('.')[0] || '';
+        const recovery = RECOVERY_ROUTES[subsystem];
+        return {
+          checkName: check.name,
+          detail: check.detail,
+          severity: check.severity,
+          route: recovery?.route,
+          actionLabel: recovery?.label,
+        };
+      });
   }
 
   private worstSeverity(checks: ISystemCheck[]): SystemCheckSeverity {
