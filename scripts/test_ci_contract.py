@@ -1115,6 +1115,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "python scripts/test_smoke_auth_contract.py",
             r".\scripts\start-ngrok.ps1 -ValidateOnly",
             "scripts/backup-windows.ps1",
+            "scripts/test-restore-windows.ps1",
             r".\scripts\initialize-windows.ps1",
             "Generated Windows environment still contains a shipped placeholder",
             "Insecure example environment unexpectedly passed ngrok preflight",
@@ -1136,6 +1137,18 @@ class CIWorkflowContractTest(unittest.TestCase):
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, backup)
+
+        restore = (ROOT / "scripts" / "test-restore-windows.ps1").read_text(encoding="utf-8")
+        for contract in (
+            'if ($scratchAutomation -eq $liveAutomation -or $scratchIdentity -eq $liveIdentity)',
+            'pg_restore -U $dbUser --exit-on-error --no-owner --no-privileges',
+            "automation restore contains no public tables",
+            "identity restore contains no public tables",
+            'dropdb -U $dbUser --if-exists $scratchAutomation',
+            'dropdb -U $dbUser --if-exists $scratchIdentity',
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, restore.lower() if "restore contains" in contract else restore)
 
     def test_smoke_aggregator_rejects_zero_or_missing_assertions(self) -> None:
         aggregator = (ROOT / "scripts" / "smoke-all.sh").read_text(

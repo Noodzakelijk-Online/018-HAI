@@ -29,6 +29,17 @@ Generated bundles are ignored under `./backups`. Move the completed bundle to
 encrypted off-host storage. The script deliberately does not copy `.env.local`;
 store that secret material separately in an approved credential vault.
 
+Prove the bundle can restore without touching either live database:
+
+```powershell
+.\scripts\test-restore-windows.ps1 -BackupDirectory .\backups\hai-backup-YYYYMMDDTHHMMSSZ -ValidateOnly
+.\scripts\test-restore-windows.ps1 -BackupDirectory .\backups\hai-backup-YYYYMMDDTHHMMSSZ
+```
+
+The drill verifies all manifest hashes and the media ZIP, restores both dumps
+into randomly suffixed scratch databases, requires real public tables in each,
+and drops only those scratch databases in `finally`.
+
 For non-Windows operators, dump **both** databases:
 
 ```bash
