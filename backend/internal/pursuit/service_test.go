@@ -5350,6 +5350,12 @@ func (r *fakeRepo) FindAll(includeArchived bool) ([]models.Pursuit, error) {
 		}
 		result = append(result, item)
 	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].PriorityScore != result[j].PriorityScore {
+			return result[i].PriorityScore > result[j].PriorityScore
+		}
+		return result[i].UpdatedAt.After(result[j].UpdatedAt)
+	})
 	return result, nil
 }
 

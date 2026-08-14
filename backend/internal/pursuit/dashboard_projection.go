@@ -141,41 +141,77 @@ func (s *service) dashboardDetailsForOwner(ownerIdentity string, pursuits []mode
 		return nil, true, pursuitDetailLoadError("dashboard resource ledger", err)
 	}
 
-	for _, pursuit := range active {
-		pursuitLinks := filterRecords(links, []uuid.UUID{pursuit.ID}, func(item models.PursuitLink) uuid.UUID { return item.PursuitID })
-		pursuitWorkflowIDs := linkUUIDs(pursuitLinks, LinkWorkflow)
-		pursuitWorkflows := filterRecords(workflows, pursuitWorkflowIDs, func(item models.WorkflowItem) uuid.UUID { return item.ID })
-		pursuitAutomationIDs := uniqueUUIDs(append(linkUUIDs(pursuitLinks, LinkAutomation), workflowAutomationIDs(pursuitWorkflows)...))
-		pursuitRuntimeIDs := linkUUIDs(pursuitLinks, LinkAgentRuntime)
-		pursuitVerificationRuns := filterRecords(verificationRuns, linkUUIDs(pursuitLinks, LinkVerification), func(item models.VerificationRun) uuid.UUID { return item.ID })
-		pursuitRunIDs := verificationRunIDs(pursuitVerificationRuns)
-		pursuitRuntimeAttempts := filterRuntimeAttempts(runtimeAttempts, pursuitAutomationIDs, pursuitRuntimeIDs, 20)
+	linksByPursuit := groupRecords(links, func(item models.PursuitLink) uuid.UUID { return item.PursuitID })
+	activityByPursuit := groupRecords(activity, func(item models.PursuitActivity) uuid.UUID { return item.PursuitID })
+	taskAttemptsByPursuit := groupRecords(taskAttempts, func(item models.PursuitTaskAttempt) uuid.UUID { return item.PursuitID })
 
+	workflowOwners := ownersFromLinks(links, LinkWorkflow)
+	workflowsByPursuit := partitionRecords(workflows, workflowOwners, func(item models.WorkflowItem) uuid.UUID { return item.ID })
+	checklistByPursuit := partitionRecords(checklist, workflowOwners, func(item models.WorkflowChecklistItem) uuid.UUID { return item.WorkflowID })
+	openLoopsByPursuit := partitionRecords(openLoops, workflowOwners, func(item models.WorkflowOpenLoop) uuid.UUID { return item.WorkflowID })
+	proposalsByPursuit := partitionRecords(proposals, workflowOwners, func(item models.WorkflowProposal) uuid.UUID { return item.WorkflowID })
+	qualityGatesByPursuit := partitionRecords(qualityGates, workflowOwners, func(item models.WorkflowQualityGate) uuid.UUID { return item.WorkflowID })
+	decisionsByPursuit := partitionRecords(decisions, workflowOwners, func(item models.WorkflowDecision) uuid.UUID { return item.WorkflowID })
+	transitionsByPursuit := partitionRecords(transitions, workflowOwners, func(item models.WorkflowTransition) uuid.UUID { return item.WorkflowID })
+	sourceLinksByPursuit := partitionRecords(sourceLinks, workflowOwners, func(item models.WorkflowSourceLink) uuid.UUID { return item.WorkflowID })
+	eventsByPursuit := partitionRecords(events, workflowOwners, func(item models.WorkflowEvent) uuid.UUID { return item.WorkflowID })
+	evidenceByPursuit := partitionRecords(evidence, workflowOwners, func(item models.WorkflowEvidenceClaim) uuid.UUID { return item.WorkflowID })
+
+	memoryOwners := ownersFromLinks(links, LinkMemory)
+	memoriesByPursuit := partitionRecords(memories, memoryOwners, func(item models.ContextMemory) uuid.UUID { return item.ID })
+	conversationOwners := ownersFromLinks(links, LinkAIConversation)
+	conversationsByPursuit := partitionRecords(conversations, conversationOwners, func(item models.AIConversationArchive) uuid.UUID { return item.ID })
+	ambientOwners := ownersFromLinks(links, LinkAmbientOpportunity)
+	ambientByPursuit := partitionRecords(ambient, ambientOwners, func(item models.AmbientOpportunity) uuid.UUID { return item.ID })
+	sourceItemOwners := ownersFromLinks(links, LinkSourceItem)
+	sourceItemsByPursuit := partitionRecords(sourceItems, sourceItemOwners, func(item models.SourceRawItem) uuid.UUID { return item.ID })
+	extractionOwners := ownersFromLinks(links, LinkSourceExtraction)
+	extractionsByPursuit := partitionRecords(extractions, extractionOwners, func(item models.SourceExtraction) uuid.UUID { return item.ID })
+
+	verificationOwners := ownersFromLinks(links, LinkVerification)
+	verificationRunsByPursuit := partitionRecords(verificationRuns, verificationOwners, func(item models.VerificationRun) uuid.UUID { return item.ID })
+	verificationClaimsByPursuit := partitionRecords(verificationClaims, verificationOwners, func(item models.VerificationClaim) uuid.UUID { return item.RunID })
+	verificationEvidenceByPursuit := partitionRecords(verificationEvidence, verificationOwners, func(item models.VerificationEvidence) uuid.UUID { return item.RunID })
+
+	automationOwners := ownersFromLinks(links, LinkAutomation)
+	for _, item := range workflows {
+		automationID, parseErr := uuid.Parse(strings.TrimSpace(item.AutomationID))
+		if parseErr != nil {
+			continue
+		}
+		for _, pursuitID := range workflowOwners[item.ID] {
+			addRecordOwner(automationOwners, automationID, pursuitID)
+		}
+	}
+	automationsByPursuit := partitionRecords(automations, automationOwners, func(item models.Automation) uuid.UUID { return item.ID })
+	runtimeAttemptsByPursuit := partitionRuntimeAttempts(runtimeAttempts, automationOwners, ownersFromLinks(links, LinkAgentRuntime), 20)
+
+	for _, pursuit := range active {
 		usage := dashboardResourceUsage(ownerIdentity, pursuit, resources)
 		records := pursuitDetailRecords{
-			Links:                pursuitLinks,
-			Activity:             filterRecords(activity, []uuid.UUID{pursuit.ID}, func(item models.PursuitActivity) uuid.UUID { return item.PursuitID }),
-			TaskAttempts:         filterRecords(taskAttempts, []uuid.UUID{pursuit.ID}, func(item models.PursuitTaskAttempt) uuid.UUID { return item.PursuitID }),
-			Workflows:            pursuitWorkflows,
-			ChecklistItems:       filterRecords(checklist, pursuitWorkflowIDs, func(item models.WorkflowChecklistItem) uuid.UUID { return item.WorkflowID }),
-			OpenLoops:            filterRecords(openLoops, pursuitWorkflowIDs, func(item models.WorkflowOpenLoop) uuid.UUID { return item.WorkflowID }),
-			Proposals:            filterRecords(proposals, pursuitWorkflowIDs, func(item models.WorkflowProposal) uuid.UUID { return item.WorkflowID }),
-			QualityGates:         filterRecords(qualityGates, pursuitWorkflowIDs, func(item models.WorkflowQualityGate) uuid.UUID { return item.WorkflowID }),
-			Decisions:            filterRecords(decisions, pursuitWorkflowIDs, func(item models.WorkflowDecision) uuid.UUID { return item.WorkflowID }),
-			Transitions:          filterRecords(transitions, pursuitWorkflowIDs, func(item models.WorkflowTransition) uuid.UUID { return item.WorkflowID }),
-			SourceLinks:          filterRecords(sourceLinks, pursuitWorkflowIDs, func(item models.WorkflowSourceLink) uuid.UUID { return item.WorkflowID }),
-			Events:               filterRecords(events, pursuitWorkflowIDs, func(item models.WorkflowEvent) uuid.UUID { return item.WorkflowID }),
-			Evidence:             filterRecords(evidence, pursuitWorkflowIDs, func(item models.WorkflowEvidenceClaim) uuid.UUID { return item.WorkflowID }),
-			Memories:             filterRecords(memories, linkUUIDs(pursuitLinks, LinkMemory), func(item models.ContextMemory) uuid.UUID { return item.ID }),
-			Conversations:        filterRecords(conversations, linkUUIDs(pursuitLinks, LinkAIConversation), func(item models.AIConversationArchive) uuid.UUID { return item.ID }),
-			AmbientOpportunities: filterRecords(ambient, linkUUIDs(pursuitLinks, LinkAmbientOpportunity), func(item models.AmbientOpportunity) uuid.UUID { return item.ID }),
-			SourceItems:          filterRecords(sourceItems, linkUUIDs(pursuitLinks, LinkSourceItem), func(item models.SourceRawItem) uuid.UUID { return item.ID }),
-			SourceExtractions:    filterRecords(extractions, linkUUIDs(pursuitLinks, LinkSourceExtraction), func(item models.SourceExtraction) uuid.UUID { return item.ID }),
-			VerificationRuns:     pursuitVerificationRuns,
-			VerificationClaims:   filterRecords(verificationClaims, pursuitRunIDs, func(item models.VerificationClaim) uuid.UUID { return item.RunID }),
-			VerificationEvidence: filterRecords(verificationEvidence, pursuitRunIDs, func(item models.VerificationEvidence) uuid.UUID { return item.RunID }),
-			Automations:          filterRecords(automations, pursuitAutomationIDs, func(item models.Automation) uuid.UUID { return item.ID }),
-			RuntimeAttempts:      pursuitRuntimeAttempts,
+			Links:                recordsFor(linksByPursuit, pursuit.ID),
+			Activity:             recordsFor(activityByPursuit, pursuit.ID),
+			TaskAttempts:         recordsFor(taskAttemptsByPursuit, pursuit.ID),
+			Workflows:            recordsFor(workflowsByPursuit, pursuit.ID),
+			ChecklistItems:       recordsFor(checklistByPursuit, pursuit.ID),
+			OpenLoops:            recordsFor(openLoopsByPursuit, pursuit.ID),
+			Proposals:            recordsFor(proposalsByPursuit, pursuit.ID),
+			QualityGates:         recordsFor(qualityGatesByPursuit, pursuit.ID),
+			Decisions:            recordsFor(decisionsByPursuit, pursuit.ID),
+			Transitions:          recordsFor(transitionsByPursuit, pursuit.ID),
+			SourceLinks:          recordsFor(sourceLinksByPursuit, pursuit.ID),
+			Events:               recordsFor(eventsByPursuit, pursuit.ID),
+			Evidence:             recordsFor(evidenceByPursuit, pursuit.ID),
+			Memories:             recordsFor(memoriesByPursuit, pursuit.ID),
+			Conversations:        recordsFor(conversationsByPursuit, pursuit.ID),
+			AmbientOpportunities: recordsFor(ambientByPursuit, pursuit.ID),
+			SourceItems:          recordsFor(sourceItemsByPursuit, pursuit.ID),
+			SourceExtractions:    recordsFor(extractionsByPursuit, pursuit.ID),
+			VerificationRuns:     recordsFor(verificationRunsByPursuit, pursuit.ID),
+			VerificationClaims:   recordsFor(verificationClaimsByPursuit, pursuit.ID),
+			VerificationEvidence: recordsFor(verificationEvidenceByPursuit, pursuit.ID),
+			Automations:          recordsFor(automationsByPursuit, pursuit.ID),
+			RuntimeAttempts:      recordsFor(runtimeAttemptsByPursuit, pursuit.ID),
 			ResourceUsage:        usage,
 		}
 		result[pursuit.ID] = s.buildPursuitDetail(pursuit, records)
@@ -183,43 +219,91 @@ func (s *service) dashboardDetailsForOwner(ownerIdentity string, pursuits []mode
 	return result, true, nil
 }
 
-func filterRecords[T any](items []T, ids []uuid.UUID, id func(T) uuid.UUID) []T {
-	result := []T{}
-	if len(items) == 0 || len(ids) == 0 {
-		return result
+type recordOwners map[uuid.UUID][]uuid.UUID
+
+func ownersFromLinks(links []models.PursuitLink, linkType string) recordOwners {
+	result := recordOwners{}
+	for _, link := range links {
+		if link.LinkType != linkType {
+			continue
+		}
+		recordID, err := uuid.Parse(link.LinkID)
+		if err != nil {
+			continue
+		}
+		addRecordOwner(result, recordID, link.PursuitID)
 	}
-	wanted := make(map[uuid.UUID]bool, len(ids))
-	for _, value := range ids {
-		wanted[value] = true
+	return result
+}
+
+func addRecordOwner(owners recordOwners, recordID, pursuitID uuid.UUID) {
+	if recordID == uuid.Nil || pursuitID == uuid.Nil {
+		return
 	}
+	for _, existing := range owners[recordID] {
+		if existing == pursuitID {
+			return
+		}
+	}
+	owners[recordID] = append(owners[recordID], pursuitID)
+}
+
+func groupRecords[T any](items []T, ownerID func(T) uuid.UUID) map[uuid.UUID][]T {
+	result := map[uuid.UUID][]T{}
 	for _, item := range items {
-		if wanted[id(item)] {
-			result = append(result, item)
+		id := ownerID(item)
+		if id == uuid.Nil {
+			continue
+		}
+		result[id] = append(result[id], item)
+	}
+	return result
+}
+
+func partitionRecords[T any](items []T, owners recordOwners, recordID func(T) uuid.UUID) map[uuid.UUID][]T {
+	result := map[uuid.UUID][]T{}
+	for _, item := range items {
+		for _, pursuitID := range owners[recordID(item)] {
+			result[pursuitID] = append(result[pursuitID], item)
 		}
 	}
 	return result
 }
 
-func filterRuntimeAttempts(items []models.AutomationLaunchEvent, automationIDs, launchIDs []uuid.UUID, limit int) []models.AutomationLaunchEvent {
-	automations := make(map[uuid.UUID]bool, len(automationIDs))
-	launches := make(map[uuid.UUID]bool, len(launchIDs))
-	for _, id := range automationIDs {
-		automations[id] = true
+func recordsFor[T any](records map[uuid.UUID][]T, pursuitID uuid.UUID) []T {
+	if items, ok := records[pursuitID]; ok {
+		return items
 	}
-	for _, id := range launchIDs {
-		launches[id] = true
-	}
-	result := []models.AutomationLaunchEvent{}
+	return []T{}
+}
+
+func partitionRuntimeAttempts(items []models.AutomationLaunchEvent, automationOwners, launchOwners recordOwners, limit int) map[uuid.UUID][]models.AutomationLaunchEvent {
+	result := map[uuid.UUID][]models.AutomationLaunchEvent{}
 	for _, item := range items {
-		if !automations[item.AutomationID] && !launches[item.ID] {
-			continue
+		automationPursuits := automationOwners[item.AutomationID]
+		for _, pursuitID := range automationPursuits {
+			if limit > 0 && len(result[pursuitID]) >= limit {
+				continue
+			}
+			result[pursuitID] = append(result[pursuitID], item)
 		}
-		result = append(result, item)
-		if limit > 0 && len(result) >= limit {
-			break
+		for _, pursuitID := range launchOwners[item.ID] {
+			if containsUUID(automationPursuits, pursuitID) || (limit > 0 && len(result[pursuitID]) >= limit) {
+				continue
+			}
+			result[pursuitID] = append(result[pursuitID], item)
 		}
 	}
 	return result
+}
+
+func containsUUID(ids []uuid.UUID, wanted uuid.UUID) bool {
+	for _, id := range ids {
+		if id == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func dashboardResourceUsage(ownerIdentity string, pursuit models.Pursuit, projection pursuitDashboardResourceProjection) PursuitResourceUsage {
