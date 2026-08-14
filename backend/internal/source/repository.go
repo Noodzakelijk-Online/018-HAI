@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository interface {
@@ -113,10 +114,37 @@ func (r *GormRepository) CreateSource(source *models.ConnectedSource) (*models.C
 }
 
 func (r *GormRepository) UpdateSource(source *models.ConnectedSource) (*models.ConnectedSource, error) {
-	if err := r.DB.Save(source).Error; err != nil {
+	if source == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var updated models.ConnectedSource
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		var current models.ConnectedSource
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "id = ?", source.ID).Error; err != nil {
+			return err
+		}
+		if err := rejectRevokedSource(&current); err != nil {
+			return err
+		}
+		if !current.UpdatedAt.Equal(source.UpdatedAt) {
+			return ErrSourceChanged
+		}
+		// Ownership, connector identity, creation time, and revocation state are
+		// repository-controlled invariants, never caller-updatable fields.
+		source.OwnerIdentity = current.OwnerIdentity
+		source.ConnectorKey = current.ConnectorKey
+		source.CreatedAt = current.CreatedAt
+		source.RevokedAt = current.RevokedAt
+		if err := tx.Select("*").Save(source).Error; err != nil {
+			return err
+		}
+		updated = *source
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	return source, nil
+	return &updated, nil
 }
 
 func (r *GormRepository) RevokeSource(
@@ -130,7 +158,7 @@ func (r *GormRepository) RevokeSource(
 	var updated models.ConnectedSource
 	err := r.DB.Transaction(func(tx *gorm.DB) error {
 		var source models.ConnectedSource
-		if err := tx.Where(
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
 			"id = ? AND owner_identity = ? AND connector_key = ? AND default_project_key = ? AND updated_at = ?",
 			expected.ID,
 			ownerIdentity,
@@ -428,20 +456,32 @@ func (r *GormRepository) FindAuditLogsForSources(sourceIDs []uuid.UUID, limit in
 
 // SaveOAuthToken upserts the token for a source (one token set per source).
 func (r *GormRepository) SaveOAuthToken(token *models.SourceOAuthToken) error {
-	var existing models.SourceOAuthToken
-	err := r.DB.Where("source_id = ?", token.SourceID).First(&existing).Error
-	if err == nil {
-		token.ID = existing.ID
-		token.CreatedAt = existing.CreatedAt
-		return r.DB.Select("*").Save(token).Error
+	if token == nil {
+		return gorm.ErrRecordNotFound
 	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-	if token.ID == uuid.Nil {
-		token.ID = uuid.New()
-	}
-	return r.DB.Create(token).Error
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		var source models.ConnectedSource
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&source, "id = ?", token.SourceID).Error; err != nil {
+			return err
+		}
+		if err := rejectRevokedSource(&source); err != nil {
+			return err
+		}
+		var existing models.SourceOAuthToken
+		err := tx.Where("source_id = ?", token.SourceID).First(&existing).Error
+		if err == nil {
+			token.ID = existing.ID
+			token.CreatedAt = existing.CreatedAt
+			return tx.Select("*").Save(token).Error
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if token.ID == uuid.Nil {
+			token.ID = uuid.New()
+		}
+		return tx.Create(token).Error
+	})
 }
 
 func (r *GormRepository) FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error) {

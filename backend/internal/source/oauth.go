@@ -142,6 +142,9 @@ func (s *service) StartGoogleOAuth(sourceID uuid.UUID) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := rejectRevokedSource(source); err != nil {
+		return "", err
+	}
 	cfg, err := googleOAuthConfigForConnector(source.ConnectorKey)
 	if err != nil {
 		return "", err
@@ -170,12 +173,25 @@ func (s *service) CompleteGoogleOAuth(ctx context.Context, code, state string) (
 	if err != nil {
 		return uuid.Nil, err
 	}
+	if err := rejectRevokedSource(source); err != nil {
+		return uuid.Nil, err
+	}
 	cfg, err := googleOAuthConfigForConnector(source.ConnectorKey)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	token, err := cfg.ExchangeCode(ctx, code)
 	if err != nil {
+		return uuid.Nil, err
+	}
+	// Consent can complete after the operator revoked the source in another
+	// session. Re-read before persistence; the repository repeats this check
+	// under a source-row lock so revocation and credential storage serialize.
+	source, err = s.repo.FindSource(sourceID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if err := rejectRevokedSource(source); err != nil {
 		return uuid.Nil, err
 	}
 	if err := s.storeToken(sourceID, token); err != nil {
@@ -224,6 +240,9 @@ func (s *service) storeToken(sourceID uuid.UUID, token *googleoauth.Token) error
 func (s *service) googleAccessToken(ctx context.Context, sourceID uuid.UUID, connectorKey string) (string, error) {
 	source, err := s.repo.FindSource(sourceID)
 	if err != nil {
+		return "", err
+	}
+	if err := rejectRevokedSource(source); err != nil {
 		return "", err
 	}
 	if source.ConnectorKey != connectorKey {

@@ -235,7 +235,21 @@ type pursuitWorkflowIntakeRouter interface {
 }
 
 var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
-var ErrSyncInProgress = errors.New("source sync is already in progress")
+var (
+	ErrSyncInProgress = errors.New("source sync is already in progress")
+	ErrSourceRevoked  = errors.New("source access is revoked")
+	ErrSourceChanged  = errors.New("source changed concurrently; refresh and retry")
+)
+
+func rejectRevokedSource(source *models.ConnectedSource) error {
+	if source == nil {
+		return gorm.ErrRecordNotFound
+	}
+	if source.RevokedAt != nil || strings.EqualFold(strings.TrimSpace(source.Status), "revoked") {
+		return ErrSourceRevoked
+	}
+	return nil
+}
 
 const maxSyncErrorDetails = 20
 const maxSyncPursuitOutcomes = 20
@@ -511,6 +525,9 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectRevokedSource(source); err != nil {
+		return nil, err
+	}
 	if source.ConnectorKey == cloudQuerySummaryConnectorKey {
 		if _, err := cloudQuerySummaryConfigFromEnv(); err != nil {
 			return nil, fmt.Errorf("CloudQuery sync-summary connector requires explicit configuration: %w", err)
@@ -727,7 +744,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 	if err != nil {
 		return nil, err
 	}
-	if !source.Enabled || source.Status == "paused" || source.Status == "revoked" {
+	if err := rejectRevokedSource(source); err != nil {
+		return nil, err
+	}
+	if !source.Enabled || source.Status == "paused" {
 		return nil, fmt.Errorf("source is not enabled for sync")
 	}
 	if source.ConnectorKey == "whisper-audio" && !request.controlledTranscription {
@@ -1326,6 +1346,9 @@ func (s *service) Reindex(sourceID uuid.UUID) (*SyncResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectRevokedSource(source); err != nil {
+		return nil, err
+	}
 	items, err := s.repo.FindRawItems(sourceID)
 	if err != nil {
 		return nil, err
@@ -1354,6 +1377,9 @@ func (s *service) Pause(sourceID uuid.UUID, paused bool) (*models.ConnectedSourc
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectRevokedSource(source); err != nil {
+		return nil, err
+	}
 	source.Enabled = !paused
 	if paused {
 		source.Status = "paused"
@@ -1378,6 +1404,9 @@ func (s *service) RevokeAuthorized(
 ) (*models.ConnectedSource, error) {
 	source, err := s.repo.FindSource(sourceID)
 	if err != nil {
+		return nil, err
+	}
+	if err := rejectRevokedSource(source); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(source.OwnerIdentity) == "" ||

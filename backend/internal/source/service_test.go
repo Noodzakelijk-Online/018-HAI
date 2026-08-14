@@ -1127,6 +1127,60 @@ func TestSearchExcludesRevokedSourceExtractions(t *testing.T) {
 	}
 }
 
+func TestRevokedSourceCannotBeReactivatedOrProcessed(t *testing.T) {
+	sourceID := uuid.New()
+	revokedAt := time.Now().UTC().Add(-time.Minute)
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Revoked files",
+		Enabled: false, Status: "revoked", RevokedAt: &revokedAt, SyncTarget: "notes",
+	})
+	service := NewService(repo, nil)
+	enabled := true
+
+	operations := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "update", run: func() error {
+			_, err := service.UpdateSource(sourceID, UpdateSourceRequest{Enabled: &enabled})
+			return err
+		}},
+		{name: "sync", run: func() error {
+			_, err := service.Sync(sourceID, ImportRequest{Mode: ModeManualImport, Items: []ImportItem{{ExternalID: "new", Content: "must not import"}}})
+			return err
+		}},
+		{name: "reindex", run: func() error {
+			_, err := service.Reindex(sourceID)
+			return err
+		}},
+		{name: "pause", run: func() error {
+			_, err := service.Pause(sourceID, true)
+			return err
+		}},
+		{name: "resume", run: func() error {
+			_, err := service.Pause(sourceID, false)
+			return err
+		}},
+	}
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			if err := operation.run(); !errors.Is(err, ErrSourceRevoked) {
+				t.Fatalf("error = %v, want ErrSourceRevoked", err)
+			}
+		})
+	}
+	stored, err := repo.FindSource(sourceID)
+	if err != nil {
+		t.Fatalf("FindSource: %v", err)
+	}
+	if stored.Enabled || stored.Status != "revoked" || stored.RevokedAt == nil {
+		t.Fatalf("revoked source changed: %#v", stored)
+	}
+	if len(repo.rawItems) != 0 || len(repo.extractions) != 0 {
+		t.Fatalf("revoked source produced data: raw=%#v extractions=%#v", repo.rawItems, repo.extractions)
+	}
+}
+
 func TestSemanticSearchCannotReturnRevokedSourceExtraction(t *testing.T) {
 	revokedID := uuid.New()
 	revokedAt := time.Now().UTC().Add(-time.Minute)
@@ -2098,6 +2152,13 @@ func newFakeSourceRepo(sources ...*models.ConnectedSource) *fakeSourceRepo {
 }
 
 func (r *fakeSourceRepo) SaveOAuthToken(token *models.SourceOAuthToken) error {
+	source, ok := r.sources[token.SourceID]
+	if !ok {
+		return gorm.ErrRecordNotFound
+	}
+	if err := rejectRevokedSource(source); err != nil {
+		return err
+	}
 	if r.oauthTokens == nil {
 		r.oauthTokens = map[uuid.UUID]*models.SourceOAuthToken{}
 	}
@@ -2156,6 +2217,20 @@ func (r *fakeSourceRepo) CreateSource(source *models.ConnectedSource) (*models.C
 }
 
 func (r *fakeSourceRepo) UpdateSource(source *models.ConnectedSource) (*models.ConnectedSource, error) {
+	current, ok := r.sources[source.ID]
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
+	if err := rejectRevokedSource(current); err != nil {
+		return nil, err
+	}
+	if !current.UpdatedAt.Equal(source.UpdatedAt) {
+		return nil, ErrSourceChanged
+	}
+	source.OwnerIdentity = current.OwnerIdentity
+	source.ConnectorKey = current.ConnectorKey
+	source.CreatedAt = current.CreatedAt
+	source.RevokedAt = current.RevokedAt
 	source.UpdatedAt = time.Now().UTC()
 	r.sources[source.ID] = source
 	return source, nil

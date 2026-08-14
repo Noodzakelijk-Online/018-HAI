@@ -537,7 +537,10 @@ func writeDestructiveEffectError(c *gin.Context, err error) {
 // owner, but no signed-in operator may adopt, mutate, sync, or delete them.
 func sourceMutable(source models.ConnectedSource, owner string) bool {
 	owner = strings.TrimSpace(owner)
-	return owner != "" && strings.TrimSpace(source.OwnerIdentity) == owner
+	return owner != "" &&
+		strings.TrimSpace(source.OwnerIdentity) == owner &&
+		source.RevokedAt == nil &&
+		!strings.EqualFold(strings.TrimSpace(source.Status), "revoked")
 }
 
 func (h *Handler) visibleSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {

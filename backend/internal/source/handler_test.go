@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -332,6 +333,72 @@ func TestHandlerRejectsOwnerlessLegacySourceAndExtractionMutations(t *testing.T)
 	}
 	if storedExtraction.Archived {
 		t.Fatalf("ownerless extraction was archived: %#v", storedExtraction)
+	}
+}
+
+func TestHandlerRejectsEveryRevokedSourceMutation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	extractionID := uuid.New()
+	revokedAt := time.Now().UTC().Add(-time.Minute)
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Revoked files",
+		Enabled: false, Status: "revoked", RevokedAt: &revokedAt, LocalOnly: true, SyncTarget: "notes",
+	})
+	if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: extractionID, SourceID: sourceID, Summary: "Retained audit context"}); err != nil {
+		t.Fatalf("SaveExtraction: %v", err)
+	}
+	handler := NewHandler(NewService(repo, nil), &sourceTranscriberStub{})
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/oauth/google/start", handler.StartGoogleOAuth)
+	router.PATCH("/sources/:id", handler.UpdateSource)
+	router.POST("/sources/:id/sync", handler.Sync)
+	router.POST("/sources/:id/transcribe", handler.Transcribe)
+	router.POST("/sources/:id/reindex", handler.Reindex)
+	router.POST("/sources/:id/pause", handler.Pause)
+	router.POST("/sources/:id/resume", handler.Resume)
+	router.POST("/sources/extractions/:id/archive", handler.ArchiveExtraction)
+
+	requests := []struct {
+		name, method, target, body string
+	}{
+		{name: "oauth", method: http.MethodGet, target: "/sources/oauth/google/start?sourceId=" + sourceID.String()},
+		{name: "update", method: http.MethodPatch, target: "/sources/" + sourceID.String(), body: `{}`},
+		{name: "sync", method: http.MethodPost, target: "/sources/" + sourceID.String() + "/sync", body: `{}`},
+		{name: "transcribe", method: http.MethodPost, target: "/sources/" + sourceID.String() + "/transcribe"},
+		{name: "reindex", method: http.MethodPost, target: "/sources/" + sourceID.String() + "/reindex"},
+		{name: "pause", method: http.MethodPost, target: "/sources/" + sourceID.String() + "/pause"},
+		{name: "resume", method: http.MethodPost, target: "/sources/" + sourceID.String() + "/resume"},
+		{name: "archive extraction", method: http.MethodPost, target: "/sources/extractions/" + extractionID.String() + "/archive"},
+	}
+	for _, request := range requests {
+		t.Run(request.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			httpRequest := httptest.NewRequest(request.method, request.target, strings.NewReader(request.body))
+			if request.body != "" {
+				httpRequest.Header.Set("Content-Type", "application/json")
+			}
+			router.ServeHTTP(response, httpRequest)
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+
+	storedSource, err := repo.FindSource(sourceID)
+	if err != nil {
+		t.Fatalf("FindSource: %v", err)
+	}
+	if storedSource.Enabled || storedSource.Status != "revoked" || storedSource.RevokedAt == nil {
+		t.Fatalf("revoked source changed: %#v", storedSource)
+	}
+	storedExtraction, err := repo.FindExtraction(extractionID)
+	if err != nil {
+		t.Fatalf("FindExtraction: %v", err)
+	}
+	if storedExtraction.Archived {
+		t.Fatalf("revoked extraction was mutated: %#v", storedExtraction)
 	}
 }
 

@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -133,5 +134,40 @@ func TestGoogleConnectionHealthDistinguishesDisconnectedAndReady(t *testing.T) {
 	health, err = service.ConnectionHealth(sourceID)
 	if err != nil || health.Status != "ready" || !health.Authorized || health.CursorPhase != "history" {
 		t.Fatalf("ready health = %#v, %v", health, err)
+	}
+}
+
+func TestRevokedGoogleSourceCannotStartCompleteOrUseOAuth(t *testing.T) {
+	previous := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = previous })
+	config.AppConfig.GoogleOAuthClientID = "client"
+	config.AppConfig.GoogleOAuthClientSecret = "secret"
+	config.AppConfig.GoogleOAuthRedirectURL = "https://example.test/callback"
+	config.AppConfig.OAuthTokenEncryptionKey = "token-key"
+	config.AppConfig.OAuthStateSigningKey = "state-key"
+
+	sourceID := uuid.New()
+	revokedAt := time.Now().UTC().Add(-time.Minute)
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: gmailConnectorKey,
+		Enabled: false, Status: "revoked", RevokedAt: &revokedAt,
+	})
+	service := NewService(repo, nil).(*service)
+	state, err := signState(sourceID)
+	if err != nil {
+		t.Fatalf("signState: %v", err)
+	}
+
+	if _, err := service.StartGoogleOAuth(sourceID); !errors.Is(err, ErrSourceRevoked) {
+		t.Fatalf("StartGoogleOAuth error = %v, want ErrSourceRevoked", err)
+	}
+	if _, err := service.CompleteGoogleOAuth(context.Background(), "unused-code", state); !errors.Is(err, ErrSourceRevoked) {
+		t.Fatalf("CompleteGoogleOAuth error = %v, want ErrSourceRevoked", err)
+	}
+	if _, err := service.googleAccessToken(context.Background(), sourceID, gmailConnectorKey); !errors.Is(err, ErrSourceRevoked) {
+		t.Fatalf("googleAccessToken error = %v, want ErrSourceRevoked", err)
+	}
+	if len(repo.oauthTokens) != 0 {
+		t.Fatalf("revoked source stored OAuth credentials: %#v", repo.oauthTokens)
 	}
 }
