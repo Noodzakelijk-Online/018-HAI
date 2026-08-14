@@ -1751,6 +1751,64 @@ func TestDashboardForOwnerHidesLegacyCrossOwnerWorkflowLink(t *testing.T) {
 	}
 }
 
+func TestDashboardBulkProjectionMatchesEstablishedOwnerScopedPath(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Now().UTC().Truncate(time.Second)
+	firstID, secondID := uuid.New(), uuid.New()
+	repo.pursuits[firstID] = models.Pursuit{
+		ID: firstID, OwnerIdentity: "alice", Title: "Review legal evidence", Status: StatusActive,
+		PriorityScore: 90, RiskLevel: "high", AutonomyLevel: "suggest", CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-time.Hour),
+	}
+	repo.pursuits[secondID] = models.Pursuit{
+		ID: secondID, OwnerIdentity: "alice", Title: "Prepare routine follow-up", Status: StatusActive,
+		PriorityScore: 60, RiskLevel: "low", AutonomyLevel: "autonomous_safe", CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour),
+	}
+	firstWorkflowID, secondWorkflowID, foreignWorkflowID := uuid.New(), uuid.New(), uuid.New()
+	repo.workflows[firstWorkflowID] = models.WorkflowItem{
+		ID: firstWorkflowID, OwnerIdentity: "alice", Title: "Approve legal reply", CurrentState: workflow.StateNeedsApproval,
+		RequiresApproval: true, ApprovalStatus: "pending", PriorityScore: 95, UpdatedAt: now.Add(-20 * time.Minute), CreatedAt: now.Add(-time.Hour),
+	}
+	repo.workflows[secondWorkflowID] = models.WorkflowItem{
+		ID: secondWorkflowID, OwnerIdentity: "alice", Title: "Draft follow-up", CurrentState: workflow.StateReady,
+		PriorityScore: 55, UpdatedAt: now.Add(-40 * time.Minute), CreatedAt: now.Add(-90 * time.Minute),
+	}
+	repo.workflows[foreignWorkflowID] = models.WorkflowItem{
+		ID: foreignWorkflowID, OwnerIdentity: "bob", Title: "Bob private work", CurrentState: workflow.StateNeedsApproval,
+		RequiresApproval: true, ApprovalStatus: "pending", UpdatedAt: now,
+	}
+	for _, link := range []models.PursuitLink{
+		{ID: uuid.New(), PursuitID: firstID, LinkType: LinkWorkflow, LinkID: firstWorkflowID.String(), Relationship: "primary", CreatedAt: now},
+		{ID: uuid.New(), PursuitID: firstID, LinkType: LinkWorkflow, LinkID: foreignWorkflowID.String(), Relationship: "legacy_import", CreatedAt: now.Add(-time.Minute)},
+		{ID: uuid.New(), PursuitID: secondID, LinkType: LinkWorkflow, LinkID: secondWorkflowID.String(), Relationship: "primary", CreatedAt: now},
+	} {
+		repo.links[link.ID] = link
+	}
+	repo.activity[firstID] = []models.PursuitActivity{{ID: uuid.New(), PursuitID: firstID, EventType: "pursuit.updated", Message: "Evidence arrived", CreatedAt: now.Add(-10 * time.Minute)}}
+	repo.activity[secondID] = []models.PursuitActivity{{ID: uuid.New(), PursuitID: secondID, EventType: "pursuit.updated", Message: "Follow-up planned", CreatedAt: now.Add(-30 * time.Minute)}}
+	repo.taskAttempts["plan-1"] = models.PursuitTaskAttempt{ID: uuid.New(), PursuitID: firstID, TaskPlanID: "plan-1", OwnerIdentity: "alice", Mode: "plan", Status: "needs_review", UpdatedAt: now.Add(-5 * time.Minute), CreatedAt: now.Add(-15 * time.Minute)}
+
+	established, err := NewService(repo, nil).DashboardForOwner("alice")
+	if err != nil {
+		t.Fatalf("established dashboard: %v", err)
+	}
+	bulkRepo := &fakeBulkDashboardRepo{fakeRepo: repo}
+	optimized, err := NewService(bulkRepo, nil).DashboardForOwner("alice")
+	if err != nil {
+		t.Fatalf("bulk dashboard: %v", err)
+	}
+	establishedJSON, _ := json.Marshal(established)
+	optimizedJSON, _ := json.Marshal(optimized)
+	if string(establishedJSON) != string(optimizedJSON) {
+		t.Fatalf("bulk dashboard changed established semantics\nestablished=%s\noptimized=%s", establishedJSON, optimizedJSON)
+	}
+	if bulkRepo.bulkCalls != 1 {
+		t.Fatalf("bulk projection calls = %d, want 1", bulkRepo.bulkCalls)
+	}
+	if bulkRepo.findByIDCalls != 0 {
+		t.Fatalf("bulk dashboard re-fetched %d pursuits", bulkRepo.findByIDCalls)
+	}
+}
+
 func TestAutoLinkWorkflowRejectsForeignOwnerWorkflow(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
@@ -5165,6 +5223,74 @@ type fakeRepo struct {
 // Embedding only the base contract intentionally hides the optional resource
 // ledger capability so fail-closed service behavior can be tested.
 type pursuitRepositoryWithoutResourceLedger struct{ Repository }
+
+type fakeBulkDashboardRepo struct {
+	*fakeRepo
+	bulkCalls     int
+	findByIDCalls int
+}
+
+func (r *fakeBulkDashboardRepo) FindByID(id uuid.UUID) (*models.Pursuit, error) {
+	r.findByIDCalls++
+	return r.fakeRepo.FindByID(id)
+}
+
+func (r *fakeBulkDashboardRepo) FindVisibleLinksForPursuits(ownerIdentity string, pursuitIDs []uuid.UUID) ([]models.PursuitLink, error) {
+	r.bulkCalls++
+	result := []models.PursuitLink{}
+	for _, pursuitID := range pursuitIDs {
+		links, err := r.fakeRepo.FindLinks(pursuitID)
+		if err != nil {
+			return nil, err
+		}
+		for _, link := range links {
+			handled, allowed, err := r.fakeRepo.LinkVisibleToOwner(ownerIdentity, link.LinkType, link.LinkID)
+			if err != nil {
+				return nil, err
+			}
+			if !handled || allowed {
+				result = append(result, link)
+			}
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeBulkDashboardRepo) FindActivitiesForPursuits(pursuitIDs []uuid.UUID, limit int) ([]models.PursuitActivity, error) {
+	result := []models.PursuitActivity{}
+	for _, pursuitID := range pursuitIDs {
+		items, err := r.fakeRepo.FindActivities(pursuitID, limit)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, items...)
+	}
+	return result, nil
+}
+
+func (r *fakeBulkDashboardRepo) FindTaskAttemptsForPursuits(ownerIdentity string, pursuitIDs []uuid.UUID, limit int) ([]models.PursuitTaskAttempt, error) {
+	result := []models.PursuitTaskAttempt{}
+	for _, pursuitID := range pursuitIDs {
+		items, err := r.fakeRepo.FindTaskAttempts(pursuitID, limit)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, taskAttemptsVisibleToOwner(ownerIdentity, items)...)
+	}
+	return result, nil
+}
+
+func (r *fakeBulkDashboardRepo) FindRuntimeAttemptsForOwner(ownerIdentity string, automationIDs, launchIDs []uuid.UUID) ([]models.AutomationLaunchEvent, error) {
+	items, err := r.fakeRepo.FindLinkedAutomationLaunches(automationIDs, launchIDs, 50)
+	return runtimeAttemptsVisibleToOwner(ownerIdentity, items), err
+}
+
+func (r *fakeBulkDashboardRepo) FindResourceProjectionForPursuits(_ string, _ []models.Pursuit) (pursuitDashboardResourceProjection, error) {
+	return pursuitDashboardResourceProjection{
+		Totals: map[uuid.UUID]PursuitResourceTotals{}, ReservationTotals: map[uuid.UUID]PursuitResourceReservationTotals{},
+		ActiveReservations: map[uuid.UUID][]models.PursuitResourceReservation{},
+	}, nil
+}
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{

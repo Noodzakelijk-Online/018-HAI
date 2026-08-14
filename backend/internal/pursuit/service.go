@@ -480,6 +480,36 @@ type PursuitDetail struct {
 	ResourceUsage        PursuitResourceUsage           `json:"resourceUsage"`
 }
 
+// pursuitDetailRecords is the owner-filtered record set used to derive one
+// pursuit detail. Keeping derivation separate from loading lets the dashboard
+// bulk-load records without creating a second set of decision rules.
+type pursuitDetailRecords struct {
+	Links                []models.PursuitLink
+	Activity             []models.PursuitActivity
+	Workflows            []models.WorkflowItem
+	ChecklistItems       []models.WorkflowChecklistItem
+	OpenLoops            []models.WorkflowOpenLoop
+	Proposals            []models.WorkflowProposal
+	QualityGates         []models.WorkflowQualityGate
+	Decisions            []models.WorkflowDecision
+	Transitions          []models.WorkflowTransition
+	SourceLinks          []models.WorkflowSourceLink
+	Events               []models.WorkflowEvent
+	Evidence             []models.WorkflowEvidenceClaim
+	Memories             []models.ContextMemory
+	Conversations        []models.AIConversationArchive
+	AmbientOpportunities []models.AmbientOpportunity
+	TaskAttempts         []models.PursuitTaskAttempt
+	VerificationRuns     []models.VerificationRun
+	VerificationClaims   []models.VerificationClaim
+	VerificationEvidence []models.VerificationEvidence
+	Automations          []models.Automation
+	RuntimeAttempts      []models.AutomationLaunchEvent
+	SourceItems          []models.SourceRawItem
+	SourceExtractions    []models.SourceExtraction
+	ResourceUsage        PursuitResourceUsage
+}
+
 // PursuitConversation exposes only archive metadata needed for provenance.
 // It intentionally omits Preview and encrypted payload fields so a pursuit
 // detail response cannot become a second conversation-content endpoint.
@@ -1182,12 +1212,29 @@ func (s *service) DashboardForOwner(ownerIdentity string) (*Dashboard, error) {
 		HighRisk:             []PursuitListItem{},
 		CompletionCandidates: []PursuitListItem{},
 	}
+	bulkDetails, bulkAvailable, bulkErr := s.dashboardDetailsForOwner(ownerIdentity, pursuits)
+	if bulkErr != nil {
+		// A projection failure must not make the operator dashboard disappear.
+		// The established single-pursuit loader remains the fail-safe path.
+		bulkAvailable = false
+	}
 	for _, pursuit := range pursuits {
 		if pursuitClosed(pursuit) {
 			dashboard.Counts["completed"]++
 			continue
 		}
-		item, detail, detailErr := s.listItemWithDetailForOwner(ownerIdentity, pursuit)
+		var item PursuitListItem
+		var detail *PursuitDetail
+		var detailErr error
+		if bulkAvailable {
+			detail = bulkDetails[pursuit.ID]
+			if detail == nil {
+				detailErr = dashboardProjectionMissing(pursuit.ID)
+			}
+			item, detail, detailErr = pursuitListItemWithDetail(pursuit, detail, detailErr)
+		} else {
+			item, detail, detailErr = s.listItemWithDetailForOwner(ownerIdentity, pursuit)
+		}
 		if detailErr != nil {
 			item = detailUnavailableListItem(pursuit)
 		}
@@ -1580,52 +1627,54 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	if runtimeAttempts == nil {
 		runtimeAttempts = []models.AutomationLaunchEvent{}
 	}
-	resolvedDecisions := resolvedPursuitDecisions(activity)
-	sourceBlockers := sourceRetractionBlockers(links, extractions)
-	qualityGateBlockers := qualityGateBlockers(qualityGates)
-	contractBlockers := pursuitGoalContractBlockers(*pursuit)
 	resourceUsage := s.resourceUsageForPursuit(ownerIdentity, *pursuit)
-	contractBlockers = append(contractBlockers, pursuitResourceBlockers(*pursuit, resourceUsage)...)
+	return s.buildPursuitDetail(*pursuit, pursuitDetailRecords{
+		Links: links, Activity: activity, Workflows: workflows,
+		ChecklistItems: checklistItems, OpenLoops: openLoops, Proposals: proposals,
+		QualityGates: qualityGates, Decisions: decisions, Transitions: transitions,
+		SourceLinks: sourceLinks, Events: events, Evidence: evidence, Memories: memories,
+		Conversations: conversations, AmbientOpportunities: ambientOpportunities,
+		TaskAttempts: taskAttempts, VerificationRuns: verificationRuns,
+		VerificationClaims: verificationClaims, VerificationEvidence: verificationEvidence,
+		Automations: automations, RuntimeAttempts: runtimeAttempts, SourceItems: sourceItems,
+		SourceExtractions: extractions, ResourceUsage: resourceUsage,
+	}), nil
+}
+
+func (s *service) buildPursuitDetail(pursuit models.Pursuit, records pursuitDetailRecords) *PursuitDetail {
+	resolvedDecisions := resolvedPursuitDecisions(records.Activity)
+	sourceBlockers := sourceRetractionBlockers(records.Links, records.SourceExtractions)
+	qualityReviewBlockers := qualityGateBlockers(records.QualityGates)
+	contractBlockers := pursuitGoalContractBlockers(pursuit)
+	contractBlockers = append(contractBlockers, pursuitResourceBlockers(pursuit, records.ResourceUsage)...)
 
 	detail := &PursuitDetail{
-		Pursuit:              *pursuit,
-		Links:                links,
-		Activity:             activity,
-		Workflows:            workflows,
-		ChecklistItems:       checklistItems,
-		OpenLoops:            openLoops,
-		Proposals:            proposals,
-		QualityGates:         qualityGates,
-		Decisions:            decisions,
-		Transitions:          transitions,
-		SourceLinks:          sourceLinks,
-		Events:               events,
-		Evidence:             evidence,
-		Memories:             memories,
-		Conversations:        compactConversations(conversations),
-		AmbientOpportunities: compactAmbientOpportunities(ambientOpportunities),
-		TaskRuns:             taskRunsFromWorkflows(workflows),
-		TaskAttempts:         taskAttempts,
-		VerificationRuns:     verificationRuns,
-		VerificationClaims:   verificationClaims,
-		VerificationEvidence: verificationEvidence,
-		Automations:          compactAutomations(automations),
-		RuntimeAttempts:      runtimeAttempts,
-		SourceItems:          compactSourceItems(sourceItems),
-		SourceExtractions:    extractions,
-		ResourceUsage:        resourceUsage,
+		Pursuit: pursuit, Links: records.Links, Activity: records.Activity,
+		Workflows: records.Workflows, ChecklistItems: records.ChecklistItems,
+		OpenLoops: records.OpenLoops, Proposals: records.Proposals,
+		QualityGates: records.QualityGates, Decisions: records.Decisions,
+		Transitions: records.Transitions, SourceLinks: records.SourceLinks,
+		Events: records.Events, Evidence: records.Evidence, Memories: records.Memories,
+		Conversations:        compactConversations(records.Conversations),
+		AmbientOpportunities: compactAmbientOpportunities(records.AmbientOpportunities),
+		TaskRuns:             taskRunsFromWorkflows(records.Workflows), TaskAttempts: records.TaskAttempts,
+		VerificationRuns: records.VerificationRuns, VerificationClaims: records.VerificationClaims,
+		VerificationEvidence: records.VerificationEvidence,
+		Automations:          compactAutomations(records.Automations), RuntimeAttempts: records.RuntimeAttempts,
+		SourceItems: compactSourceItems(records.SourceItems), SourceExtractions: records.SourceExtractions,
+		ResourceUsage: records.ResourceUsage,
 	}
-	detail.ApprovalItems = approvalWorkflows(workflows)
-	detail.DecisionQueue = decisionQueue(*pursuit, workflows, proposals, decisions, runtimeAttempts, resolvedDecisions)
-	detail.Timeline = pursuitTimeline(*pursuit, activity, workflows, transitions, sourceLinks, decisions, events, detail.TaskRuns, taskAttempts, verificationRuns, runtimeAttempts)
-	detail.Blockers = append(blockers(workflows, openLoops), runtimeAttemptBlockers(runtimeAttempts, workflows, resolvedDecisions)...)
+	detail.ApprovalItems = approvalWorkflows(records.Workflows)
+	detail.DecisionQueue = decisionQueue(pursuit, records.Workflows, records.Proposals, records.Decisions, records.RuntimeAttempts, resolvedDecisions)
+	detail.Timeline = pursuitTimeline(pursuit, records.Activity, records.Workflows, records.Transitions, records.SourceLinks, records.Decisions, records.Events, detail.TaskRuns, records.TaskAttempts, records.VerificationRuns, records.RuntimeAttempts)
+	detail.Blockers = append(blockers(records.Workflows, records.OpenLoops), runtimeAttemptBlockers(records.RuntimeAttempts, records.Workflows, resolvedDecisions)...)
 	detail.Blockers = append(detail.Blockers, sourceBlockers...)
-	detail.Blockers = append(detail.Blockers, qualityGateBlockers...)
+	detail.Blockers = append(detail.Blockers, qualityReviewBlockers...)
 	detail.Blockers = append(detail.Blockers, contractBlockers...)
-	detail.NextActions = nextActions(*pursuit, workflows, openLoops, proposals, runtimeAttempts, resolvedDecisions, len(qualityGateBlockers) > 0, len(contractBlockers) > 0)
-	detail.ActionQueues = actionQueues(*pursuit, detail.NextActions, detail.Blockers)
-	detail.Summary = summarize(*pursuit, links, workflows, openLoops, evidence, memories, detail.SourceItems, extractions, detail.TaskRuns, taskAttempts, verificationRuns, runtimeAttempts, activity, sourceBlockers, qualityGateBlockers, contractBlockers)
-	detail.Summary.QualityGatesNeedingReview = len(qualityGateBlockers)
+	detail.NextActions = nextActions(pursuit, records.Workflows, records.OpenLoops, records.Proposals, records.RuntimeAttempts, resolvedDecisions, len(qualityReviewBlockers) > 0, len(contractBlockers) > 0)
+	detail.ActionQueues = actionQueues(pursuit, detail.NextActions, detail.Blockers)
+	detail.Summary = summarize(pursuit, records.Links, records.Workflows, records.OpenLoops, records.Evidence, records.Memories, detail.SourceItems, records.SourceExtractions, detail.TaskRuns, records.TaskAttempts, records.VerificationRuns, records.RuntimeAttempts, records.Activity, sourceBlockers, qualityReviewBlockers, contractBlockers)
+	detail.Summary.QualityGatesNeedingReview = len(qualityReviewBlockers)
 	if len(detail.Timeline) > 0 {
 		detail.Summary.WhatChanged = timelineChangeSummary(detail.Timeline[0])
 	}
@@ -1635,7 +1684,7 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	if queueNeedsRobert := len(detail.ActionQueues.NeedsRobert); queueNeedsRobert > detail.Summary.NeedsRobert {
 		detail.Summary.NeedsRobert = queueNeedsRobert
 	}
-	if pursuitNeedsRobert(*pursuit, detail.NextActions) && detail.Summary.NeedsRobert == 0 {
+	if pursuitNeedsRobert(pursuit, detail.NextActions) && detail.Summary.NeedsRobert == 0 {
 		detail.Summary.NeedsRobert = 1
 	}
 	detail.Summary.DecisionCards = len(detail.DecisionQueue)
@@ -1644,8 +1693,8 @@ func (s *service) DetailForOwner(ownerIdentity string, id uuid.UUID) (*PursuitDe
 	detail.Summary.VAReadyActions = len(detail.ActionQueues.VAReady)
 	detail.Summary.SystemReadyActions = len(detail.ActionQueues.SystemReady)
 	detail.Summary.WaitingActions = len(detail.ActionQueues.Waiting)
-	detail.OperationalDigest = operationalDigest(*pursuit, *detail)
-	return detail, nil
+	detail.OperationalDigest = operationalDigest(pursuit, *detail)
+	return detail
 }
 
 func (s *service) ResolveEvidence(id uuid.UUID, uri string) (*PursuitEvidenceResolution, error) {
