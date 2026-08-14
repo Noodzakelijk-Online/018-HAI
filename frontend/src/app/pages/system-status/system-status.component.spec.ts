@@ -31,12 +31,14 @@ describe('SystemStatusComponent polling', () => {
   it('polls healthy systems every two minutes and pauses completely while hidden', fakeAsync(() => {
     const statusService = service();
     const notification = jasmine.createSpyObj('NzNotificationService', ['error', 'success']);
+    const changeDetector = jasmine.createSpyObj('ChangeDetectorRef', ['detectChanges']);
     let hidden = false;
     const hiddenSpy = spyOnProperty(document, 'hidden', 'get').and.callFake(() => hidden);
-    const component = new SystemStatusComponent(statusService, notification, document);
+    const component = new SystemStatusComponent(statusService, notification, document, changeDetector);
 
     component.ngOnInit();
     expect(statusService.readiness).toHaveBeenCalledTimes(1);
+    expect(changeDetector.detectChanges).toHaveBeenCalled();
 
     tick(119999);
     expect(statusService.readiness).toHaveBeenCalledTimes(1);
@@ -56,19 +58,25 @@ describe('SystemStatusComponent polling', () => {
     hiddenSpy.and.callThrough();
   }));
 
-  it('does not overlap readiness requests when a prior probe is still running', fakeAsync(() => {
+  it('times out a stalled readiness request and retries on the degraded interval', fakeAsync(() => {
     const response = new Subject<ISystemReadiness>();
     const statusService = service(response);
     const notification = jasmine.createSpyObj('NzNotificationService', ['error', 'success']);
     const component = new SystemStatusComponent(statusService, notification, document);
 
     component.ngOnInit();
-    tick(360000);
+    tick(9999);
     expect(statusService.readiness).toHaveBeenCalledTimes(1);
+    expect(component.loading).toBeTrue();
 
-    response.next(readiness);
-    response.complete();
-    tick(120000);
+    tick(1);
+    expect(component.loading).toBeFalse();
+    expect(component.loadError).toBeTrue();
+    expect(notification.error).toHaveBeenCalled();
+
+    tick(59999);
+    expect(statusService.readiness).toHaveBeenCalledTimes(1);
+    tick(1);
     expect(statusService.readiness).toHaveBeenCalledTimes(2);
 
     component.ngOnDestroy();

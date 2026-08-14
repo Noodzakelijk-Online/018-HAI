@@ -1,7 +1,15 @@
 import { DOCUMENT } from '@angular/common';
-import { ChangeDetectionStrategy, Component, Inject, OnDestroy, OnInit } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  Component,
+  Inject,
+  OnDestroy,
+  OnInit,
+  Optional,
+} from '@angular/core';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
-import { Subscription, finalize, fromEvent } from 'rxjs';
+import { Subscription, finalize, fromEvent, timeout } from 'rxjs';
 import {
   IEventDeliveryFailure,
   IEventDeliveryStats,
@@ -35,6 +43,8 @@ const GROUP_TITLES: Record<string, string> = {
 const READY_POLL_MS = 120000;
 const DEGRADED_POLL_MS = 60000;
 const RECOVERY_POLL_MS = 15000;
+const READINESS_TIMEOUT_MS = 10000;
+const EVENT_DELIVERY_TIMEOUT_MS = 10000;
 
 @Component({
   changeDetection: ChangeDetectionStrategy.Eager,
@@ -64,7 +74,8 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
     @Inject(SYSTEM_STATUS_SERVICE_TOKEN)
     private systemStatusService: ISystemStatusService,
     private notification: NzNotificationService,
-    @Inject(DOCUMENT) private document: Document
+    @Inject(DOCUMENT) private document: Document,
+    @Optional() private changeDetector?: ChangeDetectorRef
   ) {}
 
   ngOnInit(): void {
@@ -96,9 +107,12 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
     if (!silent) {
       this.loading = true;
     }
-    this.systemStatusService.readiness().pipe(finalize(() => {
-      this.readinessInFlight = false;
-    })).subscribe({
+    this.systemStatusService.readiness().pipe(
+      timeout(READINESS_TIMEOUT_MS),
+      finalize(() => {
+        this.readinessInFlight = false;
+      })
+    ).subscribe({
       next: (readiness) => {
         this.readiness = readiness;
         this.groups = this.buildGroups(readiness.checks);
@@ -107,6 +121,7 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
         this.loading = false;
         this.loadError = false;
         this.scheduleNextPoll();
+        this.renderAsyncState();
       },
       error: () => {
         this.loading = false;
@@ -118,6 +133,7 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
             'Could not load detailed system readiness. You may need to sign in again.'
           );
         }
+        this.renderAsyncState();
       },
     });
   }
@@ -180,17 +196,25 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
 
   private loadEventDelivery(): void {
     this.eventDeliveryLoading = true;
-    this.systemStatusService.eventDelivery().subscribe({
+    this.systemStatusService.eventDelivery().pipe(timeout(EVENT_DELIVERY_TIMEOUT_MS)).subscribe({
       next: (stats) => {
         this.eventDelivery = stats;
         this.eventDeliveryError = false;
         this.eventDeliveryLoading = false;
+        this.renderAsyncState();
       },
       error: () => {
         this.eventDeliveryError = true;
         this.eventDeliveryLoading = false;
+        this.renderAsyncState();
       },
     });
+  }
+
+  private renderAsyncState(): void {
+    if (!this.destroyed) {
+      this.changeDetector?.detectChanges();
+    }
   }
 
   statusLabel(): string {

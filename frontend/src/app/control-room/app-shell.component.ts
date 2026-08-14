@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, OnDestroy, OnInit } from '@angular/core'
+import { Component, OnDestroy, OnInit } from '@angular/core'
 import { Title } from '@angular/platform-browser'
 import { NavigationEnd, Router } from '@angular/router'
 import { Subscription } from 'rxjs'
@@ -8,7 +8,6 @@ import { HaiNavigationMode, HaiViewMode, ModuleViewPreferencesService } from './
 import { ThemeMode, ThemeService } from '../services/theme.service'
 
 @Component({
-  changeDetection: ChangeDetectionStrategy.OnPush,
   standalone: false,
   selector: 'app-shell',
   templateUrl: './app-shell.component.html',
@@ -42,7 +41,6 @@ export class AppShellComponent implements OnInit, OnDestroy {
     private preferences: ModuleViewPreferencesService,
     private themeService: ThemeService,
     private documentTitle: Title,
-    private changeDetector: ChangeDetectorRef,
   ) {}
 
   ngOnInit(): void {
@@ -106,7 +104,6 @@ export class AppShellComponent implements OnInit, OnDestroy {
     this.navigationMode = preferences.navigationMode
     document.body.classList.toggle('hai-view-advanced', this.viewMode === 'advanced')
     window.setTimeout(() => this.restoreDetailState())
-    this.changeDetector.markForCheck()
   }
 
   private persistDetailState(event: Event): void {
