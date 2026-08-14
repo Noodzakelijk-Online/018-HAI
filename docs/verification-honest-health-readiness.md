@@ -188,6 +188,22 @@ HTTP 503  status=not_ready  {ok:17, warn:1, fail:1}
 
 The endpoint now fails, with HTTP 503, for the exact reason readiness exists.
 
+### Local model acceptance update (2026-08-14)
+
+The opt-in private `local-model` profile was started on the retained Windows
+workspace with `qwen2.5:0.5b`. The authenticated acceptance path recorded:
+
+- Ollama live probe: HTTP 200, one model reported;
+- route: `ollama/qwen2.5:0.5b`, local tier, EUR 0, no paid approval;
+- bounded generation: completed with provider-reported 53 input and 5 output
+  tokens;
+- persisted generation history: matching audit and telemetry identifiers,
+  with prompt and output content absent;
+- readiness: HTTP 200, `ready`, 21 ok / 0 warn / 0 fail.
+
+The fixed-output marker was an operational smoke only. The generation record
+correctly remains `unvalidated`; this does not establish factual model quality.
+
 ## 5. Honest container healthcheck
 
 The backend healthcheck now polls `/readyz` with `curl -f`, so it fails on the

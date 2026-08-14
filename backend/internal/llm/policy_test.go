@@ -179,6 +179,22 @@ func TestPolicyMarksUnconfiguredProviders(t *testing.T) {
 	}
 }
 
+func TestOllamaComposeInternalEndpointIsLocalOnly(t *testing.T) {
+	if !isLocalModelHostForProvider("ollama", "ollama-local") {
+		t.Fatal("canonical Compose-internal Ollama endpoint was rejected")
+	}
+	for _, providerID := range []string{"lm-studio", "llama-cpp", "localai", "vllm", "dspark"} {
+		if isLocalModelHostForProvider(providerID, "ollama-local") {
+			t.Fatalf("provider %q accepted Ollama's private service name", providerID)
+		}
+	}
+	for _, host := range []string{"ollama", "ollama.example.test", "models.internal"} {
+		if isLocalModelHostForProvider("ollama", host) {
+			t.Fatalf("arbitrary hostname accepted as local: %q", host)
+		}
+	}
+}
+
 func TestRouteBlocksLinkLocalProviderEndpointByDefault(t *testing.T) {
 	policy := testPolicyWithoutEndpoints()
 	policy.Providers[0].EndpointURL = "http://169.254.169.254"
@@ -425,6 +441,13 @@ func TestGenerateCallsOllamaEndpoint(t *testing.T) {
 		if request["model"] != "phi3:mini" {
 			t.Fatalf("model = %v, want phi3:mini", request["model"])
 		}
+		options, ok := request["options"].(map[string]interface{})
+		if !ok || options["num_predict"] != float64(24) {
+			t.Fatalf("options = %#v, want bounded num_predict=24", request["options"])
+		}
+		if options["temperature"] != float64(0) {
+			t.Fatalf("options = %#v, want deterministic temperature=0", request["options"])
+		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"response": "grounded draft"})
 	}))
 	defer server.Close()
@@ -434,7 +457,8 @@ func TestGenerateCallsOllamaEndpoint(t *testing.T) {
 	service := withTrustedTestFinalEffects(t, &Service{policy: policy})
 
 	result, err := service.Generate(withTrustedTestEffect(GenerateRequest{
-		Task: "Summarize this short note",
+		Task:      "Summarize this short note",
+		MaxTokens: 24,
 		RouteDecision: &RouteDecision{
 			SelectedProviderID: "ollama",
 			SelectedModelID:    "phi3:mini",
@@ -450,6 +474,18 @@ func TestGenerateCallsOllamaEndpoint(t *testing.T) {
 	}
 	if result.Output != "grounded draft" {
 		t.Fatalf("output = %q, want grounded draft", result.Output)
+	}
+}
+
+func TestGenerationOutputTokenLimitIsBounded(t *testing.T) {
+	t.Setenv("LLM_MAX_OUTPUT_TOKENS", "128")
+	for _, test := range []struct {
+		requested int
+		want      int
+	}{{requested: 0, want: 128}, {requested: 16, want: 16}, {requested: 1000, want: 128}} {
+		if got := boundedGenerationMaxTokens(test.requested); got != test.want {
+			t.Fatalf("boundedGenerationMaxTokens(%d) = %d, want %d", test.requested, got, test.want)
+		}
 	}
 }
 

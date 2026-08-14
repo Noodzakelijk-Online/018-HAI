@@ -756,6 +756,9 @@ class CIWorkflowContractTest(unittest.TestCase):
         generator = (ROOT / "scripts" / "prepare-ngrok-windows.ps1").read_text(
             encoding="utf-8"
         )
+        discovery = (ROOT / "scripts" / "discover-ngrok-windows.ps1").read_text(
+            encoding="utf-8"
+        )
         a2a_smoke = (ROOT / "scripts" / "smoke-a2a-bridge.ps1").read_text(
             encoding="utf-8"
         )
@@ -818,6 +821,17 @@ class CIWorkflowContractTest(unittest.TestCase):
         ):
             with self.subTest(cloud_profile_generator=required):
                 self.assertIn(required, generator)
+        for required in (
+            "Get-NetTCPConnection",
+            "Start-Process",
+            "-WindowStyle Hidden",
+            "127.0.0.1:$InspectionPort/api/tunnels",
+            "Stop-Process -Id $process.Id",
+            "Test-NgrokHost",
+        ):
+            with self.subTest(endpoint_discovery=required):
+                self.assertIn(required, discovery)
+        self.assertNotIn("--pooling-enabled", discovery)
         secured_up = "up -d --no-build idp backend frontend nginx"
         tunnel_up = "up -d --no-build ngrok"
         self.assertIn(secured_up, preflight)
@@ -838,6 +852,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("$readinessPayload.PSObject.Properties['checks']", preflight)
         self.assertIn("$readyPayload.PSObject.Properties['checks']", preflight)
         self.assertIn("public readiness response was not marked no-store", preflight)
+
         self.assertIn("local readiness response was not marked no-store", preflight)
         self.assertIn("smoke-a2a-bridge.ps1", preflight)
         self.assertIn("the tunnel was stopped", preflight)
@@ -897,6 +912,50 @@ class CIWorkflowContractTest(unittest.TestCase):
         ):
             with self.subTest(entrypoint_required=required):
                 self.assertIn(required, entrypoint)
+
+    def test_local_ollama_profile_is_private_pinned_and_resource_bounded(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        smoke = (ROOT / "scripts" / "smoke-ollama-provider.ps1").read_text(
+            encoding="utf-8"
+        )
+        policy = (ROOT / "backend" / "internal" / "llm" / "policy.go").read_text(
+            encoding="utf-8"
+        )
+        service_start = compose.index("  ollama-local:\n")
+        service_end = compose.index("\n  agent-framework-runner:\n", service_start)
+        service = compose[service_start:service_end]
+
+        self.assertIn('profiles: ["local-model"]', service)
+        self.assertRegex(
+            service,
+            r"ollama/ollama:0\.32\.11@sha256:[0-9a-f]{64}",
+        )
+        self.assertNotIn("\n    ports:", service)
+        self.assertIn("networks: [service-hub]", service)
+        self.assertIn("read_only: true", service)
+        self.assertIn('cap_drop: ["ALL"]', service)
+        self.assertIn('OLLAMA_MAX_LOADED_MODELS: "1"', service)
+        self.assertIn('OLLAMA_NUM_PARALLEL: "1"', service)
+        self.assertIn("HAI_OLLAMA_MEMORY_LIMIT:-2g", service)
+        self.assertIn("HAI_OLLAMA_CPU_LIMIT:-2.0", service)
+        self.assertIn("ollama-local-data:/root/.ollama", service)
+        self.assertIn("LLM_MAX_OUTPUT_TOKENS", compose)
+        self.assertIn(
+            '"num_predict": boundedGenerationMaxTokens(request.MaxTokens)', policy
+        )
+        self.assertIn('"max_tokens":  maxTokens', policy)
+        for required in (
+            "/api/v1/llm/probes",
+            "/api/v1/llm/route",
+            "/api/v1/llm/generate",
+            "/api/v1/llm/generations?limit=10",
+            "provider_reported",
+            "estimatedCostEur -ne 0",
+            "PSObject.Properties.Name -contains 'output'",
+            "readiness.summary.warn -ne 0",
+        ):
+            with self.subTest(local_model_acceptance=required):
+                self.assertIn(required, smoke)
 
     def test_windows_initializer_generates_every_required_production_secret(self) -> None:
         initializer = (ROOT / "scripts" / "initialize-windows.ps1").read_text(
@@ -1152,6 +1211,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "hai_smoke_mint_jwt owner ci-secret windows-owner",
             "python scripts/test_ci_contract.py",
             "python scripts/test_smoke_auth_contract.py",
+            "scripts/discover-ngrok-windows.ps1",
             r".\scripts\start-ngrok.ps1 -ValidateOnly",
             "scripts/prepare-ngrok-windows.ps1",
             "scripts/backup-windows.ps1",

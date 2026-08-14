@@ -14,8 +14,8 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
@@ -37,8 +37,8 @@ jobs:
       run:
         working-directory: idp
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25.13"
           cache-dependency-path: idp/go.sum
@@ -58,8 +58,8 @@ jobs:
       run:
         working-directory: nginx-config-manager
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25.13"
           cache-dependency-path: nginx-config-manager/go.sum
@@ -79,8 +79,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22.22.3"
           cache: npm
@@ -101,7 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: CI workflow contract
         run: python3 scripts/test_ci_contract.py
       - name: Gateway authentication contract
@@ -225,8 +225,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
@@ -282,8 +282,8 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
@@ -387,8 +387,8 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
@@ -464,8 +464,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Python CI and authentication contracts
@@ -478,6 +478,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          $null = [ScriptBlock]::Create((Get-Content scripts/discover-ngrok-windows.ps1 -Raw))
+          $null = [ScriptBlock]::Create((Get-Content scripts/smoke-ollama-provider.ps1 -Raw))
           $null = [ScriptBlock]::Create((Get-Content scripts/start-ngrok.ps1 -Raw))
           $null = [ScriptBlock]::Create((Get-Content scripts/prepare-ngrok-windows.ps1 -Raw))
           try {

@@ -18,7 +18,7 @@ reviewed runtime, policy, and evidence path are configured.
 > changed Basic to Advanced view state, and passed a narrow mobile check without
 > console errors, HTTP failures, redirects, framework overlays, or horizontal
 > overflow. The full backend and IDP suites, Angular production build, 418
-> frontend tests, 33 CI workflow-contract tests, Compose validation, and Postgres-backed
+> frontend tests, 34 CI workflow-contract tests, Compose validation, and Postgres-backed
 > critical-path checks have been exercised. The task review queue also passed
 > against the retained live PostgreSQL data. These observations are
 > local-environment evidence, not a claim that every Windows machine or account
@@ -244,7 +244,7 @@ either observability server.
 | Core operating flow | Pursuits, workflows, task attempts, approvals, verification, audit, compact memory, source extraction, and ambient proposals are implemented and persisted. |
 | Intake safety | New source, assistant, and ambient input is matched to an active pursuit or becomes a non-executable candidate. An approval-capable user must accept a candidate before its first governed workflow is created. |
 | External accounts | Local/export ingestion and read-only GitHub sync are available. Gmail and Trello have bounded live acceptance evidence. Google Drive, Google Contacts, and primary Google Calendar have separate read-only OAuth adapters with bounded backfills and native change/sync cursors, but no retained live sandbox acceptance evidence yet. Contact candidates require review. Calendar event times feed deterministic due dates, bounded preparation proposals, and overlap review; moving or cancelling source events retracts stale Calendar-derived work without deleting obligations. These paths cannot write back. WhatsApp and browser connectors are not live. |
-| Models and runtimes | Local/free-first routing and guarded adapter surfaces exist. No provider or runtime is live-proven until its scoped probe, approved task, audit, and verification evidence exist. |
+| Models and runtimes | Local/free-first routing and guarded adapter surfaces exist. The opt-in private Ollama profile has a retained Windows acceptance run for `qwen2.5:0.5b`: live probe, local-tier route, bounded generation, provider-reported token usage, EUR 0 cost, redacted persisted history, and fully ready health all passed. Other providers and runtimes remain unproven until their own scoped evidence exists. |
 | Production readiness | Not claimed. Clean-machine deployment and bounded acceptance for each newly enabled provider or mutable runtime remain release gates. |
 
 ### Verification Snapshot
@@ -256,8 +256,8 @@ target-machine checks before relying on a path for real work.
 | --- | --- | --- |
 | Local Compose and gateway | A separate clean checkout on this Windows host generated a new `.env.local`, built the canonical stack from source, reached healthy state with empty volumes, signed in the first-run owner, and completed a bounded governed workflow. The current retained stack serves `/`, `/control-center`, `/healthz`, and `/readyz` through nginx; protected `/api/v1/*` engine routes require a signed session. | Repeat the clean-clone acceptance chain on every distinct Windows 11 release target and retain its evidence. |
 | Browser session | The unauthenticated session check returns HTTP 200 with `authenticated:false` and no-store caching; Angular routes a browser without a refreshable session to `/login`. A signed-in Playwright acceptance run completed source intake, pursuit creation, exact runtime selection, durable approval, read-only execution, terminal verification, and creation of an immutable completion attestation. The 2026-08-09 regression run reported no console or HTTP failures. | Repeat the acceptance run on each release target and add retained coverage for any new mutable or external action. |
-| Go and Angular code | The full backend and IDP Go suites, frontend production build, 418 headless Angular tests, 54 executable CI/smoke/gateway contract tests, migration-chain checks, live memory/workflow PostgreSQL tests, and signed-in browser acceptance passes are green. The production initial bundle is about 626 kB raw; five existing page-style budget warnings remain below the configured 18 kB error ceiling. | Keep these gates green and reduce the remaining style-budget warnings before a production release. The browser exercise proves the local governed flows only; it does not prove Calendar write, message delivery, paid-provider invocation, or mutable external side effects. |
-| Sources and LLMs | Local/export ingestion, provider probes, GitHub sync, and bounded Gmail/Trello acceptance evidence exist. | A scoped local-model task and any newly configured account need their own retained audit and verification evidence. |
+| Go and Angular code | The full backend and IDP Go suites, frontend production build, 418 headless Angular tests, 55 executable CI/smoke/gateway contract tests, migration-chain checks, live memory/workflow PostgreSQL tests, and signed-in browser acceptance passes are green. The production initial bundle is about 626 kB raw; five existing page-style budget warnings remain below the configured 18 kB error ceiling. | Keep these gates green and reduce the remaining style-budget warnings before a production release. The browser exercise proves the local governed flows only; it does not prove Calendar write, message delivery, paid-provider invocation, or mutable external side effects. |
+| Sources and LLMs | Local/export ingestion, provider probes, GitHub sync, bounded Gmail/Trello evidence, and one scoped zero-cost Ollama generation acceptance exist. Generation history stores usage/audit metadata without prompt or output content. | Every newly configured account, model, or provider still needs its own retained probe, bounded task, audit, and verification evidence. |
 | Runtimes and external effects | Script, Docker, Hermes, Odysseus, and OpenClaw adapters have bounded, approval-aware interfaces. The local registry-to-read-only-API path is acceptance-tested with deterministic receipt verification. | Explicit upstream installation, narrow allowlists, a reviewed dry run, and a verified approved task for every mutable or external adapter. |
 
 ## Current Safe Operator Flows
@@ -805,6 +805,19 @@ Before reporting success, the launcher verifies the real public HTTPS origin,
 anonymous session isolation, frontend shell, HSTS, and the configured A2A
 exposure state; a failed probe stops the tunnel.
 
+When the ngrok profile has an authtoken but the account's fixed endpoint is
+unknown, discover it without exposing HAI or disturbing another ngrok agent:
+
+```powershell
+$publicUrl = .\scripts\discover-ngrok-windows.ps1 -InspectionPort 4045
+```
+
+The helper starts a short-lived isolated agent against an unused local port,
+validates the assigned HTTPS hostname, then stops only that exact process. It
+fails if its inspection port is occupied or the assigned endpoint is already
+online. Do not use ngrok pooling to bypass that conflict: reserve a separate
+HAI domain so requests cannot be distributed across unrelated applications.
+
 The optional A2A connector remains a planning-only integration surface. It is
 local by default. An ngrok edge policy returns 404 for its Agent Card and task
 path unless public A2A is explicitly enabled. To expose that bounded endpoint
@@ -909,6 +922,29 @@ OpenAI-compatible local servers, and configured free/freemium providers. Model
 catalog entries cover Qwen, DeepSeek, Llama, Mistral/Mixtral, Gemma, Phi, and
 other configured provider models. Provider status must be read as configuration
 and probe history, not as a live-service guarantee.
+
+HAI also includes an opt-in, private Ollama profile. It exposes no host port,
+loads one model at a time, permits one parallel request, and defaults to a 2 GB
+memory / 2 CPU ceiling. Configure the exact reviewed tag in an ignored local
+environment file, then start and verify it:
+
+```powershell
+# In .env.local:
+# OLLAMA_BASE_URL=http://ollama-local:11434
+# OLLAMA_MODEL_IDS=qwen2.5:0.5b
+# LLM_REQUIRE_RECENT_LIVE_PROBE=true
+
+docker compose --env-file .env.local -f docker-compose.local.yml `
+  --profile local-model up -d ollama-local backend
+docker compose --env-file .env.local -f docker-compose.local.yml `
+  --profile local-model exec ollama-local ollama pull qwen2.5:0.5b
+.\scripts\smoke-ollama-provider.ps1 -EnvFile .\.env.local
+```
+
+The smoke performs a real authenticated probe, route, bounded generation, token
+and EUR 0 accounting check, redacted-history check, and readiness check. Model
+output remains an unvalidated draft; this acceptance proves the operational
+provider path, not factual correctness.
 
 ### Agent runtimes
 

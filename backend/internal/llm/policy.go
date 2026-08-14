@@ -989,10 +989,7 @@ func (s *Service) callProvider(ctx context.Context, provider Provider, model Mod
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 	prompt := buildPrompt(request)
-	maxOutputTokens := request.MaxTokens
-	if maxOutputTokens <= 0 {
-		maxOutputTokens = 800
-	}
+	maxOutputTokens := boundedGenerationMaxTokens(request.MaxTokens)
 	estimatedCostEUR := estimateModelUsageCostEUR(
 		model,
 		estimateTokens(prompt),
@@ -1187,13 +1184,15 @@ func (s *Service) callOllama(
 	estimatedCostEUR float64,
 	request GenerateRequest,
 ) (string, providerUsage, error) {
-	payload := map[string]interface{}{
-		"model":  model.ID,
-		"prompt": prompt,
-		"stream": false,
+	options := map[string]interface{}{
+		"num_predict": boundedGenerationMaxTokens(request.MaxTokens),
+		"temperature": request.Temperature,
 	}
-	if request.Temperature > 0 {
-		payload["options"] = map[string]interface{}{"temperature": request.Temperature}
+	payload := map[string]interface{}{
+		"model":   model.ID,
+		"prompt":  prompt,
+		"stream":  false,
+		"options": options,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -1263,10 +1262,7 @@ func (s *Service) callOpenAICompatible(
 	estimatedCostEUR float64,
 	request GenerateRequest,
 ) (string, providerUsage, error) {
-	maxTokens := request.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = 800
-	}
+	maxTokens := boundedGenerationMaxTokens(request.MaxTokens)
 	payload := map[string]interface{}{
 		"model": model.ID,
 		"messages": []map[string]string{
@@ -1355,6 +1351,24 @@ func (s *Service) callOpenAICompatible(
 		usage.HasOutput = true
 	}
 	return decoded.Choices[0].Message.Content, usage, nil
+}
+
+func boundedGenerationMaxTokens(requested int) int {
+	const (
+		defaultTokens = 800
+		hardLimit     = 32768
+	)
+	configuredLimit := intEnv("LLM_MAX_OUTPUT_TOKENS", hardLimit)
+	if configuredLimit <= 0 || configuredLimit > hardLimit {
+		configuredLimit = hardLimit
+	}
+	if requested <= 0 {
+		requested = defaultTokens
+	}
+	if requested > configuredLimit {
+		return configuredLimit
+	}
+	return requested
 }
 
 func (s *Service) addLog(decision RouteDecision) {
@@ -1825,7 +1839,7 @@ func providerRuntimeReadiness(provider Provider) providerReadiness {
 	if unsafeEndpointHost(host) && strings.ToLower(strings.TrimSpace(os.Getenv("LLM_ALLOW_LINK_LOCAL_ENDPOINTS"))) != "true" {
 		return providerReadiness{configured: false, status: "blocked_endpoint", reason: "provider endpoint uses link-local, metadata, or unspecified address space"}
 	}
-	if isLoopbackOnlyProvider(provider.ID) && !isLocalModelHost(host) {
+	if isLoopbackOnlyProvider(provider.ID) && !isLocalModelHostForProvider(provider.ID, host) {
 		return providerReadiness{configured: false, status: "blocked_endpoint", reason: localProviderDisplayName(provider.ID) + " endpoint must use localhost, loopback, or host.docker.internal"}
 	}
 	if provider.APIKeyEnv != "" && strings.TrimSpace(os.Getenv(provider.APIKeyEnv)) == "" {
@@ -1886,15 +1900,29 @@ func unsafeEndpointHost(host string) bool {
 }
 
 // isLocalModelHost allows a local server on the host OS when HAI itself runs
-// in Docker. It intentionally rejects LAN and public endpoints for llama.cpp:
-// this provider is the explicit local/offline route, not a cloud gateway.
+// in Docker, plus HAI's exact Compose-internal Ollama service name. Arbitrary
+// container, LAN, and public hostnames remain rejected: local providers are an
+// explicit offline route, not a cloud-gateway bypass.
 func isLocalModelHost(host string) bool {
-	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	return isLoopbackModelHost(host) || normalizedModelHost(host) == "ollama-local"
+}
+
+func isLocalModelHostForProvider(providerID, host string) bool {
+	return isLoopbackModelHost(host) || (providerID == "ollama" && normalizedModelHost(host) == "ollama-local")
+}
+
+func isLoopbackModelHost(host string) bool {
+	host = normalizedModelHost(host)
 	if host == "localhost" || host == "host.docker.internal" {
 		return true
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+func normalizedModelHost(host string) string {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	return host
 }
 
 type providerLookupIPAddr func(context.Context, string) ([]net.IPAddr, error)
@@ -1916,11 +1944,11 @@ func newProviderHTTPClient(lookup providerLookupIPAddr) *http.Client {
 		// runtimes must stay local and configured cloud endpoints must be
 		// contacted directly rather than silently through an environment proxy.
 		Transport: &http.Transport{
-			Proxy:                 nil,
-			MaxIdleConns:          32,
-			MaxIdleConnsPerHost:   4,
-			IdleConnTimeout:       60 * time.Second,
-			TLSHandshakeTimeout:   5 * time.Second,
+			Proxy:               nil,
+			MaxIdleConns:        32,
+			MaxIdleConnsPerHost: 4,
+			IdleConnTimeout:     60 * time.Second,
+			TLSHandshakeTimeout: 5 * time.Second,
 			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 				host, port, err := net.SplitHostPort(address)
 				if err != nil {
@@ -2068,7 +2096,7 @@ func defaultPolicy() Policy {
 	dsparkEndpoint := strings.TrimSpace(os.Getenv("DSPARK_BASE_URL"))
 	dsparkModelID := configuredLocalModelID("DSPARK_MODEL_ID", "dspark-default")
 	dsparkEnabled := false
-	if parsed, err := url.Parse(dsparkEndpoint); err == nil && isLocalModelHost(parsed.Hostname()) {
+	if parsed, err := url.Parse(dsparkEndpoint); err == nil && isLocalModelHostForProvider("dspark", parsed.Hostname()) {
 		dsparkEnabled = envEnabled("DSPARK_ENABLED")
 	}
 	liteLLMEnabled := envEnabled("LITELLM_ENABLED")

@@ -47,6 +47,21 @@ read-only with dropped capabilities and bounded CPU, memory, and process count.
 
 ## Start on Windows 11
 
+If the Windows ngrok profile contains an authtoken but its assigned endpoint is
+unknown, discover the endpoint without forwarding HAI itself:
+
+```powershell
+$publicUrl = .\scripts\discover-ngrok-windows.ps1 -InspectionPort 4045
+```
+
+The discovery helper uses a separate local inspection port and an unused
+upstream, validates that ngrok returned an HTTPS ngrok hostname, stops only the
+process it created, and removes its temporary files. It refuses an occupied
+inspection port and leaves every existing ngrok process untouched. If ngrok
+reports `ERR_NGROK_334`, that account endpoint already belongs to a running
+agent. Do not enable pooling: stop the owning application during an approved
+maintenance window or reserve a separate fixed HAI domain.
+
 Generate a separate hardened cloud profile instead of weakening the local
 profile. The command disables local-login bypass, enables secure cookies, keeps
 the gateway loopback-bound, applies a positive rate limit, sets exact OAuth
@@ -54,7 +69,7 @@ callbacks, and validates the result before retaining it:
 
 ```powershell
 .\scripts\prepare-ngrok-windows.ps1 `
-  -PublicUrl https://your-hai-domain.ngrok.app `
+  -PublicUrl $publicUrl `
   -PublishA2A
 .\scripts\start-ngrok.ps1 -EnvFile .env.ngrok.local
 ```
