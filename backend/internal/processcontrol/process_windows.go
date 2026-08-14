@@ -1,6 +1,6 @@
 //go:build windows
 
-package automation
+package processcontrol
 
 import (
 	"os"
@@ -12,7 +12,7 @@ import (
 
 const createNewProcessGroup = 0x00000200
 
-func configureControlledProcess(cmd *exec.Cmd) {
+func configurePlatform(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewProcessGroup, HideWindow: true}
 	cmd.WaitDelay = time.Second
 	cmd.Cancel = func() error {

@@ -21,6 +21,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("HAI_RUNTIME_TASK_ID") == "block-runtime-cli" {
+		time.Sleep(30 * time.Second)
+		os.Exit(0)
+	}
 	if len(os.Args) > 1 && (os.Args[1] == "chat" || os.Args[1] == "agent") {
 		for _, arg := range os.Args[1:] {
 			fmt.Fprintln(os.Stdout, arg)
@@ -685,6 +689,39 @@ func TestHermesAdapterInvokesControlledCli(t *testing.T) {
 	}
 }
 
+func TestHermesAdapterCancelsControlledCli(t *testing.T) {
+	root := t.TempDir()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve native test executable: %v", err)
+	}
+	adapter := &hermesAdapter{
+		enabled:       true,
+		executable:    executable,
+		workspace:     root,
+		workspaceRoot: root,
+		maxTurns:      1,
+		timeout:       30 * time.Second,
+		outputLimit:   defaultOutputLimit,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan Result, 1)
+	go func() {
+		done <- adapter.ExecuteTask(ctx, Task{ID: "block-runtime-cli", Prompt: "wait"})
+	}()
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+
+	select {
+	case result := <-done:
+		if result.Status != "blocked" || !strings.Contains(result.Message, "process tree was stopped") {
+			t.Fatalf("canceled Hermes result = %#v", result)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Hermes CLI remained alive after caller cancellation")
+	}
+}
+
 func TestOpenClawInfoAdvertisesEcosystemAndControls(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "openclaw")
@@ -903,6 +940,41 @@ func TestOpenClawAdapterInvokesControlledCli(t *testing.T) {
 		if strings.Contains(result.Output, forbidden) {
 			t.Fatalf("OpenClaw execution exposed forbidden operation %q in %q", forbidden, result.Output)
 		}
+	}
+}
+
+func TestOpenClawAdapterCancelsControlledCli(t *testing.T) {
+	root := t.TempDir()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve native test executable: %v", err)
+	}
+	adapter := &openClawAdapter{
+		enabled:         true,
+		executable:      executable,
+		workspace:       root,
+		workspaceRoot:   root,
+		timeout:         30 * time.Second,
+		outputLimit:     defaultOutputLimit,
+		agentCLIEnabled: true,
+		sandboxRequired: true,
+		sandboxMode:     "all",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan Result, 1)
+	go func() {
+		done <- adapter.ExecuteTask(ctx, Task{ID: "block-runtime-cli", Prompt: "wait"})
+	}()
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+
+	select {
+	case result := <-done:
+		if result.Status != "blocked" || !strings.Contains(result.Message, "process tree was stopped") {
+			t.Fatalf("canceled OpenClaw result = %#v", result)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("OpenClaw CLI remained alive after caller cancellation")
 	}
 }
 

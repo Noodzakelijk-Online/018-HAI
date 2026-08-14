@@ -1,6 +1,6 @@
 //go:build unix
 
-package automation
+package processcontrol
 
 import (
 	"errors"
@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func configureControlledProcess(cmd *exec.Cmd) {
+func configurePlatform(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = time.Second
 	cmd.Cancel = func() error {

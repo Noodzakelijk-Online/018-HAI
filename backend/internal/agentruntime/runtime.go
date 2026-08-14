@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"automation-hub-backend/internal/pathsafety"
+	"automation-hub-backend/internal/processcontrol"
 	"automation-hub-backend/internal/safety"
 
 	"github.com/google/uuid"
@@ -773,6 +774,7 @@ func (a *hermesAdapter) ExecuteTask(parent context.Context, task Task) Result {
 		args = append(args, "--skills", strings.Join(a.skills, ","))
 	}
 	cmd := exec.CommandContext(ctx, a.executable, args...)
+	processcontrol.Configure(cmd)
 	cmd.Dir = a.workspace
 	envAdditions := map[string]string{
 		"HAI_RUNTIME_TASK_ID": task.ID,
@@ -814,6 +816,9 @@ func (a *hermesAdapter) ExecuteTask(parent context.Context, task Task) Result {
 		if ctx.Err() == context.DeadlineExceeded {
 			status = "blocked"
 			message = "Hermes execution exceeded the configured timeout and was stopped"
+		} else if ctx.Err() == context.Canceled {
+			status = "blocked"
+			message = "Hermes execution was canceled and its process tree was stopped"
 		}
 	}
 	return Result{
@@ -828,6 +833,7 @@ func (a *hermesAdapter) ExecuteTask(parent context.Context, task Task) Result {
 			"Hermes invoked without shell interpolation or --yolo",
 			"filesystem checkpoints enabled",
 			"Hermes ecosystem constrained through configured toolsets, skills, workspace, and HAI approval gates",
+			"runtime cancellation terminates the Hermes process tree",
 			"bounded runtime output captured",
 		},
 	}
@@ -1229,6 +1235,7 @@ func (a *openClawAdapter) ExecuteTask(parent context.Context, task Task) Result 
 		args = append(args, "--thinking", a.thinking)
 	}
 	cmd := exec.CommandContext(ctx, a.executable, args...)
+	processcontrol.Configure(cmd)
 	cmd.Dir = a.workspace
 	envAdditions := map[string]string{
 		"HAI_RUNTIME_TASK_ID":    task.ID,
@@ -1264,6 +1271,9 @@ func (a *openClawAdapter) ExecuteTask(parent context.Context, task Task) Result 
 		if ctx.Err() == context.DeadlineExceeded {
 			status = "blocked"
 			message = "OpenClaw execution exceeded the configured timeout and was stopped"
+		} else if ctx.Err() == context.Canceled {
+			status = "blocked"
+			message = "OpenClaw execution was canceled and its process tree was stopped"
 		}
 	}
 	return Result{
@@ -1281,6 +1291,7 @@ func (a *openClawAdapter) ExecuteTask(parent context.Context, task Task) Result 
 			"OpenClaw messaging, public posting, nodes, browser, cron, and host tools are not invoked by this adapter",
 			"OpenClaw Gateway auth, pairing, scopes, sandboxing, and tool approvals remain authoritative",
 			"dedicated workspace, timeout, output limit, environment allowlist, and secret redaction enforced by HAI",
+			"runtime cancellation terminates the OpenClaw process tree",
 		},
 	}
 }

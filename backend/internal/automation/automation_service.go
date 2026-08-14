@@ -27,6 +27,7 @@ import (
 	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/executionauth"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/processcontrol"
 	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/util"
 
@@ -1736,7 +1737,7 @@ func (s *service) executeScriptLaunch(
 	ctx, cancel := context.WithTimeout(executionContext, time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, scriptPath)
-	configureControlledProcess(cmd)
+	processcontrol.Configure(cmd)
 	cmd.Dir = filepath.Dir(scriptPath)
 	cmd.Env = safeScriptEnvironment(automation)
 	_, authorizationAudit, err := s.authorizeExternalLaunch(

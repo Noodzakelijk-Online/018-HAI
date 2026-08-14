@@ -1,12 +1,12 @@
 //go:build !unix && !windows
 
-package automation
+package processcontrol
 
 import (
 	"os/exec"
 	"time"
 )
 
-func configureControlledProcess(cmd *exec.Cmd) {
+func configurePlatform(cmd *exec.Cmd) {
 	cmd.WaitDelay = time.Second
 }
