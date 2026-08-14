@@ -2,6 +2,7 @@ package llm
 
 import (
 	"automation-hub-backend/internal/models"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -448,6 +449,71 @@ func TestGenerateCallsOllamaEndpoint(t *testing.T) {
 	}
 	if result.Output != "grounded draft" {
 		t.Fatalf("output = %q, want grounded draft", result.Output)
+	}
+}
+
+func TestGenerateContextCancelsProviderWithoutChargingUsage(t *testing.T) {
+	requestStarted := make(chan struct{})
+	releaseProvider := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-releaseProvider
+	}))
+	defer func() {
+		close(releaseProvider)
+		server.CloseClientConnections()
+		server.Close()
+	}()
+
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[0].EndpointURL = server.URL
+	history := &fakeGenerationHistoryRepository{}
+	service := withTrustedTestFinalEffects(t, &Service{
+		policy:            policy,
+		usage:             map[string]UsageCounter{},
+		generationHistory: history,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	resultCh := make(chan *GenerationResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		result, err := service.GenerateContext(ctx, withTrustedTestEffect(GenerateRequest{
+			Task: "Summarize this short note",
+			RouteDecision: &RouteDecision{
+				SelectedProviderID: "ollama",
+				SelectedModelID:    "phi3:mini",
+				SelectedModelName:  "Phi small local",
+				Tier:               TierLocal,
+			},
+		}))
+		resultCh <- result
+		errCh <- err
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("provider request did not start")
+	}
+	cancel()
+
+	var result *GenerationResult
+	select {
+	case result = <-resultCh:
+	case <-time.After(time.Second):
+		t.Fatal("GenerateContext did not return after caller cancellation")
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("GenerateContext: %v", err)
+	}
+	if result.Status != "stopped" || result.InputTokens != 0 || result.OutputTokens != 0 || result.EstimatedCostEUR != 0 {
+		t.Fatalf("canceled generation = %#v, want stopped with zero usage", result)
+	}
+	if len(service.usage) != 0 {
+		t.Fatalf("canceled generation updated usage counters: %#v", service.usage)
+	}
+	if len(history.records) != 1 || history.records[0].Status != "stopped" || history.records[0].InputTokens != 0 || history.records[0].OutputTokens != 0 {
+		t.Fatalf("canceled generation history = %#v", history.records)
 	}
 }
 

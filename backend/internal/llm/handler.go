@@ -124,7 +124,7 @@ func (h *Handler) Generate(c *gin.Context) {
 		}
 		request.EffectContext = &effectContext
 	}
-	result, err := h.service.Generate(request)
+	result, err := h.service.GenerateContext(c.Request.Context(), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -684,9 +684,22 @@ func (s *Service) Route(request RouteRequest) (RouteDecision, error) {
 }
 
 func (s *Service) Generate(request GenerateRequest) (result *GenerationResult, err error) {
+	return s.GenerateContext(context.Background(), request)
+}
+
+// GenerateContext binds provider inference to the caller lifecycle. HTTP
+// handlers and durable workers should pass their request or job context so an
+// abandoned operation cannot continue consuming model time, tokens, or quota.
+func (s *Service) GenerateContext(ctx context.Context, request GenerateRequest) (result *GenerationResult, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	defer func() { s.recordGeneration(result, request) }()
 	started := time.Now().UTC()
-	stopState, stopErr := s.evaluateEmergencyStop(context.Background())
+	stopState, stopErr := s.evaluateEmergencyStop(ctx)
+	if ctx.Err() != nil {
+		return canceledGenerationResult(started, nil, nil, ctx.Err()), nil
+	}
 	if stopErr != nil {
 		return &GenerationResult{
 			Status:     "blocked",
@@ -887,8 +900,11 @@ func (s *Service) Generate(request GenerateRequest) (result *GenerationResult, e
 		}
 	}
 
-	output, reportedUsage, err := s.callProvider(context.Background(), provider, model, endpoint, request)
+	output, reportedUsage, err := s.callProvider(ctx, provider, model, endpoint, request)
 	if err != nil {
+		if ctx.Err() != nil {
+			return canceledGenerationResult(started, &provider, &model, ctx.Err()), nil
+		}
 		return &GenerationResult{
 			ProviderID:       provider.ID,
 			ModelID:          model.ID,
@@ -931,6 +947,27 @@ func (s *Service) Generate(request GenerateRequest) (result *GenerationResult, e
 		FallbackPath:     fallbackLabels(decision.FallbackPath),
 		LoggedAt:         time.Now().UTC(),
 	}, nil
+}
+
+func canceledGenerationResult(started time.Time, provider *Provider, model *Model, cause error) *GenerationResult {
+	result := &GenerationResult{
+		Status:     "stopped",
+		Reason:     "model generation stopped because the caller canceled the operation",
+		DurationMs: time.Since(started).Milliseconds(),
+		LoggedAt:   time.Now().UTC(),
+	}
+	if errors.Is(cause, context.DeadlineExceeded) {
+		result.Reason = "model generation stopped because the caller deadline expired"
+	}
+	if provider != nil {
+		result.ProviderID = provider.ID
+	}
+	if model != nil {
+		result.ModelID = model.ID
+		result.ModelName = model.Name
+		result.Tier = model.Tier
+	}
+	return result
 }
 
 func (s *Service) findProviderModel(providerID, modelID string) (Provider, Model, bool) {

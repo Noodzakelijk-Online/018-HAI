@@ -3,6 +3,7 @@ package llm
 import (
 	"automation-hub-backend/internal/models"
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -65,6 +66,71 @@ func TestGenerateHandlerIgnoresClientPaidApprovalFlag(t *testing.T) {
 	}
 	if result.Status != "blocked" {
 		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+}
+
+func TestGenerateHandlerCancelsProviderWithHTTPContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	requestStarted := make(chan struct{})
+	releaseProvider := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-releaseProvider
+	}))
+	defer func() {
+		close(releaseProvider)
+		server.CloseClientConnections()
+		server.Close()
+	}()
+
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[0].EndpointURL = server.URL
+	service := withTrustedTestFinalEffects(t, &Service{policy: policy, usage: map[string]UsageCounter{}})
+	handler := NewHandlerWithEffectContext(service, func(*gin.Context) (EffectContext, error) {
+		return *trustedTestEffectContext(), nil
+	})
+	body, err := json.Marshal(GenerateRequest{
+		Task: "Summarize this short note",
+		RouteDecision: &RouteDecision{
+			SelectedProviderID: "ollama",
+			SelectedModelID:    "phi3:mini",
+			SelectedModelName:  "Phi small local",
+			Tier:               TierLocal,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	requestContext, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodPost, "/generate", bytes.NewReader(body)).WithContext(requestContext)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(response)
+	ginContext.Request = request
+	done := make(chan struct{})
+	go func() {
+		handler.Generate(ginContext)
+		close(done)
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("provider request did not start")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("generation handler did not return after HTTP cancellation")
+	}
+
+	var result GenerationResult
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if response.Code != http.StatusOK || result.Status != "stopped" {
+		t.Fatalf("canceled handler response = %d %#v", response.Code, result)
 	}
 }
 
