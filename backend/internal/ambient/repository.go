@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -24,6 +25,10 @@ type Repository interface {
 	Scans(limit int) ([]models.AmbientScan, error)
 	ScansForOwner(ownerIdentity string, limit int) ([]models.AmbientScan, error)
 	PruneScans(keep int) error
+}
+
+type opportunityBatchReader interface {
+	FindOpportunitiesByFingerprints(fingerprints []string) ([]models.AmbientOpportunity, error)
 }
 
 type GormRepository struct {
@@ -91,6 +96,30 @@ func (r *GormRepository) FindOpportunityByFingerprint(fingerprint string) (*mode
 		return nil, err
 	}
 	return &item, nil
+}
+
+func (r *GormRepository) FindOpportunitiesByFingerprints(fingerprints []string) ([]models.AmbientOpportunity, error) {
+	unique := make([]string, 0, len(fingerprints))
+	seen := make(map[string]struct{}, len(fingerprints))
+	for _, fingerprint := range fingerprints {
+		fingerprint = strings.TrimSpace(fingerprint)
+		if fingerprint == "" {
+			continue
+		}
+		if _, exists := seen[fingerprint]; exists {
+			continue
+		}
+		seen[fingerprint] = struct{}{}
+		unique = append(unique, fingerprint)
+	}
+	if len(unique) == 0 {
+		return []models.AmbientOpportunity{}, nil
+	}
+	var items []models.AmbientOpportunity
+	if err := r.db.Where("fingerprint IN ?", unique).Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (r *GormRepository) SaveOpportunity(item *models.AmbientOpportunity) (*models.AmbientOpportunity, error) {

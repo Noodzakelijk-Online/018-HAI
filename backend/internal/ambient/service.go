@@ -233,33 +233,8 @@ func (s *service) Scan(trigger string) (*models.AmbientScan, error) {
 	scan.OpportunitiesFound = len(candidates)
 	policy := policyFromEnv()
 	now := time.Now().UTC()
-	for _, candidate := range candidates {
-		if candidate.PriorityScore < policy.MinimumScore || candidate.Confidence < policy.MinimumConfidence {
-			scan.Filtered++
-			continue
-		}
-		existing, findErr := s.repo.FindOpportunityByFingerprint(candidate.Fingerprint)
-		if findErr != nil {
-			return fail(findErr)
-		}
-		if existing != nil {
-			if mergeAmbientCandidate(existing, candidate, now) {
-				if _, saveErr := s.repo.SaveOpportunity(existing); saveErr != nil {
-					return fail(saveErr)
-				}
-				scan.Updated++
-			}
-			scan.Deduplicated++
-			scan.DeduplicatedBytes += int64(len(candidate.Rationale) + len(candidate.NextAction) + len(candidate.EvidenceManifest))
-		} else {
-			candidate.LastSeenAt = now
-			candidate.Status = StatusProposed
-			if _, saveErr := s.repo.SaveOpportunity(&candidate); saveErr != nil {
-				return fail(saveErr)
-			}
-			scan.Created++
-		}
-		scan.ManifestBytes += int64(len(candidate.EvidenceManifest))
+	if err := s.storeCandidates(scan, candidates, policy, now); err != nil {
+		return fail(err)
 	}
 	storedOpportunities, listErr := s.repo.Opportunities("", 200)
 	if listErr != nil {
@@ -396,14 +371,21 @@ func (s *service) ScanForOwner(ownerIdentity, trigger string) (*models.AmbientSc
 }
 
 func (s *service) storeCandidates(scan *models.AmbientScan, candidates []models.AmbientOpportunity, policy Policy, now time.Time) error {
+	existingByFingerprint, err := s.existingCandidates(candidates, policy)
+	if err != nil {
+		return err
+	}
 	for _, candidate := range candidates {
 		if candidate.PriorityScore < policy.MinimumScore || candidate.Confidence < policy.MinimumConfidence {
 			scan.Filtered++
 			continue
 		}
-		existing, err := s.repo.FindOpportunityByFingerprint(candidate.Fingerprint)
-		if err != nil {
-			return err
+		existing, prefetched := existingByFingerprint[candidate.Fingerprint]
+		if !prefetched {
+			existing, err = s.repo.FindOpportunityByFingerprint(candidate.Fingerprint)
+			if err != nil {
+				return err
+			}
 		}
 		if existing != nil {
 			if strings.TrimSpace(existing.OwnerIdentity) != strings.TrimSpace(candidate.OwnerIdentity) {
@@ -420,14 +402,45 @@ func (s *service) storeCandidates(scan *models.AmbientScan, candidates []models.
 		} else {
 			candidate.LastSeenAt = now
 			candidate.Status = StatusProposed
-			if _, err := s.repo.SaveOpportunity(&candidate); err != nil {
+			saved, err := s.repo.SaveOpportunity(&candidate)
+			if err != nil {
 				return err
 			}
+			existingByFingerprint[candidate.Fingerprint] = saved
 			scan.Created++
 		}
 		scan.ManifestBytes += int64(len(candidate.EvidenceManifest))
 	}
 	return nil
+}
+
+func (s *service) existingCandidates(candidates []models.AmbientOpportunity, policy Policy) (map[string]*models.AmbientOpportunity, error) {
+	reader, ok := s.repo.(opportunityBatchReader)
+	if !ok {
+		return map[string]*models.AmbientOpportunity{}, nil
+	}
+	fingerprints := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.PriorityScore < policy.MinimumScore || candidate.Confidence < policy.MinimumConfidence {
+			continue
+		}
+		fingerprints = append(fingerprints, candidate.Fingerprint)
+	}
+	items, err := reader.FindOpportunitiesByFingerprints(fingerprints)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]*models.AmbientOpportunity, len(items)+len(fingerprints))
+	for index := range items {
+		item := &items[index]
+		result[item.Fingerprint] = item
+	}
+	for _, fingerprint := range fingerprints {
+		if _, exists := result[fingerprint]; !exists {
+			result[fingerprint] = nil
+		}
+	}
+	return result, nil
 }
 
 // mergeAmbientCandidate applies generated fields while avoiding an hourly

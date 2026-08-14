@@ -700,6 +700,79 @@ func TestStoreCandidatesPersistsSemanticChangeAndDailyFreshness(t *testing.T) {
 	}
 }
 
+func TestStoreCandidatesUsesOneBulkFingerprintLookup(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 19, 0, 0, 0, time.UTC)
+	existingA := models.AmbientOpportunity{
+		ID: uuid.New(), OwnerIdentity: "alice", Fingerprint: strings.Repeat("c", 64),
+		NeedKey: "growth", Title: "Review pursuit", Rationale: "Review is due.",
+		NextAction: "Review the pursuit.", PriorityScore: 70, Confidence: 85,
+		Status: StatusProposed, LastSeenAt: now,
+	}
+	existingB := existingA
+	existingB.ID = uuid.New()
+	existingB.Fingerprint = strings.Repeat("d", 64)
+	existingB.Title = "Plan pursuit"
+	existingB.NextAction = "Plan the pursuit."
+	newCandidate := existingA
+	newCandidate.ID = uuid.Nil
+	newCandidate.Fingerprint = strings.Repeat("e", 64)
+	newCandidate.Title = "Unblock pursuit"
+	newCandidate.NextAction = "Resolve the blocker."
+	filtered := existingA
+	filtered.ID = uuid.Nil
+	filtered.Fingerprint = strings.Repeat("f", 64)
+	filtered.PriorityScore = 5
+
+	repo := &ambientBatchRepositoryStub{
+		ambientRepositoryStub: &ambientRepositoryStub{},
+		existing: map[string]models.AmbientOpportunity{
+			existingA.Fingerprint: existingA,
+			existingB.Fingerprint: existingB,
+		},
+	}
+	engine := NewService(repo, nil, nil).(*service)
+	scan := &models.AmbientScan{}
+
+	err := engine.storeCandidates(scan, []models.AmbientOpportunity{existingA, existingB, newCandidate, filtered}, Policy{MinimumScore: 10}, now)
+	if err != nil {
+		t.Fatalf("storeCandidates: %v", err)
+	}
+	if repo.batchCalls != 1 || repo.singleCalls != 0 {
+		t.Fatalf("fingerprint lookups = batch:%d single:%d, want 1/0", repo.batchCalls, repo.singleCalls)
+	}
+	if len(repo.batchFingerprints) != 3 {
+		t.Fatalf("bulk fingerprints = %d, want three eligible candidates", len(repo.batchFingerprints))
+	}
+	if scan.Deduplicated != 2 || scan.Created != 1 || scan.Filtered != 1 {
+		t.Fatalf("scan counters = %#v, want two deduplicated, one created, one filtered", scan)
+	}
+}
+
+type ambientBatchRepositoryStub struct {
+	*ambientRepositoryStub
+	existing          map[string]models.AmbientOpportunity
+	batchCalls        int
+	singleCalls       int
+	batchFingerprints []string
+}
+
+func (r *ambientBatchRepositoryStub) FindOpportunitiesByFingerprints(fingerprints []string) ([]models.AmbientOpportunity, error) {
+	r.batchCalls++
+	r.batchFingerprints = append([]string{}, fingerprints...)
+	result := make([]models.AmbientOpportunity, 0, len(fingerprints))
+	for _, fingerprint := range fingerprints {
+		if item, exists := r.existing[fingerprint]; exists {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func (r *ambientBatchRepositoryStub) FindOpportunityByFingerprint(fingerprint string) (*models.AmbientOpportunity, error) {
+	r.singleCalls++
+	return r.ambientRepositoryStub.FindOpportunityByFingerprint(fingerprint)
+}
+
 func timePointer(value time.Time) *time.Time { return &value }
 
 func findAmbientNeed(needs []models.AmbientNeed, key string) models.AmbientNeed {
