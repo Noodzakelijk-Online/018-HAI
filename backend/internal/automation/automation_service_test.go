@@ -1268,6 +1268,68 @@ func TestLaunchAllowsDockerWithApproval(t *testing.T) {
 	}
 }
 
+func TestLaunchCancelsDockerRequestWithCallerContext(t *testing.T) {
+	socketPath := filepath.Join(os.TempDir(), "hai-"+uuid.NewString()+".sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Skipf("Unix sockets are unavailable on this platform: %v", err)
+	}
+	started := make(chan struct{})
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() {
+		_ = server.Shutdown(context.Background())
+		_ = listener.Close()
+		_ = os.Remove(socketPath)
+	})
+	t.Setenv("AUTOMATION_DOCKER_CONTROL_ENABLED", "true")
+	t.Setenv("AUTOMATION_DOCKER_ALLOWED_CONTAINERS", "safe-container")
+	t.Setenv("AUTOMATION_DOCKER_SOCKET", socketPath)
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID: id, Name: "Cancelable Docker Automation", URLPath: "cancelable-docker-automation",
+		LaunchType: "docker_service", LaunchTarget: "safe-container",
+	})
+	service := newTestService(repo, events.Publisher{})
+	ctx, cancel := context.WithCancel(context.Background())
+	request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
+		OwnerIdentity: "alice", ExecutionContext: ctx,
+	})
+	resultChannel := make(chan *LaunchResult, 1)
+	errorChannel := make(chan error, 1)
+	go func() {
+		result, launchErr := service.LaunchTask(id, request)
+		resultChannel <- result
+		errorChannel <- launchErr
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Docker launch did not reach the socket server")
+	}
+	cancel()
+	select {
+	case launchErr := <-errorChannel:
+		if launchErr != nil {
+			t.Fatalf("LaunchTask: %v", launchErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Docker launch ignored caller cancellation")
+	}
+	result := <-resultChannel
+	if result == nil || result.Status != "failed" || !strings.Contains(strings.ToLower(result.Message), "canceled") {
+		t.Fatalf("canceled Docker result = %#v", result)
+	}
+	if len(repo.launchEvents) != 1 || !containsString(repo.launchEvents[0].AuditEvents, "docker socket request canceled with its caller context") {
+		t.Fatalf("canceled Docker audit = %#v", repo.launchEvents)
+	}
+}
+
 func TestLaunchBlocksDockerWhenContainerNotAllowlisted(t *testing.T) {
 	t.Setenv("AUTOMATION_DOCKER_CONTROL_ENABLED", "true")
 	t.Setenv("AUTOMATION_DOCKER_ALLOWED_CONTAINERS", "safe-container")

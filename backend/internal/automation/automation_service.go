@@ -1888,7 +1888,13 @@ func (s *service) executeDockerLaunch(
 	}
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	endpoint := "http://docker/containers/" + url.PathEscape(containerName) + "/start"
-	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
+	executionContext := request.ExecutionContext
+	if executionContext == nil {
+		executionContext = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(executionContext, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
 		return failedLaunch(err.Error(), started, append(audit, "docker request creation failed"))
 	}
@@ -1911,6 +1917,12 @@ func (s *service) executeDockerLaunch(
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return failedLaunch("Docker start request was canceled and stopped", started, append(audit, "docker socket request canceled with its caller context"))
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return failedLaunch("Docker start request exceeded its timeout and was stopped", started, append(audit, "docker socket request stopped at its timeout"))
+		}
 		return failedLaunch(err.Error(), started, append(audit, "docker socket request failed"))
 	}
 	defer resp.Body.Close()
