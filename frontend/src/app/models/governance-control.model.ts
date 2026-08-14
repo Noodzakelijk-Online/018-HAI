@@ -620,13 +620,27 @@ export interface DomainPackView {
   localOnly: boolean
 }
 
+export interface DomainPackSummaryView {
+  pack: {
+    id: string
+    version: string
+    name: string
+    description: string
+    sensitive: boolean
+    defaultEnabled: boolean
+    methodCount?: number
+  }
+  enabled: boolean
+  localOnly: boolean
+}
+
 export interface DomainPackCatalog {
   metadata: {
     version: string
     digest: string
     packCount: number
   }
-  packs: DomainPackView[]
+  packs: DomainPackSummaryView[]
 }
 
 export interface DomainClassificationResult {

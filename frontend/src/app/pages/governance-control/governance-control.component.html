@@ -1211,7 +1211,7 @@
           <span class="domain-title"><strong>{{ view.pack.name }}</strong><span class="status-pill" [class.status-pill--green]="view.enabled">{{ view.enabled ? 'Enabled' : 'Disabled' }}</span></span>
           <small>{{ view.pack.description }}</small>
           <span class="domain-meta">
-            <span>{{ (view.pack.playbook.methods || []).length }} methods</span>
+            <span>{{ view.pack.methodCount }} methods</span>
             <span *ngIf="view.localOnly">Local only</span>
             <span *ngIf="view.pack.sensitive">Sensitive</span>
           </span>
@@ -1271,7 +1271,7 @@
         <div class="inspector-list" *ngIf="inspectorKind === 'domains'">
           <button type="button" *ngFor="let view of domainPacks; trackBy: trackByPackId" (click)="openDomain(view)">
             <span class="record-status" [attr.data-status]="view.enabled ? 'enabled' : 'disabled'">{{ view.enabled ? 'Enabled' : 'Disabled' }}</span>
-            <span><strong>{{ view.pack.name }}</strong><small>{{ (view.pack.playbook.methods || []).length }} advisory methods</small></span>
+            <span><strong>{{ view.pack.name }}</strong><small>{{ view.pack.methodCount }} advisory methods</small></span>
           </button>
           <div class="section-error" *ngIf="state.domains.error">{{ state.domains.error }}</div>
           <div class="calm-empty calm-empty--compact" *ngIf="state.domains.loaded && !domainPacks.length"><i nz-icon nzType="apartment"></i><div><strong>No domain packs</strong><span>The backend returned an empty catalog.</span></div></div>

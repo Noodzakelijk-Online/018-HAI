@@ -20,6 +20,7 @@ import {
   ContactReviewDecisionResult,
   DomainClassificationResult,
   DomainPackPreferenceStatus,
+  DomainPackSummaryView,
   DomainPackView,
   ExecutionAuthorizationConsumption,
   ExecutionAuthorizationReceipt,
@@ -153,7 +154,7 @@ export class GovernanceControlComponent implements OnInit, OnDestroy {
   proposals: LearningProposal[] = []
   learningOutcomes: LearningOutcomeRecord[] = []
   agents: AgentRecord[] = []
-  domainPacks: DomainPackView[] = []
+  domainPacks: DomainPackSummaryView[] = []
   catalogVersion = ''
   catalogDigest = ''
 
@@ -1615,7 +1616,7 @@ export class GovernanceControlComponent implements OnInit, OnDestroy {
     })
   }
 
-  openDomain(view: DomainPackView): void {
+  openDomain(view: DomainPackSummaryView): void {
     this.resetInspector('domain')
     this.inspectorLoading = true
     this.inspectorVisible = true
@@ -1636,7 +1637,7 @@ export class GovernanceControlComponent implements OnInit, OnDestroy {
     })
   }
 
-  domainById(id: string): DomainPackView | undefined {
+  domainById(id: string): DomainPackSummaryView | undefined {
     return this.domainPacks.find((view) => view.pack.id === id)
   }
 
@@ -2391,7 +2392,7 @@ export class GovernanceControlComponent implements OnInit, OnDestroy {
     return value.id
   }
 
-  trackByPackId(_: number, value: DomainPackView): string {
+  trackByPackId(_: number, value: DomainPackSummaryView): string {
     return value.pack.id
   }
 

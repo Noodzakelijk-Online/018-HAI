@@ -202,13 +202,13 @@ describe('GovernanceControlService', () => {
     preferenceRequest.flush({})
   })
 
-  it('normalizes optional domain-pack collections at the API boundary', () => {
-    let methods: unknown[] | undefined
+  it('loads the bounded domain-pack summary catalog', () => {
+    let methodCount: number | undefined
     service.domainCatalog().subscribe((catalog) => {
-      methods = catalog.packs[0].pack.playbook.methods
+      methodCount = catalog.packs[0].pack.methodCount
     })
 
-    const request = http.expectOne('/api/v1/domain-packs')
+    const request = http.expectOne('/api/v1/domain-packs?view=summary')
     request.flush({
       metadata: { version: '1.1.0', digest: 'catalog-digest', packCount: 1 },
       packs: [{
@@ -221,17 +221,12 @@ describe('GovernanceControlService', () => {
           description: 'Legal work',
           sensitive: true,
           defaultEnabled: true,
-          retention: {
-            defaultDays: 365,
-            localOnly: true,
-            deletionReview: true,
-            archiveProvenance: true,
-          },
+          methodCount: 4,
         },
       }],
     })
 
-    expect(methods).toEqual([])
+    expect(methodCount).toBe(4)
   })
 
   it('loads advisory teams and whole-life context from registered read APIs', () => {

@@ -598,6 +598,13 @@ from 1,300,711 to 297,648 bytes (77.12%); one exact selection was 29,067 bytes.
 These are point-in-time data-dependent measurements, not fixed response-size
 guarantees.
 
+The governance catalog follows the same progressive-loading contract. Its
+summary response includes pack identity, status, sensitivity, locality, and
+method count; opening a pack loads the existing exact effective-pack route with
+the complete safeguards and advisory playbook. The retained 24-pack catalog
+measured 6,822 bytes in summary form versus 925,600 bytes in full form (99.26%
+less); the inspected 65-method Work and venture detail was 78,440 bytes.
+
 The public gateway uses the same digest-pinned slim Nginx base as UID/GID
 `101`, with one worker, a read-only root filesystem, and no Linux capabilities.
 Only its internal port 8080 is exposed to the Compose network; the configurable
