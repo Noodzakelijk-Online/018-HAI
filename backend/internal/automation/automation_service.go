@@ -1644,7 +1644,11 @@ func (s *service) executeAPILaunch(
 		return blockedLaunch("API launch supports only GET, HEAD, or POST without a request body", started, append(audit, "api method rejected"))
 	}
 	client := noRedirectHTTPClient(10 * time.Second)
-	req, err := http.NewRequest(method, target, nil)
+	executionContext := request.ExecutionContext
+	if executionContext == nil {
+		executionContext = context.Background()
+	}
+	req, err := http.NewRequestWithContext(executionContext, method, target, nil)
 	if err != nil {
 		return failedLaunch(err.Error(), started, append(audit, "api request creation failed"))
 	}
@@ -1668,6 +1672,9 @@ func (s *service) executeAPILaunch(
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		if executionContext.Err() != nil {
+			return failedLaunch("API launch canceled before completion", started, append(audit, "api request canceled with its caller context"))
+		}
 		return failedLaunch(err.Error(), started, append(audit, "api request failed"))
 	}
 	defer resp.Body.Close()
@@ -1722,9 +1729,14 @@ func (s *service) executeScriptLaunch(
 		return blockedLaunch(err.Error(), started, append(audit, "script hash pin rejected"))
 	}
 	timeoutSeconds := intEnv("AUTOMATION_SCRIPT_TIMEOUT_SECONDS", 30)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	executionContext := request.ExecutionContext
+	if executionContext == nil {
+		executionContext = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(executionContext, time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, scriptPath)
+	configureControlledProcess(cmd)
 	cmd.Dir = filepath.Dir(scriptPath)
 	cmd.Env = safeScriptEnvironment(automation)
 	_, authorizationAudit, err := s.authorizeExternalLaunch(
@@ -1758,6 +1770,9 @@ func (s *service) executeScriptLaunch(
 	outputText := trimOutput(output.Bytes(), int64(outputLimit))
 	if output.Truncated() {
 		audit = append(audit, fmt.Sprintf("script output truncated at %d bytes", outputLimit))
+	}
+	if executionContext.Err() != nil {
+		return failedLaunch("script execution canceled before completion", started, append(audit, "script process canceled with its caller context"))
 	}
 	if ctx.Err() == context.DeadlineExceeded {
 		return launchExecution{

@@ -57,6 +57,10 @@ func TestMain(m *testing.M) {
 	case "redact":
 		fmt.Println("token=super-secret-token")
 		os.Exit(0)
+	case "wait":
+		time.Sleep(30 * time.Second)
+		fmt.Println("too-late")
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
@@ -585,6 +589,53 @@ func TestLaunchDoesNotFollowAPIRedirect(t *testing.T) {
 	}
 }
 
+func TestLaunchCancelsAPIRequestWithCallerContext(t *testing.T) {
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID: id, Name: "Cancelable API Automation", URLPath: "cancelable-api-automation",
+		LaunchType: "api", LaunchTarget: server.URL,
+	})
+	service := newTestService(repo, events.Publisher{})
+	ctx, cancel := context.WithCancel(context.Background())
+	request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{ExecutionContext: ctx})
+	resultChannel := make(chan *LaunchResult, 1)
+	errorChannel := make(chan error, 1)
+	go func() {
+		result, err := service.LaunchTask(id, request)
+		resultChannel <- result
+		errorChannel <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("API launch did not reach the server")
+	}
+	cancel()
+	select {
+	case err := <-errorChannel:
+		if err != nil {
+			t.Fatalf("LaunchTask: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("API launch ignored caller cancellation")
+	}
+	result := <-resultChannel
+	if result == nil || result.Status != "failed" || !strings.Contains(strings.ToLower(result.Message), "canceled") {
+		t.Fatalf("canceled API result = %#v", result)
+	}
+	if len(repo.launchEvents) != 1 || !containsString(repo.launchEvents[0].AuditEvents, "api request canceled with its caller context") {
+		t.Fatalf("canceled API audit = %#v", repo.launchEvents)
+	}
+}
+
 func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	dir := t.TempDir()
 	target := writeExecutableScriptFixture(t, dir, "ok")
@@ -613,6 +664,49 @@ func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	}
 	if result.Output != "script-ok" {
 		t.Fatalf("output = %q, want script-ok", result.Output)
+	}
+}
+
+func TestLaunchCancelsScriptWithCallerContext(t *testing.T) {
+	dir := t.TempDir()
+	target := writeExecutableScriptFixture(t, dir, "wait")
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
+	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, filepath.Join(dir, target)))
+	t.Setenv("AUTOMATION_SCRIPT_TIMEOUT_SECONDS", "10")
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID: id, Name: "Cancelable Script Automation", URLPath: "cancelable-script-automation",
+		Host: "localhost", Port: 8080, LaunchType: "script", LaunchTarget: target,
+	})
+	service := newTestService(repo, events.Publisher{})
+	ctx, cancel := context.WithCancel(context.Background())
+	request := approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{ExecutionContext: ctx})
+	resultChannel := make(chan *LaunchResult, 1)
+	errorChannel := make(chan error, 1)
+	go func() {
+		result, err := service.LaunchTask(id, request)
+		resultChannel <- result
+		errorChannel <- err
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-errorChannel:
+		if err != nil {
+			t.Fatalf("LaunchTask: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("script launch ignored caller cancellation")
+	}
+	result := <-resultChannel
+	if result == nil || result.Status != "failed" || !strings.Contains(strings.ToLower(result.Message), "canceled") {
+		t.Fatalf("canceled script result = %#v", result)
+	}
+	if len(repo.launchEvents) != 1 || !containsString(repo.launchEvents[0].AuditEvents, "script process canceled with its caller context") {
+		t.Fatalf("canceled script audit = %#v", repo.launchEvents)
 	}
 }
 
@@ -741,6 +835,8 @@ func writeExecutableScriptFixture(t *testing.T, dir, mode string) string {
 		body = "#!/bin/sh\nif [ -n \"$SECRET_TOKEN\" ]; then echo leaked; else echo clean; fi\n"
 	case "redact":
 		body = "#!/bin/sh\necho 'token=super-secret-token'\n"
+	case "wait":
+		body = "#!/bin/sh\nsleep 30\necho too-late\n"
 	default:
 		t.Fatalf("unsupported script fixture mode %q", mode)
 	}
