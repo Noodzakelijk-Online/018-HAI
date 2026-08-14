@@ -138,6 +138,23 @@ describe('FrameworkRegistryService', () => {
     request.flush({ frameworks: [framework] });
   });
 
+  it('normalizes legacy null empty collections without weakening array validation', () => {
+    service.frameworks().subscribe((result) => {
+      expect(result).toEqual([framework]);
+      expect(result[0].conflictsWith).toEqual([]);
+      expect(result[0].adaptations).toEqual([]);
+    });
+
+    const request = http.expectOne('/api/v1/framework-registry/frameworks');
+    request.flush({
+      frameworks: [{
+        ...framework,
+        conflictsWith: null,
+        adaptations: null,
+      }],
+    });
+  });
+
   it('loads one framework for inspection', () => {
     service.framework('truth-evidence').subscribe((result) => expect(result).toEqual(framework));
 
