@@ -84,11 +84,22 @@ does not pay for an idle JVM and KRaft controller.
 | Previous Kafka 7.6.1 KRaft broker | about 364 MiB | 64 | Active local broker immediately before cutover |
 | Pinned Redpanda v26.2.1 durable broker | about 58.7 MiB | 3 | Same host/network; fsync bypass disabled, cluster info and topic creation passed |
 | Pinned Redpanda with connected HAI clients | 153 MiB median | 4 | Three live samples after backend, IDP, config-manager, and application round-trip |
+| Pinned Redpanda with fractional-CPU scheduling | 98 MiB median | 4 | Six live samples after the same authenticated create/delete round-trip; fsync bypass remains disabled |
 
 The isolated durable-broker reduction is about 305 MiB (83.9%) and 61
 processes (95.3%). The connected live broker still reduced measured broker
 memory by about 211 MiB (58.0%) and 60 processes (93.8%). These are point-in-time
 measurements, not throughput claims.
+
+On 2026-08-14 an A/B run on the same Docker Desktop host compared only the
+Seastar scheduler mode. With `--overprovisioned=false`, six post-round-trip
+samples settled at 151 MiB and about 1.3% CPU. With
+`--overprovisioned=true`, the corresponding samples settled at about 98 MiB
+and 0.38% CPU. The local broker has a fractional `0.5` CPU ceiling and shares
+Docker Desktop with the rest of HAI, so the overprovisioned scheduler avoids
+busy polling. This does not enable Redpanda development mode: unsafe fsync
+bypass remains false, write caching remains disabled, and the named volume is
+retained.
 CI starts the actual Compose service and requires a Kafka metadata request plus
 topic creation/description, disabled write caching, and no unsafe fsync bypass.
 Release acceptance additionally requires the HAI producer, config-manager

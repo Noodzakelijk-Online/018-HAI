@@ -122,6 +122,21 @@ The new broker writes only to `018-hai-redpanda-data`. All prior Kafka and
 ZooKeeper volumes remain detached and untouched. Their presence is rollback
 evidence, not permission to delete them.
 
+### Fractional-CPU scheduler evidence (2026-08-14)
+
+The local Redpanda process is capped at half a CPU and runs beside the other
+HAI services on Docker Desktop. A controlled run with production-style busy
+polling used 151 MiB and about 1.3% CPU after the authenticated application
+round-trip. The equivalent overprovisioned scheduler run used about 98 MiB and
+0.38% CPU across six samples. Both runs created, read, and deleted a disposable
+automation; created and removed its generated route; returned `404` after
+deletion; and advanced the topic high watermark by exactly two. The final run
+resumed the persisted topic at offset `36` and advanced it to `38`.
+
+Only the scheduler mode changed. Fsync bypass remains disabled, write caching
+remains disabled, the Redpanda development profile is not enabled, and
+`/readyz` returned HTTP 200 after the final run.
+
 ## 3. The readiness lie (before the fix)
 
 `/readyz` was backed by `doctor.Diagnose`, which performs no I/O — it only checks

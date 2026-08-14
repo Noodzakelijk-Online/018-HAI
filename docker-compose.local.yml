@@ -1756,7 +1756,9 @@ services:
       - kafka:33145
       - --smp
       - "1"
-      - --overprovisioned=false
+      # Docker Desktop shares fractional CPU with the rest of Windows. Let
+      # Seastar sleep instead of busy-polling while preserving fsync durability.
+      - --overprovisioned=true
       - --unsafe-bypass-fsync=false
       - --lock-memory=false
       - --reserve-memory

@@ -229,7 +229,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "internal://kafka:9092",
             "--smp",
             '"1"',
-            "--overprovisioned=false",
+            "--overprovisioned=true",
             "--unsafe-bypass-fsync=false",
             "--lock-memory=false",
             "--reserve-memory",
