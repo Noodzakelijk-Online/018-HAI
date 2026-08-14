@@ -28,6 +28,22 @@ describe('SystemStatusService', () => {
     request.flush({ pending: 0, deadLettered: 0, published: 2, recentFailures: [], checkedAt: '2026-08-09T00:00:00Z' })
   })
 
+  it('reads the authenticated HAI connector status', () => {
+    service.connectorStatus().subscribe()
+    const request = http.expectOne('/api/v1/a2a/status')
+    expect(request.request.method).toBe('GET')
+    request.flush({
+      enabled: true,
+      configured: true,
+      provider: 'A2A local planning bridge',
+      endpoint: 'http://127.0.0.1:8088/api/v1/a2a',
+      capabilities: [],
+      restrictions: [],
+      scope: 'Planning only',
+      transport: 'local',
+    })
+  })
+
   it('encodes the dead-letter id when requesting an explicit retry', () => {
     service.retryEventDelivery('event/id').subscribe()
     const request = http.expectOne('/api/v1/event-delivery/event%2Fid/retry')

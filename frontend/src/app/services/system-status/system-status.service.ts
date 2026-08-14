@@ -4,6 +4,7 @@ import { Observable, throwError } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 import { ISystemStatusService } from './system-status.service.interface';
 import {
+  IA2ABridgeStatus,
   IEventDeliveryRetryResult,
   IEventDeliveryStats,
   ISystemReadiness,
@@ -17,6 +18,7 @@ export class SystemStatusService implements ISystemStatusService {
   // authenticated endpoint; the public /readyz probe exposes aggregates only.
   private readonly readinessUrl = '/api/v1/system/readiness';
   private readonly eventDeliveryUrl = '/api/v1/event-delivery';
+  private readonly connectorStatusUrl = '/api/v1/a2a/status';
 
   constructor(private http: HttpClient) {}
 
@@ -43,6 +45,10 @@ export class SystemStatusService implements ISystemStatusService {
 
   eventDelivery(): Observable<IEventDeliveryStats> {
     return this.http.get<IEventDeliveryStats>(`${this.eventDeliveryUrl}/`);
+  }
+
+  connectorStatus(): Observable<IA2ABridgeStatus> {
+    return this.http.get<IA2ABridgeStatus>(this.connectorStatusUrl);
   }
 
   retryEventDelivery(id: string): Observable<IEventDeliveryRetryResult> {

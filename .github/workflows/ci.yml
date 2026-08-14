@@ -482,6 +482,7 @@ jobs:
           $null = [ScriptBlock]::Create((Get-Content scripts/smoke-ollama-provider.ps1 -Raw))
           $null = [ScriptBlock]::Create((Get-Content scripts/start-ngrok.ps1 -Raw))
           $null = [ScriptBlock]::Create((Get-Content scripts/prepare-ngrok-windows.ps1 -Raw))
+          & .\scripts\test-ngrok-ownership.ps1
           try {
             & .\scripts\start-ngrok.ps1 -ValidateOnly -EnvFile .env.example
             throw "Insecure example environment unexpectedly passed ngrok preflight"

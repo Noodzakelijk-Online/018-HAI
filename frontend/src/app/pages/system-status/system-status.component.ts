@@ -9,6 +9,7 @@ import {
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { Subscription, finalize, fromEvent, timeout } from 'rxjs';
 import {
+  IA2ABridgeStatus,
   IEventDeliveryFailure,
   IEventDeliveryStats,
   ISystemCheck,
@@ -76,6 +77,9 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   eventDelivery?: IEventDeliveryStats;
   eventDeliveryLoading = false;
   eventDeliveryError = false;
+  connectorStatus?: IA2ABridgeStatus;
+  connectorStatusLoading = false;
+  connectorStatusError = false;
   retryingEventId = '';
 
   private visibilitySub?: Subscription;
@@ -111,6 +115,7 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
     this.clearPollTimer();
     if (!silent) {
       this.loadEventDelivery();
+      this.loadConnectorStatus();
     }
     if (this.readinessInFlight) {
       return;
@@ -217,6 +222,39 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
         this.eventDeliveryLoading = false;
       },
     });
+  }
+
+  private loadConnectorStatus(): void {
+    this.connectorStatusLoading = true;
+    this.systemStatusService.connectorStatus().pipe(timeout(EVENT_DELIVERY_TIMEOUT_MS)).subscribe({
+      next: (status) => {
+        this.connectorStatus = status;
+        this.connectorStatusError = false;
+        this.connectorStatusLoading = false;
+      },
+      error: () => {
+        this.connectorStatusError = true;
+        this.connectorStatusLoading = false;
+      },
+    });
+  }
+
+  connectorStateLabel(): string {
+    if (this.connectorStatusError) return 'Status unavailable';
+    if (!this.connectorStatus) return 'Checking connector';
+    if (!this.connectorStatus.enabled) return 'Connector disabled';
+    if (!this.connectorStatus.configured) return 'Configuration required';
+    return this.connectorStatus.transport === 'fixed_ngrok_https'
+      ? 'Governed cloud connector'
+      : 'Local-only connector';
+  }
+
+  connectorStateClass(): string {
+    if (this.connectorStatusError || (this.connectorStatus?.enabled && !this.connectorStatus.configured)) {
+      return 'connector-warn';
+    }
+    if (this.connectorStatus?.configured) return 'connector-ok';
+    return 'connector-off';
   }
 
   statusLabel(): string {

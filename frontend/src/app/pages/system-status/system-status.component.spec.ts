@@ -15,7 +15,7 @@ describe('SystemStatusComponent polling', () => {
   function service(readinessResult = of(readiness)): jasmine.SpyObj<ISystemStatusService> {
     const result = jasmine.createSpyObj<ISystemStatusService>(
       'SystemStatusService',
-      ['readiness', 'eventDelivery', 'retryEventDelivery']
+      ['readiness', 'eventDelivery', 'connectorStatus', 'retryEventDelivery']
     );
     result.readiness.and.returnValue(readinessResult);
     result.eventDelivery.and.returnValue(of({
@@ -24,6 +24,16 @@ describe('SystemStatusComponent polling', () => {
       published: 0,
       recentFailures: [],
       checkedAt: new Date(0).toISOString(),
+    }));
+    result.connectorStatus.and.returnValue(of({
+      enabled: true,
+      configured: true,
+      provider: 'A2A local planning bridge',
+      endpoint: 'http://127.0.0.1:8088/api/v1/a2a',
+      capabilities: ['non-executable planning'],
+      restrictions: ['no execution'],
+      scope: 'One configured local peer can request a planning draft.',
+      transport: 'local',
     }));
     return result;
   }
@@ -126,6 +136,41 @@ describe('SystemStatusComponent polling', () => {
       route: '/runtime-control',
       actionLabel: 'Open runtime controls',
     }));
+
+    component.ngOnDestroy();
+  });
+
+  it('distinguishes local, cloud, disabled, and invalid connector states', () => {
+    const statusService = service();
+    const notification = jasmine.createSpyObj('NzNotificationService', ['error', 'success']);
+    const component = new SystemStatusComponent(statusService, notification, document);
+
+    component.ngOnInit();
+    expect(component.connectorStateLabel()).toBe('Local-only connector');
+    expect(component.connectorStateClass()).toBe('connector-ok');
+
+    component.connectorStatus = {
+      ...component.connectorStatus!,
+      transport: 'fixed_ngrok_https',
+    };
+    expect(component.connectorStateLabel()).toBe('Governed cloud connector');
+
+    component.connectorStatus = {
+      ...component.connectorStatus!,
+      enabled: false,
+      configured: false,
+    };
+    expect(component.connectorStateLabel()).toBe('Connector disabled');
+    expect(component.connectorStateClass()).toBe('connector-off');
+
+    component.connectorStatus = {
+      ...component.connectorStatus!,
+      enabled: true,
+      configured: false,
+      configError: 'owner identity is missing',
+    };
+    expect(component.connectorStateLabel()).toBe('Configuration required');
+    expect(component.connectorStateClass()).toBe('connector-warn');
 
     component.ngOnDestroy();
   });

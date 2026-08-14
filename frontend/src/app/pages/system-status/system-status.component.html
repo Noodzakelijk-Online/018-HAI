@@ -126,6 +126,47 @@
       </ng-container>
     </section>
 
+    <section class="connector-panel" aria-labelledby="connector-title">
+      <div class="connector-summary" [ngClass]="connectorStateClass()">
+        <div class="connector-icon" aria-hidden="true">
+          <span nz-icon [nzType]="connectorStatus?.configured ? 'api' : 'disconnect'"></span>
+        </div>
+        <div class="connector-copy">
+          <span class="eyebrow">HAI interoperability</span>
+          <h2 id="connector-title">{{ connectorStateLabel() }}</h2>
+          <p *ngIf="connectorStatus as connector; else connectorFallback">
+            {{ connector.configError || connector.scope }}
+          </p>
+          <ng-template #connectorFallback>
+            <p>{{ connectorStatusError ? 'The authenticated connector status could not be loaded.' : 'Reading the configured connector boundary.' }}</p>
+          </ng-template>
+        </div>
+        <div class="connector-meta" *ngIf="connectorStatus as connector">
+          <span>{{ connector.transport === 'fixed_ngrok_https' ? 'Fixed ngrok HTTPS' : 'Private/local' }}</span>
+          <code *ngIf="connector.endpoint">{{ connector.endpoint }}</code>
+        </div>
+      </div>
+
+      <hai-progressive-section
+        *ngIf="connectorStatus as connector"
+        moduleId="system-status"
+        sectionId="connector-contract"
+        title="Connector contract"
+        summary="Capabilities and enforced restrictions"
+      >
+        <div class="connector-contract">
+          <div>
+            <h3>Available</h3>
+            <ul><li *ngFor="let capability of connector.capabilities">{{ capability }}</li></ul>
+          </div>
+          <div>
+            <h3>Never granted by this connector</h3>
+            <ul><li *ngFor="let restriction of connector.restrictions">{{ restriction }}</li></ul>
+          </div>
+        </div>
+      </hai-progressive-section>
+    </section>
+
     <div class="groups">
       <nz-card
         *ngFor="let group of groups"

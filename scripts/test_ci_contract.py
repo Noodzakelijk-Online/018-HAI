@@ -762,6 +762,9 @@ class CIWorkflowContractTest(unittest.TestCase):
         a2a_smoke = (ROOT / "scripts" / "smoke-a2a-bridge.ps1").read_text(
             encoding="utf-8"
         )
+        ownership_test = (
+            ROOT / "scripts" / "test-ngrok-ownership.ps1"
+        ).read_text(encoding="utf-8")
         config = (ROOT / "deploy" / "ngrok" / "ngrok.yml").read_text(
             encoding="utf-8"
         )
@@ -846,6 +849,13 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("HAI_A2A_BRIDGE_TOKEN", preflight)
         self.assertIn("/api/v1/a2a", preflight)
         self.assertIn("Test-PublicOrigin $publicUrlText $publicA2A", preflight)
+        self.assertIn("Test-PublicEndpointOwnership $publicUrlText $currentProjectTunnelRunning", preflight)
+        self.assertIn("HttpCompletionOption]::ResponseHeadersRead", preflight)
+        self.assertIn("Read-BoundedResponseBody", preflight)
+        self.assertIn("will not attempt to take over another application endpoint", preflight)
+        self.assertIn("test-ngrok-ownership.ps1", workflow)
+        self.assertIn("non-HAI application", ownership_test)
+        self.assertIn("different HAI tunnel", ownership_test)
         self.assertIn("$healthPayload.status -ne 'ok'", preflight)
         self.assertIn("$healthPayload.service -ne 'backend'", preflight)
         self.assertIn('"$BaseUrl/readyz"', preflight)

@@ -1,5 +1,6 @@
 import { Observable } from 'rxjs';
 import {
+  IA2ABridgeStatus,
   IEventDeliveryRetryResult,
   IEventDeliveryStats,
   ISystemReadiness,
@@ -11,5 +12,6 @@ export interface ISystemStatusService {
   // what the operator needs to see. Only a transport failure is an error.
   readiness(): Observable<ISystemReadiness>;
   eventDelivery(): Observable<IEventDeliveryStats>;
+  connectorStatus(): Observable<IA2ABridgeStatus>;
   retryEventDelivery(id: string): Observable<IEventDeliveryRetryResult>;
 }

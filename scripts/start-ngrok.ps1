@@ -231,6 +231,108 @@ function Invoke-PublicRequest(
     throw "$Url did not return HTTP $ExpectedStatus after $Attempts attempt(s); last result: $lastError."
 }
 
+function Read-BoundedResponseBody(
+    [System.Net.Http.HttpResponseMessage]$Response,
+    [int]$MaximumBytes = 8192
+) {
+    $stream = $Response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+    try {
+        $buffer = [byte[]]::new($MaximumBytes)
+        $total = 0
+        while ($total -lt $MaximumBytes) {
+            $read = $stream.Read($buffer, $total, $MaximumBytes - $total)
+            if ($read -le 0) { break }
+            $total += $read
+        }
+        return [Text.Encoding]::UTF8.GetString($buffer, 0, $total)
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+function Invoke-PublicOwnershipProbe(
+    [System.Net.Http.HttpClient]$Client,
+    [string]$Url
+) {
+    $request = [System.Net.Http.HttpRequestMessage]::new(
+        [System.Net.Http.HttpMethod]::Get,
+        $Url
+    )
+    try {
+        $request.Headers.TryAddWithoutValidation(
+            'ngrok-skip-browser-warning',
+            'hai-endpoint-ownership'
+        ) | Out-Null
+        $response = $Client.SendAsync(
+            $request,
+            [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
+        ).GetAwaiter().GetResult()
+        try {
+            return [pscustomobject]@{
+                Status = [int]$response.StatusCode
+                Body = Read-BoundedResponseBody $response
+            }
+        } finally {
+            $response.Dispose()
+        }
+    } finally {
+        $request.Dispose()
+    }
+}
+
+function Test-PublicEndpointOwnership(
+    [string]$BaseUrl,
+    [bool]$CurrentProjectTunnelRunning
+) {
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $handler.AllowAutoRedirect = $false
+    $client = [System.Net.Http.HttpClient]::new($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds(5)
+    try {
+        try {
+            $health = Invoke-PublicOwnershipProbe $client "$BaseUrl/healthz"
+        } catch {
+            Write-Host 'The fixed endpoint is not currently reachable; startup acceptance will verify ownership.'
+            return
+        }
+
+        if ($health.Status -eq 200) {
+            $payload = $null
+            try { $payload = $health.Body | ConvertFrom-Json } catch { }
+            $isHAI = $null -ne $payload -and
+                $payload.service -eq 'backend' -and
+                $payload.status -eq 'ok'
+            if ($isHAI -and $CurrentProjectTunnelRunning) {
+                Write-Host 'The fixed endpoint already serves this running HAI tunnel; startup will reconcile and re-verify it.'
+                return
+            }
+            if ($isHAI) {
+                throw 'The fixed endpoint already serves a different HAI tunnel. Stop its owning agent during an approved maintenance window or reserve a separate HAI domain.'
+            }
+            throw 'The fixed endpoint is already serving a non-HAI application. HAI will not attempt to take over another application endpoint.'
+        }
+
+        if ($health.Body -match 'ERR_NGROK_[0-9]+') {
+            return
+        }
+
+        try {
+            $root = Invoke-PublicOwnershipProbe $client "$BaseUrl/"
+        } catch {
+            return
+        }
+        if ($root.Body -match 'ERR_NGROK_[0-9]+') {
+            return
+        }
+        if ($root.Status -ge 200 -and $root.Status -lt 500) {
+            throw "The fixed endpoint already responds with HTTP $($root.Status) but does not identify HAI. HAI will not attempt to take over another application endpoint."
+        }
+    } finally {
+        $client.Dispose()
+        $handler.Dispose()
+    }
+}
+
 function Test-PublicOrigin([string]$BaseUrl, [bool]$PublicA2A) {
     $handler = [System.Net.Http.HttpClientHandler]::new()
     $handler.AllowAutoRedirect = $false
@@ -287,6 +389,10 @@ function Test-PublicOrigin([string]$BaseUrl, [bool]$PublicA2A) {
         $handler.Dispose()
     }
 }
+
+$ngrokContainerState = & docker inspect --format '{{.State.Status}}' '018-hai-ngrok' 2>$null
+$currentProjectTunnelRunning = $LASTEXITCODE -eq 0 -and $ngrokContainerState -eq 'running'
+Test-PublicEndpointOwnership $publicUrlText $currentProjectTunnelRunning
 
 # Reconcile the security-sensitive base services before creating any public
 # endpoint. This applies secure-cookie and OAuth callback changes to the actual

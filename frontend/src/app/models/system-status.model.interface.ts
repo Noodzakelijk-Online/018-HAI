@@ -50,3 +50,15 @@ export interface IEventDeliveryRetryResult {
   status: 'queued';
   eventId: string;
 }
+
+export interface IA2ABridgeStatus {
+  enabled: boolean;
+  configured: boolean;
+  provider: string;
+  endpoint?: string;
+  configError?: string;
+  capabilities: string[];
+  restrictions: string[];
+  scope: string;
+  transport: 'local' | 'fixed_ngrok_https';
+}

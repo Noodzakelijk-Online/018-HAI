@@ -132,6 +132,15 @@ that A2A is edge-blocked when public mode is disabled, or runs the authenticated
 bounded A2A acceptance when public mode is enabled. A failed public-origin probe
 stops the tunnel instead of leaving an unverified endpoint online.
 
+Before changing any running HAI service, the launcher performs a bounded,
+non-invasive ownership probe against the fixed endpoint. If another
+application already responds there, or another HAI tunnel owns it outside the
+current Compose project, startup stops before reconciliation and explains that
+a separate domain or approved maintenance window is required. The probe reads
+at most 8 KiB from an untrusted response and never stops or reconfigures the
+owning agent. An unreachable or offline ngrok endpoint is not treated as an
+error because the full post-start acceptance remains authoritative.
+
 Verify the A2A chain locally before exposure, then through the live tunnel:
 
 ```powershell
