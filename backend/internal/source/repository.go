@@ -533,7 +533,10 @@ func (r *GormRepository) ConsumeOAuthState(
 				stateDigest,
 				consumedAt,
 			).
-			Update("consumed_at", consumedAt)
+			Update(
+				"consumed_at",
+				gorm.Expr("CASE WHEN created_at > ? THEN created_at ELSE ? END", consumedAt, consumedAt),
+			)
 		if result.Error != nil {
 			return result.Error
 		}

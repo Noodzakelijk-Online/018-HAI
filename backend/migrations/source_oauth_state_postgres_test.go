@@ -43,6 +43,16 @@ func TestSourceOAuthStateIsDurableOwnerBoundSingleUseAndRevokedWithSource(t *tes
 	if err := repo.ConsumeOAuthState(connected.ID, "alice", firstDigest, now); err != nil {
 		t.Fatalf("owner ConsumeOAuthState: %v", err)
 	}
+	var consumed models.SourceOAuthState
+	if err := db.First(&consumed, "source_id = ?", connected.ID).Error; err != nil {
+		t.Fatalf("read consumed OAuth state: %v", err)
+	}
+	if consumed.ConsumedAt == nil {
+		t.Fatal("consumed OAuth state has no consumed_at timestamp")
+	}
+	if consumed.ConsumedAt.Before(consumed.CreatedAt) {
+		t.Fatalf("consumed_at %s is before created_at %s", consumed.ConsumedAt, consumed.CreatedAt)
+	}
 	if err := repo.ConsumeOAuthState(connected.ID, "alice", firstDigest, now); !errors.Is(err, source.ErrOAuthStateInvalid) {
 		t.Fatalf("replayed ConsumeOAuthState error = %v, want ErrOAuthStateInvalid", err)
 	}
