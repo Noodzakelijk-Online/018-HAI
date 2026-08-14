@@ -47,6 +47,21 @@ read-only with dropped capabilities and bounded CPU, memory, and process count.
 
 ## Start on Windows 11
 
+Generate a separate hardened cloud profile instead of weakening the local
+profile. The command disables local-login bypass, enables secure cookies, keeps
+the gateway loopback-bound, applies a positive rate limit, sets exact OAuth
+callbacks, and validates the result before retaining it:
+
+```powershell
+.\scripts\prepare-ngrok-windows.ps1 `
+  -PublicUrl https://your-hai-domain.ngrok.app `
+  -PublishA2A
+.\scripts\start-ngrok.ps1 -EnvFile .env.ngrok.local
+```
+
+Omit `-PublishA2A` to keep the connector private while exposing only the normal
+authenticated dashboard. `.env.local` remains unchanged.
+
 Set these values in the uncommitted `.env.local` file:
 
 ```text

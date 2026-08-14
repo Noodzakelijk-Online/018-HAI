@@ -734,6 +734,9 @@ class CIWorkflowContractTest(unittest.TestCase):
         preflight = (ROOT / "scripts" / "start-ngrok.ps1").read_text(
             encoding="utf-8"
         )
+        generator = (ROOT / "scripts" / "prepare-ngrok-windows.ps1").read_text(
+            encoding="utf-8"
+        )
         config = (ROOT / "deploy" / "ngrok" / "ngrok.yml").read_text(
             encoding="utf-8"
         )
@@ -781,6 +784,18 @@ class CIWorkflowContractTest(unittest.TestCase):
         ):
             with self.subTest(required=required):
                 self.assertIn(required, preflight)
+        for required in (
+            'LOCAL_LOGIN_BYPASS_ENABLED = "false"',
+            'IDP_COOKIE_SECURE = "true"',
+            'GATEWAY_HOST_BIND = "127.0.0.1"',
+            'RATE_LIMIT_PER_MINUTE = $RateLimitPerMinute.ToString()',
+            'HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED',
+            'HAI_A2A_BRIDGE_URL" "$origin/api/v1/a2a"',
+            'start-ngrok.ps1") -ValidateOnly',
+            'Remove-Item -LiteralPath $outputPath',
+        ):
+            with self.subTest(cloud_profile_generator=required):
+                self.assertIn(required, generator)
         secured_up = "up -d --no-build idp backend frontend nginx"
         tunnel_up = "up -d --no-build ngrok"
         self.assertIn(secured_up, preflight)
@@ -1114,6 +1129,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "python scripts/test_ci_contract.py",
             "python scripts/test_smoke_auth_contract.py",
             r".\scripts\start-ngrok.ps1 -ValidateOnly",
+            "scripts/prepare-ngrok-windows.ps1",
             "scripts/backup-windows.ps1",
             "scripts/test-restore-windows.ps1",
             r".\scripts\initialize-windows.ps1",
