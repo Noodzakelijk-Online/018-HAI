@@ -145,6 +145,37 @@ type fakePursuitBriefProvider struct {
 	decisionErr error
 }
 
+type fakePursuitSnapshotProvider struct {
+	fakePursuitBriefProvider
+}
+
+func (p fakePursuitSnapshotProvider) OperatingSnapshot() (*pursuit.OperatingSnapshot, error) {
+	if p.calls != nil {
+		*p.calls = append(*p.calls, "pursuit-snapshot")
+	}
+	if p.err != nil {
+		return nil, p.err
+	}
+	return &pursuit.OperatingSnapshot{Brief: p.snapshotBrief(), Decisions: p.decisions}, p.decisionErr
+}
+
+func (p fakePursuitSnapshotProvider) OperatingSnapshotForOwner(ownerIdentity string) (*pursuit.OperatingSnapshot, error) {
+	if p.calls != nil {
+		*p.calls = append(*p.calls, "pursuit-snapshot:"+ownerIdentity)
+	}
+	if p.err != nil {
+		return nil, p.err
+	}
+	return &pursuit.OperatingSnapshot{Brief: p.snapshotBrief(), Decisions: p.decisions}, p.decisionErr
+}
+
+func (p fakePursuitSnapshotProvider) snapshotBrief() *pursuit.Brief {
+	if p.brief != nil {
+		return p.brief
+	}
+	return &pursuit.Brief{OperatingMode: "steady", Summary: "no pursuit pressure"}
+}
+
 func (p fakePursuitBriefProvider) Brief() (*pursuit.Brief, error) {
 	if p.calls != nil {
 		*p.calls = append(*p.calls, "pursuit-brief")
@@ -215,7 +246,7 @@ func TestAgentCycleRefreshesPursuitBriefAndPrioritizesRobertDecisions(t *testing
 		fakeSourceSyncer{calls: &calls},
 		fakeWorkflowCoordinator{calls: &calls},
 		fakeAmbientScanner{calls: &calls},
-		fakePursuitBriefProvider{
+		fakePursuitSnapshotProvider{fakePursuitBriefProvider: fakePursuitBriefProvider{
 			calls: &calls,
 			brief: &pursuit.Brief{
 				OperatingMode:  "needs_robert",
@@ -244,7 +275,7 @@ func TestAgentCycleRefreshesPursuitBriefAndPrioritizesRobertDecisions(t *testing
 					NextAction: "Approve recovery workflow.",
 				},
 			},
-		},
+		}},
 		mem,
 	)
 
@@ -253,7 +284,7 @@ func TestAgentCycleRefreshesPursuitBriefAndPrioritizesRobertDecisions(t *testing
 	if result.Status != "completed" {
 		t.Fatalf("status = %q, want completed: %#v", result.Status, result.Errors)
 	}
-	want := []string{"memory-retrieve", "recover", "source", "open-loops", "workflows", "ambient:agent-cycle.pursuit-check", "dashboard", "pursuit-brief", "pursuit-decisions"}
+	want := []string{"memory-retrieve", "recover", "source", "open-loops", "workflows", "ambient:agent-cycle.pursuit-check", "dashboard", "pursuit-snapshot"}
 	if fmt.Sprint(calls) != fmt.Sprint(want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
 	}
@@ -286,11 +317,11 @@ func TestAuthenticatedAgentCycleRunsEveryOwnerScopedOperationalPhase(t *testing.
 		fakeSourceSyncer{calls: &calls},
 		fakeWorkflowCoordinator{calls: &calls},
 		fakeAmbientScanner{calls: &calls},
-		fakePursuitBriefProvider{
+		fakePursuitSnapshotProvider{fakePursuitBriefProvider: fakePursuitBriefProvider{
 			calls:     &calls,
 			brief:     &pursuit.Brief{OperatingMode: "needs_robert", NeedsRobert: 1, PrimaryAction: "Review Alice decision."},
 			decisions: []pursuit.PursuitDashboardDecision{{Decision: pursuit.PursuitDecision{Recommended: "Review Alice decision."}}},
-		},
+		}},
 	)
 
 	result := service.Run(RunRequest{OwnerIdentity: "alice", Trigger: "control-center"})
@@ -304,7 +335,7 @@ func TestAuthenticatedAgentCycleRunsEveryOwnerScopedOperationalPhase(t *testing.
 	if result.PursuitBrief == nil || len(result.PursuitDecisions) != 1 || result.NextAction != "review pursuit decisions" {
 		t.Fatalf("owner pursuit state = %#v", result)
 	}
-	want := "[recover:alice source:alice open-loops:alice workflows:alice ambient:alice:agent-cycle.control-center dashboard:alice pursuit-brief:alice pursuit-brief pursuit-decisions:alice pursuit-decisions]"
+	want := "[recover:alice source:alice open-loops:alice workflows:alice ambient:alice:agent-cycle.control-center dashboard:alice pursuit-snapshot:alice]"
 	if got := fmt.Sprint(calls); got != want {
 		t.Fatalf("owner cycle calls = %s, want only owner-scoped engines %s", got, want)
 	}

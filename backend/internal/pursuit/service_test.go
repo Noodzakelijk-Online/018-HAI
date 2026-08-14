@@ -4524,10 +4524,10 @@ func TestDashboardSurfacesDuePursuitReview(t *testing.T) {
 	}
 }
 
-func TestBriefSummarizesOperatingPrioritiesAndDeduplicatesCards(t *testing.T) {
+func TestOperatingSnapshotBuildsBriefAndDecisionsFromOneDashboard(t *testing.T) {
 	repo := newFakeRepo()
-	service := NewService(repo, nil)
-	highRisk, err := service.Create(CreateRequest{
+	engine := NewService(repo, nil)
+	highRisk, err := engine.Create(CreateRequest{
 		Title:                 "Prepare legal reply",
 		ProjectKey:            "vivare",
 		RiskLevel:             "high",
@@ -4536,7 +4536,7 @@ func TestBriefSummarizesOperatingPrioritiesAndDeduplicatesCards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create high-risk returned error: %v", err)
 	}
-	_, err = service.Create(CreateRequest{
+	_, err = engine.Create(CreateRequest{
 		Title:        "Review source backlog",
 		ProjectKey:   "hai",
 		NextReviewAt: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
@@ -4545,9 +4545,16 @@ func TestBriefSummarizesOperatingPrioritiesAndDeduplicatesCards(t *testing.T) {
 		t.Fatalf("Create review-due returned error: %v", err)
 	}
 
-	brief, err := service.Brief()
+	snapshot, err := engine.(*service).OperatingSnapshot()
 	if err != nil {
-		t.Fatalf("Brief returned error: %v", err)
+		t.Fatalf("OperatingSnapshot returned error: %v", err)
+	}
+	brief := snapshot.Brief
+	if brief == nil || len(snapshot.Decisions) != 1 {
+		t.Fatalf("operating snapshot = %#v, want one brief and one Robert decision", snapshot)
+	}
+	if snapshot.Decisions[0].Pursuit.ID != highRisk.ID {
+		t.Fatalf("snapshot decision pursuit = %s, want %s", snapshot.Decisions[0].Pursuit.ID, highRisk.ID)
 	}
 	if brief.OperatingMode != "needs_robert" {
 		t.Fatalf("operating mode = %q, want needs_robert", brief.OperatingMode)

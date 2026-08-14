@@ -396,6 +396,14 @@ type Brief struct {
 	Cards                []BriefCard `json:"cards"`
 }
 
+// OperatingSnapshot is the compact pursuit projection consumed by the agent
+// cycle. Both fields are derived from one dashboard build so a proactive pass
+// does not expand every pursuit and its linked records twice.
+type OperatingSnapshot struct {
+	Brief     *Brief                     `json:"brief"`
+	Decisions []PursuitDashboardDecision `json:"decisions"`
+}
+
 type BriefCard struct {
 	Queue        string `json:"queue"`
 	PursuitID    string `json:"pursuitId"`
@@ -1250,12 +1258,12 @@ func (s *service) Decisions() ([]PursuitDashboardDecision, error) {
 }
 
 func (s *service) DecisionsForOwner(ownerIdentity string) ([]PursuitDashboardDecision, error) {
-	dashboard, err := s.DashboardForOwner(ownerIdentity)
+	snapshot, err := s.OperatingSnapshotForOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
 	}
-	decisions := make([]PursuitDashboardDecision, len(dashboard.DecisionQueue))
-	copy(decisions, dashboard.DecisionQueue)
+	decisions := make([]PursuitDashboardDecision, len(snapshot.Decisions))
+	copy(decisions, snapshot.Decisions)
 	return decisions, nil
 }
 
@@ -1274,10 +1282,31 @@ func (s *service) Brief() (*Brief, error) {
 }
 
 func (s *service) BriefForOwner(ownerIdentity string) (*Brief, error) {
+	snapshot, err := s.OperatingSnapshotForOwner(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.Brief, nil
+}
+
+func (s *service) OperatingSnapshot() (*OperatingSnapshot, error) {
+	return s.OperatingSnapshotForOwner("")
+}
+
+func (s *service) OperatingSnapshotForOwner(ownerIdentity string) (*OperatingSnapshot, error) {
 	dashboard, err := s.DashboardForOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
 	}
+	decisions := make([]PursuitDashboardDecision, len(dashboard.DecisionQueue))
+	copy(decisions, dashboard.DecisionQueue)
+	return &OperatingSnapshot{
+		Brief:     briefFromDashboard(dashboard),
+		Decisions: decisions,
+	}, nil
+}
+
+func briefFromDashboard(dashboard *Dashboard) *Brief {
 	brief := &Brief{
 		GeneratedAt:          time.Now().UTC(),
 		NeedsRobert:          len(dashboard.NeedsRobert),
@@ -1292,7 +1321,7 @@ func (s *service) BriefForOwner(ownerIdentity string) (*Brief, error) {
 	brief.Summary = briefSummary(*brief, dashboard)
 	brief.PrimaryAction = briefPrimaryAction(*brief)
 	brief.Cards = briefCards(dashboard, 6)
-	return brief, nil
+	return brief
 }
 
 // UpsertTaskAttempt records the durable, compact task-engine projection for a

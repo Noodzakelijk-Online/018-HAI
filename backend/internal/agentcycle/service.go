@@ -58,6 +58,14 @@ type PursuitOwnerDecisionProvider interface {
 	DecisionsForOwner(ownerIdentity string) ([]pursuit.PursuitDashboardDecision, error)
 }
 
+type PursuitOperatingSnapshotProvider interface {
+	OperatingSnapshot() (*pursuit.OperatingSnapshot, error)
+}
+
+type PursuitOwnerOperatingSnapshotProvider interface {
+	OperatingSnapshotForOwner(ownerIdentity string) (*pursuit.OperatingSnapshot, error)
+}
+
 type RunRequest struct {
 	OwnerIdentity  string `json:"-"`
 	Trigger        string `json:"trigger,omitempty"`
@@ -215,7 +223,12 @@ func (s *Service) runSystem(request RunRequest) *RunResult {
 		result.Dashboard = dashboard
 		result.record("refresh workflow dashboard", err, dashboardSummary(dashboard))
 	}
-	if s.pursuits != nil {
+	if provider, ok := s.pursuits.(PursuitOperatingSnapshotProvider); ok {
+		snapshot, err := provider.OperatingSnapshot()
+		applyPursuitSnapshot(result, snapshot)
+		result.record("refresh pursuit operating brief", err, pursuitBriefSummary(result.PursuitBrief))
+		result.record("refresh Robert decision queue", err, pursuitDecisionSummary(result.PursuitDecisions))
+	} else if s.pursuits != nil {
 		brief, err := s.pursuits.Brief()
 		result.PursuitBrief = brief
 		result.PursuitState = pursuitOperatingState(brief)
@@ -313,6 +326,11 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 
 	if s.pursuits == nil {
 		result.addError("pursuits", fmt.Errorf("pursuit brief provider is not configured"))
+	} else if provider, ok := s.pursuits.(PursuitOwnerOperatingSnapshotProvider); ok {
+		snapshot, err := provider.OperatingSnapshotForOwner(ownerIdentity)
+		applyPursuitSnapshot(result, snapshot)
+		result.record("refresh personal pursuit operating brief", err, pursuitBriefSummary(result.PursuitBrief))
+		result.record("refresh personal Robert decision queue", err, pursuitDecisionSummary(result.PursuitDecisions))
 	} else if provider, ok := s.pursuits.(PursuitOwnerBriefProvider); !ok {
 		result.addError("pursuits", fmt.Errorf("owner-scoped pursuit brief is not configured"))
 	} else {
@@ -320,13 +338,13 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 		result.PursuitBrief = brief
 		result.PursuitState = pursuitOperatingState(brief)
 		result.record("refresh personal pursuit operating brief", err, pursuitBriefSummary(brief))
-	}
-	if provider, ok := s.pursuits.(PursuitOwnerDecisionProvider); ok {
-		decisions, err := provider.DecisionsForOwner(ownerIdentity)
-		result.PursuitDecisions = decisions
-		result.record("refresh personal Robert decision queue", err, pursuitDecisionSummary(decisions))
-	} else if s.pursuits != nil {
-		result.addError("pursuit_decisions", fmt.Errorf("owner-scoped pursuit decisions are not configured"))
+		if decisionProvider, ok := s.pursuits.(PursuitOwnerDecisionProvider); ok {
+			decisions, decisionErr := decisionProvider.DecisionsForOwner(ownerIdentity)
+			result.PursuitDecisions = decisions
+			result.record("refresh personal Robert decision queue", decisionErr, pursuitDecisionSummary(decisions))
+		} else {
+			result.addError("pursuit_decisions", fmt.Errorf("owner-scoped pursuit decisions are not configured"))
+		}
 	}
 
 	result.CompletedAt = time.Now().UTC()
@@ -334,6 +352,15 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 	result.NextAction = nextAction(result)
 	result.LearningIDs, result.LearningNote = s.rememberOperationalLessonForOwner(ownerIdentity, result)
 	return result
+}
+
+func applyPursuitSnapshot(result *RunResult, snapshot *pursuit.OperatingSnapshot) {
+	if result == nil || snapshot == nil {
+		return
+	}
+	result.PursuitBrief = snapshot.Brief
+	result.PursuitDecisions = snapshot.Decisions
+	result.PursuitState = pursuitOperatingState(snapshot.Brief)
 }
 
 func (s *Service) retrieveOperationalContext(trigger string) ([]memory.RankedMemory, error) {
