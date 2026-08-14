@@ -71,3 +71,16 @@ func TestServeUntilCancelledRejectsIncompleteLifecycle(t *testing.T) {
 		t.Fatal("serveUntilCancelled accepted a nil lifecycle context/listener")
 	}
 }
+
+func TestProductionHTTPServerHasBoundedConnectionResources(t *testing.T) {
+	server := newHTTPServer(":8080", http.NewServeMux())
+	if server.ReadHeaderTimeout <= 0 || server.ReadTimeout <= 0 || server.IdleTimeout <= 0 {
+		t.Fatalf("server timeouts must be positive: header=%s read=%s idle=%s", server.ReadHeaderTimeout, server.ReadTimeout, server.IdleTimeout)
+	}
+	if server.MaxHeaderBytes != httpMaxHeaderBytes {
+		t.Fatalf("MaxHeaderBytes = %d, want %d", server.MaxHeaderBytes, httpMaxHeaderBytes)
+	}
+	if server.WriteTimeout != 0 {
+		t.Fatalf("WriteTimeout = %s, want 0 so bounded long-running responses are not cut off", server.WriteTimeout)
+	}
+}

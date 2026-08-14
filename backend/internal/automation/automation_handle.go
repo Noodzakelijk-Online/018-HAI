@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 
@@ -19,6 +20,8 @@ import (
 type Handler struct {
 	service Service
 }
+
+const automationMultipartOverhead int64 = 1 << 20
 
 func NewHandler(service Service) *Handler {
 	return &Handler{
@@ -92,6 +95,21 @@ func (h *Handler) ImageHandler(c *gin.Context) {
 // @Router /automations [post]
 func (h *Handler) Create(c *gin.Context) {
 	var automation models.Automation
+	maxBodyBytes := config.AppConfig.ImageMaxSize + automationMultipartOverhead
+	if c.Request.ContentLength > maxBodyBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "automation upload exceeds the allowed size"})
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
+	if err := c.Request.ParseMultipartForm(automationMultipartOverhead); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "automation upload exceeds the allowed size"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid automation form"})
+		return
+	}
 
 	automation.Name = c.PostForm("name")
 	automation.Host = c.PostForm("host")

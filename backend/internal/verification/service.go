@@ -369,19 +369,8 @@ func (s *service) RunDetailsForOwner(ownerIdentity string, id uuid.UUID) (*Verif
 }
 
 func (s *service) runDetailsForOwner(ownerIdentity string, id uuid.UUID) (*VerificationResult, error) {
-	runs, err := s.RunsForOwner(ownerIdentity)
+	run, err := s.repo.FindRunForOwner(ownerIdentity, id)
 	if err != nil {
-		return nil, err
-	}
-	var run *models.VerificationRun
-	for index := range runs {
-		if runs[index].ID == id {
-			copy := runs[index]
-			run = &copy
-			break
-		}
-	}
-	if run == nil {
 		return nil, fmt.Errorf("verification run not found")
 	}
 	claims, err := s.repo.FindClaims(id)

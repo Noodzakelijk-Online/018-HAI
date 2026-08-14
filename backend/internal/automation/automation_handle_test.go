@@ -1,10 +1,12 @@
 package automation
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/events"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
@@ -38,6 +40,26 @@ func TestAutomationRoutesRequireVerifiedOperator(t *testing.T) {
 	authenticated.ServeHTTP(authenticatedRecorder, httptest.NewRequest(http.MethodGet, "/automation/", nil))
 	if authenticatedRecorder.Code != http.StatusNoContent {
 		t.Fatalf("authenticated automation route status = %d, want %d: %s", authenticatedRecorder.Code, http.StatusNoContent, authenticatedRecorder.Body.String())
+	}
+}
+
+func TestCreateAutomationRejectsOversizedMultipartBeforeParsing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previousMax := config.AppConfig.ImageMaxSize
+	config.AppConfig.ImageMaxSize = 8
+	defer func() { config.AppConfig.ImageMaxSize = previousMax }()
+
+	handler := NewHandler(newTestService(newFakeAutomationRepo(&models.Automation{}), events.Publisher{}))
+	router := gin.New()
+	router.POST("/automation", handler.Create)
+	request := httptest.NewRequest(http.MethodPost, "/automation", bytes.NewBufferString("oversized"))
+	request.Header.Set("Content-Type", "multipart/form-data; boundary=hai")
+	request.ContentLength = config.AppConfig.ImageMaxSize + automationMultipartOverhead + 1
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized automation upload status = %d, want %d: %s", recorder.Code, http.StatusRequestEntityTooLarge, recorder.Body.String())
 	}
 }
 

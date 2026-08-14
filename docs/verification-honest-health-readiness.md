@@ -604,6 +604,34 @@ permissions, and server-token controls. Static contracts and live response
 headers verify the policy, including cookie-refresh locations where nginx
 header inheritance would otherwise be lost.
 
+### 2026-08-14 request and history resource hardening
+
+The shared backend router now rejects known oversized non-multipart request
+bodies before route handlers run and wraps streamed request bodies with a 2 MiB
+hard ceiling. Multipart routes remain explicit: automation image forms are
+bounded by the configured image limit plus form overhead, while the reviewed
+OpenClaw archive route retains its separate 750 MiB archive budget and now
+enforces that budget before multipart parsing. The production HTTP server also
+has bounded header size, request-read time, and idle connection lifetime while
+leaving the response write timeout unset for intentionally long, independently
+bounded provider operations.
+
+Verification detail lookup no longer loads and scans an owner's complete run
+history. It performs one owner-scoped, ID-scoped database query, while the
+history endpoint returns the latest 200 records; an older run remains directly
+addressable by its ID. This keeps normal inspection cost stable as audit
+history grows.
+
+Acceptance evidence: all backend tests and `go vet` passed, execution-boundary
+race tests passed, all 418 frontend tests and the production build passed, all
+55 CI/auth/gateway contracts passed, and both default and local-model Compose
+profiles validated. The rebuilt Windows stack reported 21 ready checks, zero
+warnings, zero failures, and no recent backend error lines. A live oversized
+JSON request returned HTTP 413 before authentication, while a normal write
+still returned HTTP 401. A post-rebuild Ollama generation completed with model
+`qwen2.5:0.5b`, EUR 0 cost, provider-reported 53 input and 5 output tokens,
+recorded audit evidence, and ready system status.
+
 ### Known recovery and deployment gaps
 
 - Automation approval-proof replay state is owner-scoped and durable in the
@@ -639,9 +667,9 @@ header inheritance would otherwise be lost.
   consent. This historical record does not assert the current readiness of
   other connectors; use the current connector catalog and its live health
   checks for that decision.
-- This verification did not exercise provider-backed LLM generation, paid
-  provider billing, or external quota accounting. The local smoke suites must
-  not be presented as evidence for those external behaviors.
+- This verification exercised bounded local Ollama generation, but not paid or
+  external cloud-provider billing and quota accounting. Local-provider evidence
+  must not be presented as proof of those external behaviors.
 - The signed-JWT smoke fixtures prove route enforcement, not production identity
   provisioning. Production readiness still requires configured IDP secrets,
   real sessions, and operator-owned external authorization.

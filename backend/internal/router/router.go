@@ -19,7 +19,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const httpShutdownTimeout = 10 * time.Second
+const (
+	httpShutdownTimeout = 10 * time.Second
+	// The reviewed OpenClaw archive route permits large local uploads. Keep a
+	// finite connection lifetime without imposing a 30-second failure on that
+	// explicitly bounded operation; public traffic is additionally constrained
+	// by the loopback gateway and its client-body timeout.
+	httpReadTimeout    = 5 * time.Minute
+	httpIdleTimeout    = 60 * time.Second
+	httpMaxHeaderBytes = 1 << 20
+)
 
 func Initialize() error {
 	return InitializeContext(context.Background())
@@ -54,6 +63,7 @@ func InitializeContext(ctx context.Context) error {
 		return err
 	}
 	router.Use(securityHeadersMiddleware())
+	router.Use(requestBodyLimitMiddleware(maxNonMultipartRequestBytes))
 	router.Use(rateLimitMiddleware(newRateLimitEnforcer()))
 	router.Use(idempotencyMiddleware(idempotency.New(10 * time.Minute)))
 	router.Use(localCaptureCORSMiddleware())
@@ -72,16 +82,23 @@ func InitializeContext(ctx context.Context) error {
 		router.GET("/metrics", metricsExporter.RequireBearerToken(), gin.WrapH(metricsExporter.Handler()))
 	}
 
-	server := &http.Server{
-		Addr:              config.AppConfig.ServerPort,
-		Handler:           router,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	server := newHTTPServer(config.AppConfig.ServerPort, router)
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
 		return err
 	}
 	return serveUntilCancelled(ctx, server, listener)
+}
+
+func newHTTPServer(address string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              address,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       httpReadTimeout,
+		IdleTimeout:       httpIdleTimeout,
+		MaxHeaderBytes:    httpMaxHeaderBytes,
+	}
 }
 
 func serveUntilCancelled(ctx context.Context, server *http.Server, listener net.Listener) error {
