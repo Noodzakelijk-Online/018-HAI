@@ -332,6 +332,55 @@ type Dashboard struct {
 	CompletionCandidates []PursuitListItem          `json:"completionCandidates"`
 }
 
+// dashboardSummary keeps the queue and decision semantics intact while
+// removing record fields that are only used by the exact pursuit detail view.
+// The full dashboard remains the default API contract for existing clients.
+func dashboardSummary(source *Dashboard) *Dashboard {
+	if source == nil {
+		return nil
+	}
+	result := *source
+	result.DecisionQueue = make([]PursuitDashboardDecision, len(source.DecisionQueue))
+	for index, decision := range source.DecisionQueue {
+		decision.Pursuit = dashboardPursuitSummary(decision.Pursuit)
+		result.DecisionQueue[index] = decision
+	}
+	result.NeedsRobert = dashboardListSummary(source.NeedsRobert)
+	result.VAReady = dashboardListSummary(source.VAReady)
+	result.SystemReady = dashboardListSummary(source.SystemReady)
+	result.Blocked = dashboardListSummary(source.Blocked)
+	result.Stale = dashboardListSummary(source.Stale)
+	result.ReviewDue = dashboardListSummary(source.ReviewDue)
+	result.PlanningNeeded = dashboardListSummary(source.PlanningNeeded)
+	result.RecentlyChanged = dashboardListSummary(source.RecentlyChanged)
+	result.HighRisk = dashboardListSummary(source.HighRisk)
+	result.CompletionCandidates = dashboardListSummary(source.CompletionCandidates)
+	return &result
+}
+
+func dashboardListSummary(source []PursuitListItem) []PursuitListItem {
+	result := make([]PursuitListItem, len(source))
+	for index, item := range source {
+		item.Pursuit = dashboardPursuitSummary(item.Pursuit)
+		result[index] = item
+	}
+	return result
+}
+
+func dashboardPursuitSummary(pursuit models.Pursuit) models.Pursuit {
+	pursuit.OwnerIdentity = ""
+	pursuit.Description = ""
+	pursuit.MandateID = nil
+	pursuit.DesiredOutcome = ""
+	pursuit.SourceOfCreation = ""
+	pursuit.CompletionDefinition = ""
+	pursuit.SuccessCriteria = nil
+	pursuit.StopConditions = nil
+	pursuit.Dependencies = nil
+	pursuit.ResourceLimits = models.PursuitResourceLimits{}
+	return pursuit
+}
+
 type Brief struct {
 	GeneratedAt          time.Time   `json:"generatedAt"`
 	OperatingMode        string      `json:"operatingMode"`

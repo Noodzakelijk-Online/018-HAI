@@ -70,10 +70,18 @@ func (h *Handler) List(c *gin.Context) {
 }
 
 func (h *Handler) Dashboard(c *gin.Context) {
+	viewMode := strings.TrimSpace(c.Query("view"))
+	if viewMode != "" && viewMode != "full" && viewMode != "summary" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pursuit dashboard view must be full or summary"})
+		return
+	}
 	record, err := h.service.DashboardForOwner(pursuitOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if viewMode == "summary" {
+		record = dashboardSummary(record)
 	}
 	c.JSON(http.StatusOK, record)
 }

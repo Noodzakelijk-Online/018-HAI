@@ -2,6 +2,23 @@ import { PursuitService } from './pursuit.service';
 import { of } from 'rxjs';
 
 describe('PursuitService response normalization', () => {
+  it('loads the bounded pursuit dashboard view and normalizes empty queues', (done) => {
+    const http = {
+      get: jasmine.createSpy('get').and.returnValue(of({ counts: { active: 2 } })),
+    };
+    const service = new PursuitService(http as any);
+
+    service.dashboard().subscribe((dashboard) => {
+      expect(dashboard.counts['active']).toBe(2);
+      expect(dashboard.decisionQueue).toEqual([]);
+      expect(dashboard.needsRobert).toEqual([]);
+      const [url, options] = http.get.calls.mostRecent().args;
+      expect(url).toBe('/api/v1/pursuits/dashboard');
+      expect(options.params.get('view')).toBe('summary');
+      done();
+    });
+  });
+
   it('submits portfolio planning to the advisory collection endpoint', (done) => {
     const response = { authority: 'advisory_only', canExecute: false, priorities: [], exclusions: [] };
     const http = {

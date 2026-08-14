@@ -256,7 +256,7 @@ target-machine checks before relying on a path for real work.
 | --- | --- | --- |
 | Local Compose and gateway | A separate clean checkout on this Windows host generated a new `.env.local`, built the canonical stack from source, reached healthy state with empty volumes, signed in the first-run owner, and completed a bounded governed workflow. The current retained stack serves `/`, `/control-center`, `/healthz`, and `/readyz` through nginx; protected `/api/v1/*` engine routes require a signed session. | Repeat the clean-clone acceptance chain on every distinct Windows 11 release target and retain its evidence. |
 | Browser session | The unauthenticated session check returns HTTP 200 with `authenticated:false` and no-store caching; Angular routes a browser without a refreshable session to `/login`. A signed-in Playwright acceptance run completed source intake, pursuit creation, exact runtime selection, durable approval, read-only execution, terminal verification, and creation of an immutable completion attestation. The 2026-08-09 regression run reported no console or HTTP failures. | Repeat the acceptance run on each release target and add retained coverage for any new mutable or external action. |
-| Go and Angular code | The full backend and IDP Go suites, frontend production build, 414 headless Angular tests, 40 executable CI/smoke contract tests, migration-chain checks, live memory/workflow PostgreSQL tests, and signed-in browser acceptance passes are green. The production initial bundle is about 626 kB raw; five existing page-style budget warnings remain below the configured 18 kB error ceiling. | Keep these gates green and reduce the remaining style-budget warnings before a production release. The browser exercise proves the local governed flows only; it does not prove Calendar write, message delivery, paid-provider invocation, or mutable external side effects. |
+| Go and Angular code | The full backend and IDP Go suites, frontend production build, 415 headless Angular tests, 52 executable CI/smoke/gateway contract tests, migration-chain checks, live memory/workflow PostgreSQL tests, and signed-in browser acceptance passes are green. The production initial bundle is about 626 kB raw; five existing page-style budget warnings remain below the configured 18 kB error ceiling. | Keep these gates green and reduce the remaining style-budget warnings before a production release. The browser exercise proves the local governed flows only; it does not prove Calendar write, message delivery, paid-provider invocation, or mutable external side effects. |
 | Sources and LLMs | Local/export ingestion, provider probes, GitHub sync, and bounded Gmail/Trello acceptance evidence exist. | A scoped local-model task and any newly configured account need their own retained audit and verification evidence. |
 | Runtimes and external effects | Script, Docker, Hermes, Odysseus, and OpenClaw adapters have bounded, approval-aware interfaces. The local registry-to-read-only-API path is acceptance-tested with deterministic receipt verification. | Explicit upstream installation, narrow allowlists, a reviewed dry run, and a verified approved task for every mutable or external adapter. |
 
@@ -604,6 +604,13 @@ method count; opening a pack loads the existing exact effective-pack route with
 the complete safeguards and advisory playbook. The retained 24-pack catalog
 measured 6,822 bytes in summary form versus 925,600 bytes in full form (99.26%
 less); the inspected 65-method Work and venture detail was 78,440 bytes.
+
+Pursuit dashboards also use an explicit summary view while exact pursuit detail
+continues to carry success criteria, stop conditions, dependencies, resource
+limits, and evidence. On the retained local dataset, the summary response was
+67,748 bytes versus 100,289 bytes for the backward-compatible full response
+(32.45% less). Command Dashboard startup now issues that request once rather
+than twice.
 
 The public gateway uses the same digest-pinned slim Nginx base as UID/GID
 `101`, with one worker, a read-only root filesystem, and no Linux capabilities.

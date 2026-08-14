@@ -35,6 +35,48 @@ func TestDashboardSerializesEmptyQueuesAsArrays(t *testing.T) {
 	}
 }
 
+func TestDashboardSummaryKeepsActionContextAndDropsDetailOnlyFields(t *testing.T) {
+	pursuitID := uuid.New()
+	full := models.Pursuit{
+		ID:                    pursuitID,
+		OwnerIdentity:         "alice",
+		Title:                 "Prepare the verified response",
+		Description:           "Long source-backed description",
+		WhyItMatters:          "A deadline is approaching.",
+		CurrentStateSummary:   "Evidence is ready for review.",
+		NextRecommendedAction: "Review the response.",
+		CompletionDefinition:  "The approved response is delivered.",
+		SuccessCriteria:       []models.PursuitSuccessCriterion{{ID: "criterion-1", Description: "Response approved"}},
+		StopConditions:        []models.PursuitStopCondition{{ID: "stop-1", Description: "Conflicting evidence"}},
+		Dependencies:          []models.PursuitDependency{{ID: "dependency-1", Label: "Evidence bundle"}},
+		ResourceLimits:        models.PursuitResourceLimits{MaxEffortHours: 2, Notes: "detail only"},
+	}
+	dashboard := &Dashboard{
+		Counts:        map[string]int64{"active": 1},
+		DecisionQueue: []PursuitDashboardDecision{{Pursuit: full}},
+		NeedsRobert:   []PursuitListItem{{Pursuit: full, NeedsRobert: 1}},
+	}
+
+	summary := dashboardSummary(dashboard)
+	if summary == dashboard || summary.NeedsRobert[0].Pursuit.ID != pursuitID {
+		t.Fatalf("summary identity was not preserved: %#v", summary)
+	}
+	for _, candidate := range []models.Pursuit{
+		summary.NeedsRobert[0].Pursuit,
+		summary.DecisionQueue[0].Pursuit,
+	} {
+		if candidate.Title != full.Title || candidate.WhyItMatters != full.WhyItMatters || candidate.CurrentStateSummary != full.CurrentStateSummary || candidate.NextRecommendedAction != full.NextRecommendedAction {
+			t.Fatalf("summary removed action context: %#v", candidate)
+		}
+		if candidate.OwnerIdentity != "" || candidate.Description != "" || candidate.CompletionDefinition != "" || candidate.SuccessCriteria != nil || candidate.StopConditions != nil || candidate.Dependencies != nil || candidate.ResourceLimits.MaxEffortHours != 0 {
+			t.Fatalf("summary retained detail-only pursuit data: %#v", candidate)
+		}
+	}
+	if dashboard.NeedsRobert[0].Pursuit.Description == "" || len(dashboard.NeedsRobert[0].Pursuit.SuccessCriteria) != 1 {
+		t.Fatalf("summary mutated the full dashboard: %#v", dashboard.NeedsRobert[0].Pursuit)
+	}
+}
+
 func TestDetailSerializesEmptyConversationsAsArray(t *testing.T) {
 	service := NewService(newFakeRepo(), nil)
 	pursuit, err := service.Create(CreateRequest{Title: "Empty conversation context", OwnerIdentity: "alice"})
