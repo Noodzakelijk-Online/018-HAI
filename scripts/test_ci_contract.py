@@ -264,7 +264,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn('topic_description="$(docker compose', workflow)
         self.assertIn('grep -q PARTITION <<<"$topic_description"', workflow)
         self.assertIn('kafka_command="$(docker compose', workflow)
-        self.assertIn("</proc/1/cmdline", workflow)
+        self.assertIn("cat /proc/1/cmdline", workflow)
         self.assertNotIn("cluster config get write_caching_default", workflow)
         self.assertIn('kafka_logs="$(docker compose', workflow)
         self.assertNotIn(

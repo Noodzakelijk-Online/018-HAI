@@ -9,7 +9,7 @@ Compose stack. It is not an unrestricted desktop agent: planning, execution,
 verification, and approval are separate; external effects remain blocked until a
 reviewed runtime, policy, and evidence path are configured.
 
-> **Current repository state, evidence reviewed through 2026-08-09:** this repository
+> **Current repository state, evidence reviewed through 2026-08-14:** this repository
 > implements a governed local operating layer, including the Angular dashboard,
 > Go engines, IDP, Compose topology, pursuit/workflow routing, persistence, and
 > safety gates. On the development workspace used for this review, the rebuilt
@@ -17,8 +17,8 @@ reviewed runtime, policy, and evidence path are configured.
 > regression run served the shared shell and eight representative deep routes,
 > changed Basic to Advanced view state, and passed a narrow mobile check without
 > console errors, HTTP failures, redirects, framework overlays, or horizontal
-> overflow. The full backend and IDP suites, Angular production build, 400
-> frontend tests, 31 CI contract tests, Compose validation, and Postgres-backed
+> overflow. The full backend and IDP suites, Angular production build, 418
+> frontend tests, 33 CI workflow-contract tests, Compose validation, and Postgres-backed
 > critical-path checks have been exercised. The task review queue also passed
 > against the retained live PostgreSQL data. These observations are
 > local-environment evidence, not a claim that every Windows machine or account
@@ -256,7 +256,7 @@ target-machine checks before relying on a path for real work.
 | --- | --- | --- |
 | Local Compose and gateway | A separate clean checkout on this Windows host generated a new `.env.local`, built the canonical stack from source, reached healthy state with empty volumes, signed in the first-run owner, and completed a bounded governed workflow. The current retained stack serves `/`, `/control-center`, `/healthz`, and `/readyz` through nginx; protected `/api/v1/*` engine routes require a signed session. | Repeat the clean-clone acceptance chain on every distinct Windows 11 release target and retain its evidence. |
 | Browser session | The unauthenticated session check returns HTTP 200 with `authenticated:false` and no-store caching; Angular routes a browser without a refreshable session to `/login`. A signed-in Playwright acceptance run completed source intake, pursuit creation, exact runtime selection, durable approval, read-only execution, terminal verification, and creation of an immutable completion attestation. The 2026-08-09 regression run reported no console or HTTP failures. | Repeat the acceptance run on each release target and add retained coverage for any new mutable or external action. |
-| Go and Angular code | The full backend and IDP Go suites, frontend production build, 418 headless Angular tests, 53 executable CI/smoke/gateway contract tests, migration-chain checks, live memory/workflow PostgreSQL tests, and signed-in browser acceptance passes are green. The production initial bundle is about 626 kB raw; five existing page-style budget warnings remain below the configured 18 kB error ceiling. | Keep these gates green and reduce the remaining style-budget warnings before a production release. The browser exercise proves the local governed flows only; it does not prove Calendar write, message delivery, paid-provider invocation, or mutable external side effects. |
+| Go and Angular code | The full backend and IDP Go suites, frontend production build, 418 headless Angular tests, 54 executable CI/smoke/gateway contract tests, migration-chain checks, live memory/workflow PostgreSQL tests, and signed-in browser acceptance passes are green. The production initial bundle is about 626 kB raw; five existing page-style budget warnings remain below the configured 18 kB error ceiling. | Keep these gates green and reduce the remaining style-budget warnings before a production release. The browser exercise proves the local governed flows only; it does not prove Calendar write, message delivery, paid-provider invocation, or mutable external side effects. |
 | Sources and LLMs | Local/export ingestion, provider probes, GitHub sync, and bounded Gmail/Trello acceptance evidence exist. | A scoped local-model task and any newly configured account need their own retained audit and verification evidence. |
 | Runtimes and external effects | Script, Docker, Hermes, Odysseus, and OpenClaw adapters have bounded, approval-aware interfaces. The local registry-to-read-only-API path is acceptance-tested with deterministic receipt verification. | Explicit upstream installation, narrow allowlists, a reviewed dry run, and a verified approved task for every mutable or external adapter. |
 
