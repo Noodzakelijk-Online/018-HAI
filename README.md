@@ -549,6 +549,11 @@ and 128 MiB of temporary storage. Advanced operators can tune the five
 `BACKEND_MEMORY_LIMIT`, `BACKEND_MEMORY_RESERVATION`, `BACKEND_CPU_LIMIT`,
 `BACKEND_PIDS_LIMIT`, and `BACKEND_TMPFS_SIZE` values in `.env.local`; lowering
 them requires a representative migration, ingestion, and workflow load test.
+Database diagnostics default to parameterized error-only output through
+`DB_LOG_LEVEL=error`. Operators may temporarily select `silent`, `warn`, or
+`info`, but query values remain parameterized at every level so restricted
+source, memory, approval, and life-ontology payloads are not copied into Docker
+logs. Verbose levels should be limited to a bounded diagnostic window.
 The reference build reduced the Docker-reported backend image size from
 71,322,131 to 24,462,696 bytes (65.7%) and the binary from 82,091,894 to
 61,526,200 bytes (25.1%).

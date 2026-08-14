@@ -438,23 +438,11 @@ func (s *Service) AuthorizeAndConsume(
 }
 
 func (s *Service) Get(ctx context.Context, owner string, id uuid.UUID) (Receipt, error) {
-	receipt, err := s.repository.Get(ctx, compact(owner), id)
-	if err != nil {
-		return Receipt{}, err
-	}
-	s.projectReceipt(ctx, &receipt)
-	return receipt, nil
+	return s.repository.Get(ctx, compact(owner), id)
 }
 
 func (s *Service) List(ctx context.Context, owner string, limit int) ([]Receipt, error) {
-	receipts, err := s.repository.List(ctx, compact(owner), limit)
-	if err != nil {
-		return nil, err
-	}
-	for index := range receipts {
-		s.projectReceipt(ctx, &receipts[index])
-	}
-	return receipts, nil
+	return s.repository.List(ctx, compact(owner), limit)
 }
 
 func (s *Service) GetConsumption(

@@ -5,6 +5,7 @@ import (
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/migrations"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 const (
@@ -20,6 +22,7 @@ const (
 	defaultMaxIdleConnections = 4
 	defaultConnectionIdleTime = 5 * time.Minute
 	defaultConnectionLifetime = 30 * time.Minute
+	defaultSlowQueryThreshold = time.Second
 )
 
 type databaseIdentity struct {
@@ -53,11 +56,20 @@ func NewPostgresDatabase(user, password, dbName, dbHost string, dbPort int) (*go
 	if err != nil {
 		return nil, err
 	}
+	loggerConfig, err := loadDatabaseLoggerConfig()
+	if err != nil {
+		return nil, err
+	}
 
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=disable TimeZone=UTC",
 		dbHost, user, password, dbName, dbPort)
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.New(
+			log.New(os.Stdout, "", log.LstdFlags),
+			loggerConfig,
+		),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +83,34 @@ func NewPostgresDatabase(user, password, dbName, dbHost string, dbPort int) (*go
 	sqlDB.SetConnMaxLifetime(settings.connectionLifetime)
 
 	return db, nil
+}
+
+// loadDatabaseLoggerConfig keeps production database logs useful without
+// serializing owner-scoped values, source text, or encrypted record payloads.
+// Parameterization is unconditional even when an operator deliberately enables
+// verbose diagnostics.
+func loadDatabaseLoggerConfig() (logger.Config, error) {
+	level := logger.Error
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DB_LOG_LEVEL"))) {
+	case "", "error":
+		level = logger.Error
+	case "silent":
+		level = logger.Silent
+	case "warn":
+		level = logger.Warn
+	case "info":
+		level = logger.Info
+	default:
+		return logger.Config{}, fmt.Errorf("DB_LOG_LEVEL must be one of silent, error, warn, or info")
+	}
+
+	return logger.Config{
+		SlowThreshold:             defaultSlowQueryThreshold,
+		LogLevel:                  level,
+		IgnoreRecordNotFoundError: true,
+		ParameterizedQueries:      true,
+		Colorful:                  false,
+	}, nil
 }
 
 // OpenDefaultDB opens the configured database without running migrations. Use it

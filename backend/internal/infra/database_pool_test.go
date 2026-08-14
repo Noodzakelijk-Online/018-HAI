@@ -4,7 +4,59 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gorm.io/gorm/logger"
 )
+
+func TestLoadDatabaseLoggerConfigIsPrivateAndQuietByDefault(t *testing.T) {
+	t.Setenv("DB_LOG_LEVEL", "")
+
+	config, err := loadDatabaseLoggerConfig()
+	if err != nil {
+		t.Fatalf("loadDatabaseLoggerConfig: %v", err)
+	}
+	if config.LogLevel != logger.Error {
+		t.Fatalf("log level = %v, want error", config.LogLevel)
+	}
+	if !config.ParameterizedQueries {
+		t.Fatal("database logging must keep query values parameterized")
+	}
+	if !config.IgnoreRecordNotFoundError {
+		t.Fatal("record-not-found noise should not be emitted")
+	}
+	if config.SlowThreshold != time.Second {
+		t.Fatalf("slow threshold = %v, want 1s", config.SlowThreshold)
+	}
+}
+
+func TestLoadDatabaseLoggerConfigRetainsParameterizationAtEveryLevel(t *testing.T) {
+	tests := map[string]logger.LogLevel{
+		"silent": logger.Silent,
+		"error":  logger.Error,
+		"warn":   logger.Warn,
+		"info":   logger.Info,
+	}
+	for value, want := range tests {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("DB_LOG_LEVEL", value)
+			config, err := loadDatabaseLoggerConfig()
+			if err != nil {
+				t.Fatalf("loadDatabaseLoggerConfig: %v", err)
+			}
+			if config.LogLevel != want || !config.ParameterizedQueries {
+				t.Fatalf("config = %#v, want level %v with parameterization", config, want)
+			}
+		})
+	}
+}
+
+func TestLoadDatabaseLoggerConfigRejectsUnknownLevel(t *testing.T) {
+	t.Setenv("DB_LOG_LEVEL", "debug")
+	_, err := loadDatabaseLoggerConfig()
+	if err == nil || !strings.Contains(err.Error(), "silent, error, warn, or info") {
+		t.Fatalf("error = %v", err)
+	}
+}
 
 func TestLoadPoolSettingsUsesBoundedDefaults(t *testing.T) {
 	clearPoolEnvironment(t)
