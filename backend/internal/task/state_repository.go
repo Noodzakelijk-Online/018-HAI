@@ -76,6 +76,27 @@ type TaskStateRepository interface {
 	FindApprovedReviewDecision(ownerIdentity, reviewItemID string) (*ReviewDecisionRecord, error)
 }
 
+// TaskHistoryRepository exposes the small, owner-scoped projection required
+// by list views. Durable implementations must bind every projection to an
+// immutable completion record instead of trusting client-supplied summaries.
+type TaskHistoryRepository interface {
+	ListCompletionPlanHistory(ownerIdentity string, limit int) ([]CompletionPlanHistoryItem, error)
+}
+
+type CompletionPlanHistoryItem struct {
+	ID               string                      `json:"id"`
+	CreatedAt        time.Time                   `json:"createdAt"`
+	Request          string                      `json:"request"`
+	ProjectKey       string                      `json:"projectKey,omitempty"`
+	Intake           CompletionPlanHistoryIntake `json:"intake"`
+	CompletionStatus string                      `json:"completionStatus"`
+}
+
+type CompletionPlanHistoryIntake struct {
+	TaskType        string   `json:"taskType"`
+	SuccessCriteria []string `json:"successCriteria"`
+}
+
 // PendingReviewStateRepository lets the interactive queue read only work that
 // still requires a decision. Historical outcomes remain available to audit and
 // reconciliation paths, but an unreadable legacy outcome cannot take the live

@@ -81,6 +81,14 @@ func (r *MemoryTaskStateRepository) ListCompletionPlans(ownerIdentity string, li
 	return result, nil
 }
 
+func (r *MemoryTaskStateRepository) ListCompletionPlanHistory(ownerIdentity string, limit int) ([]CompletionPlanHistoryItem, error) {
+	plans, err := r.ListCompletionPlans(ownerIdentity, limit)
+	if err != nil {
+		return nil, err
+	}
+	return completionPlanHistory(plans), nil
+}
+
 func (r *MemoryTaskStateRepository) FindCompletionPlan(ownerIdentity, taskPlanID string) (*CompletionPlan, error) {
 	ownerIdentity, err := normalizeTaskStateOwner(ownerIdentity)
 	if err != nil {

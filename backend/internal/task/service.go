@@ -429,6 +429,12 @@ type BoundedDurableOwnerScopedService interface {
 	LogsForOwnerWithLimit(ownerIdentity string, limit int) ([]CompletionPlan, error)
 }
 
+// CompactDurableOwnerScopedService serves the immutable list projection used
+// by dashboards without loading full execution plans and evidence payloads.
+type CompactDurableOwnerScopedService interface {
+	HistoryForOwnerWithLimit(ownerIdentity string, limit int) ([]CompletionPlanHistoryItem, error)
+}
+
 const internalTaskStateOwnerIdentity = "urn:hai:internal:task-system"
 
 // PreviewService is the side-effect-free planning boundary used by reviewed
@@ -1369,6 +1375,22 @@ func (s *service) LogsForOwnerWithLimit(ownerIdentity string, limit int) ([]Comp
 		logs[i] = sanitizeCompletionPlanApprovalData(logs[i])
 	}
 	return logs, nil
+}
+
+func (s *service) HistoryForOwnerWithLimit(ownerIdentity string, limit int) ([]CompletionPlanHistoryItem, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return nil, fmt.Errorf("owner identity is required")
+	}
+	limit = normalizeTaskStateLimit(limit)
+	if compact, ok := s.stateRepository.(TaskHistoryRepository); ok {
+		return compact.ListCompletionPlanHistory(ownerIdentity, limit)
+	}
+	logs, err := s.LogsForOwnerWithLimit(ownerIdentity, limit)
+	if err != nil {
+		return nil, err
+	}
+	return completionPlanHistory(logs), nil
 }
 
 func (s *service) ReviewQueue() []ReviewQueueItem {

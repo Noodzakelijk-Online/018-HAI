@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -15,20 +14,6 @@ import (
 
 type Handler struct {
 	service Service
-}
-
-type CompletionPlanHistoryItem struct {
-	ID               string                      `json:"id"`
-	CreatedAt        time.Time                   `json:"createdAt"`
-	Request          string                      `json:"request"`
-	ProjectKey       string                      `json:"projectKey,omitempty"`
-	Intake           CompletionPlanHistoryIntake `json:"intake"`
-	CompletionStatus string                      `json:"completionStatus"`
-}
-
-type CompletionPlanHistoryIntake struct {
-	TaskType        string   `json:"taskType"`
-	SuccessCriteria []string `json:"successCriteria"`
 }
 
 const (
@@ -192,6 +177,15 @@ func (h *Handler) Logs(c *gin.Context) {
 	}
 	limit, ok := taskLogLimit(c)
 	if !ok {
+		return
+	}
+	if compact, ok := h.service.(CompactDurableOwnerScopedService); ok {
+		logs, err := compact.HistoryForOwnerWithLimit(ownerIdentity, limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "task history is temporarily unavailable"})
+			return
+		}
+		c.JSON(http.StatusOK, logs)
 		return
 	}
 	if bounded, ok := h.service.(BoundedDurableOwnerScopedService); ok {

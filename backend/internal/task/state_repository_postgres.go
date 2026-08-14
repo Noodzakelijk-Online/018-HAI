@@ -1,9 +1,11 @@
 package task
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
@@ -64,6 +66,58 @@ func (r *PostgresTaskStateRepository) ListCompletionPlans(ownerIdentity string, 
 			return nil, err
 		}
 		result = append(result, plan)
+	}
+	return result, nil
+}
+
+type postgresCompletionPlanHistoryRow struct {
+	TaskPlanID       string
+	CreatedAt        time.Time
+	RequestSummary   string
+	ProjectKey       string
+	TaskType         string
+	SuccessCriteria  string
+	CompletionStatus string
+}
+
+func (r *PostgresTaskStateRepository) ListCompletionPlanHistory(ownerIdentity string, limit int) ([]CompletionPlanHistoryItem, error) {
+	ownerIdentity, err := normalizeTaskStateOwner(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	var rows []postgresCompletionPlanHistoryRow
+	if err := r.DB.Raw(`
+		SELECT task_plan_id, created_at, request_summary, project_key,
+			task_type, success_criteria::text AS success_criteria,
+			completion_status
+		FROM public.task_completion_plan_history
+		WHERE owner_identity = ?
+		ORDER BY created_at DESC, completion_log_id DESC
+		LIMIT ?`, ownerIdentity, normalizeTaskStateLimit(limit)).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make([]CompletionPlanHistoryItem, 0, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row.TaskPlanID) == "" || row.CreatedAt.IsZero() ||
+			strings.TrimSpace(row.RequestSummary) == "" || strings.TrimSpace(row.TaskType) == "" ||
+			strings.TrimSpace(row.CompletionStatus) == "" {
+			return nil, fmt.Errorf("task history projection has invalid immutable metadata")
+		}
+		var criteria []string
+		if err := json.Unmarshal([]byte(row.SuccessCriteria), &criteria); err != nil {
+			return nil, fmt.Errorf("decode task history success criteria: %w", err)
+		}
+		result = append(result, CompletionPlanHistoryItem{
+			ID:         row.TaskPlanID,
+			CreatedAt:  row.CreatedAt.UTC(),
+			Request:    row.RequestSummary,
+			ProjectKey: row.ProjectKey,
+			Intake: CompletionPlanHistoryIntake{
+				TaskType:        row.TaskType,
+				SuccessCriteria: criteria,
+			},
+			CompletionStatus: row.CompletionStatus,
+		})
 	}
 	return result, nil
 }
