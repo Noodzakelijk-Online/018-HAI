@@ -138,6 +138,7 @@ func TestGovernanceMigrationTailPreservesSemanticUpgradeOrder(t *testing.T) {
 		"0060_opscontrol_approval_provenance",
 		"0061_context_memory_owner_query_indexes",
 		"0062_ambient_need_defaults",
+		"0063_life_ontology_bounded_query_indexes",
 	}
 	entries, err := fs.ReadDir(Files, "pre")
 	if err != nil {
