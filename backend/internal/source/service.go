@@ -1231,19 +1231,13 @@ func (s *service) RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error)
 func (s *service) RunDueScheduledSyncsForOwner(now time.Time, ownerIdentity string) (*ScheduledSyncRun, error) {
 	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	if ownerIdentity == "" {
-		return s.RunDueScheduledSyncs(now)
+		return nil, fmt.Errorf("owner identity is required for owner-scoped scheduled source sync")
 	}
-	sources, err := s.repo.FindSources(false)
+	sources, err := s.repo.FindSourcesForOwner(ownerIdentity, false, false)
 	if err != nil {
 		return nil, err
 	}
-	owned := make([]models.ConnectedSource, 0, len(sources))
-	for _, item := range sources {
-		if item.OwnerIdentity == ownerIdentity {
-			owned = append(owned, item)
-		}
-	}
-	return s.runDueScheduledSyncs(now, owned)
+	return s.runDueScheduledSyncs(now, sources)
 }
 
 func (s *service) runDueScheduledSyncs(now time.Time, sources []models.ConnectedSource) (*ScheduledSyncRun, error) {

@@ -535,6 +535,12 @@ func TestRunDueScheduledSyncsForOwnerDoesNotTouchAnotherOwnersSources(t *testing
 	if bob.LastSyncedAt != nil {
 		t.Fatal("Alice task refreshed Bob's source")
 	}
+	if repo.globalSourceReads != 0 || repo.ownerSourceReads != 1 || repo.lastSourceOwner != "alice" {
+		t.Fatalf("owner sync source queries = global %d / owner %d (%q), want one database-scoped Alice query", repo.globalSourceReads, repo.ownerSourceReads, repo.lastSourceOwner)
+	}
+	if _, err := service.RunDueScheduledSyncsForOwner(time.Now().UTC(), " "); err == nil {
+		t.Fatal("owner-scoped scheduled sync accepted an empty owner")
+	}
 }
 
 func TestRunDueScheduledSyncsSkipsManualAndNotDueSources(t *testing.T) {
@@ -2047,6 +2053,9 @@ type fakeSourceRepo struct {
 	auditLogs               []models.SourceAuditLog
 	deleteExtractionErr     error
 	oauthTokens             map[uuid.UUID]*models.SourceOAuthToken
+	globalSourceReads       int
+	ownerSourceReads        int
+	lastSourceOwner         string
 }
 
 type fakeSemanticService struct {
@@ -2178,6 +2187,7 @@ func (r *fakeSourceRepo) RevokeSource(
 }
 
 func (r *fakeSourceRepo) FindSources(includeDisabled bool) ([]models.ConnectedSource, error) {
+	r.globalSourceReads++
 	result := []models.ConnectedSource{}
 	for _, source := range r.sources {
 		if includeDisabled || (source.Enabled && source.Status != "revoked") {
@@ -2189,6 +2199,8 @@ func (r *fakeSourceRepo) FindSources(includeDisabled bool) ([]models.ConnectedSo
 
 func (r *fakeSourceRepo) FindSourcesForOwner(ownerIdentity string, includeDisabled, includeLegacyOwnerless bool) ([]models.ConnectedSource, error) {
 	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	r.ownerSourceReads++
+	r.lastSourceOwner = ownerIdentity
 	if ownerIdentity == "" {
 		return []models.ConnectedSource{}, nil
 	}

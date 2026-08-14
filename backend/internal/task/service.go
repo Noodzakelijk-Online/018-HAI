@@ -2418,18 +2418,15 @@ func (s *service) refreshSourcesForTask(request IntakeRequest, intake IntakeAnal
 	if !shouldRefreshSourcesForTask(request, intake) {
 		return nil, "Connected-source refresh skipped because the task does not appear to need source-backed context."
 	}
-	if strings.TrimSpace(request.OwnerIdentity) != "" {
-		result, err := s.sourceService.RunDueScheduledSyncsForOwner(time.Now().UTC(), request.OwnerIdentity)
-		if err != nil {
-			return nil, "Owner-scoped connected-source refresh failed before context retrieval: " + err.Error()
-		}
-		return result, fmt.Sprintf("Owner-scoped connected-source preflight checked %d sources; %d due, %d completed, %d failed, %d skipped.", result.Checked, result.Due, result.Completed, result.Failed, result.Skipped)
+	ownerIdentity := strings.TrimSpace(request.OwnerIdentity)
+	if ownerIdentity == "" {
+		return nil, "Connected-source refresh skipped for an unowned planning preview."
 	}
-	result, err := s.sourceService.RunDueScheduledSyncs(time.Now().UTC())
+	result, err := s.sourceService.RunDueScheduledSyncsForOwner(time.Now().UTC(), ownerIdentity)
 	if err != nil {
-		return nil, "Connected-source refresh failed before context retrieval: " + err.Error()
+		return nil, "Owner-scoped connected-source refresh failed before context retrieval: " + err.Error()
 	}
-	return result, fmt.Sprintf("Connected-source preflight checked %d sources; %d due, %d completed, %d failed, %d skipped.", result.Checked, result.Due, result.Completed, result.Failed, result.Skipped)
+	return result, fmt.Sprintf("Owner-scoped connected-source preflight checked %d sources; %d due, %d completed, %d failed, %d skipped.", result.Checked, result.Due, result.Completed, result.Failed, result.Skipped)
 }
 
 func shouldRefreshSourcesForTask(request IntakeRequest, intake IntakeAnalysis) bool {

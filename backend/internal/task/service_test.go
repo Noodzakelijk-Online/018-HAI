@@ -539,20 +539,21 @@ func TestPlanRefreshesDueSourcesBeforeSourceSearch(t *testing.T) {
 	service := NewService(mem, llmService, src)
 
 	plan, err := service.Plan(IntakeRequest{
-		Request:    "Summarize local project files and source context",
-		ProjectKey: "018-HAI",
+		OwnerIdentity: "alice",
+		Request:       "Summarize local project files and source context",
+		ProjectKey:    "018-HAI",
 	})
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
-	if src.refreshCalls != 1 {
-		t.Fatalf("refreshCalls = %d, want 1", src.refreshCalls)
+	if src.refreshCalls != 0 || len(src.ownerRefreshOwners) != 1 || src.ownerRefreshOwners[0] != "alice" {
+		t.Fatalf("source refresh = global %d / owner %#v, want one Alice-scoped refresh", src.refreshCalls, src.ownerRefreshOwners)
 	}
 	if src.searchCalls != 1 {
 		t.Fatalf("searchCalls = %d, want 1", src.searchCalls)
 	}
-	if len(src.order) < 2 || src.order[0] != "refresh" || src.order[1] != "search" {
-		t.Fatalf("order = %#v, want refresh before search", src.order)
+	if len(src.order) < 2 || src.order[0] != "owner-refresh" || src.order[1] != "search" {
+		t.Fatalf("order = %#v, want owner-scoped refresh before search", src.order)
 	}
 	if plan.ContextPlan.SourceRefresh == nil {
 		t.Fatalf("expected source refresh result in context plan")
