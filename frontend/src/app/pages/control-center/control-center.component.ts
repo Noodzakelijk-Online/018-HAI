@@ -583,7 +583,7 @@ export class ControlCenterComponent implements OnInit {
         tone: 'blue',
         primaryMetric: this.lastAgentCycle ? this.readableState(this.lastAgentCycle.status) : `${this.reviewedItemCount()} reviewed`,
         secondaryMetric: this.agentCycleSecondaryMetric(),
-        context: 'Uses your owner-scoped memory and pursuits to refresh decisions, blockers, and the next action. System sync, workflow execution, and ambient scanning run separately under the controlled worker.',
+        context: 'Runs your owner-scoped source sync, stale-claim recovery, follow-ups, safe workflows, ambient scan, pursuits, and learning. High-risk work remains approval-gated and no phase can fall back to global execution.',
         execute: () => this.runScan(),
       },
       {

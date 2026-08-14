@@ -16,6 +16,10 @@ type SourceSyncer interface {
 	RunDueScheduledSyncs(now time.Time) (*source.ScheduledSyncRun, error)
 }
 
+type OwnerScopedSourceSyncer interface {
+	RunDueScheduledSyncsForOwner(now time.Time, ownerIdentity string) (*source.ScheduledSyncRun, error)
+}
+
 type WorkflowCoordinator interface {
 	RecoverStaleClaims(request workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error)
 	RunDueOpenLoops(request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error)
@@ -23,8 +27,19 @@ type WorkflowCoordinator interface {
 	Dashboard() (*workflow.WorkflowDashboard, error)
 }
 
+type OwnerScopedWorkflowCoordinator interface {
+	RecoverStaleClaimsForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error)
+	RunDueOpenLoopsForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error)
+	RunDueForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error)
+	DashboardForOwner(ownerIdentity string) (*workflow.WorkflowDashboard, error)
+}
+
 type AmbientScanner interface {
 	Scan(trigger string) (*models.AmbientScan, error)
+}
+
+type OwnerScopedAmbientScanner interface {
+	ScanForOwner(ownerIdentity, trigger string) (*models.AmbientScan, error)
 }
 
 type PursuitBriefProvider interface {
@@ -219,10 +234,9 @@ func (s *Service) runSystem(request RunRequest) *RunResult {
 	return result
 }
 
-// runForOwner is the authenticated operator path. It returns only the
-// caller's memory and pursuit operating state. Global sync, workflow retries,
-// background execution, and ambient scans stay with the system worker because
-// their current implementations are not per-owner schedulers.
+// runForOwner is the authenticated operator path. Every operational phase must
+// expose an owner-scoped contract; this path never falls back to a global read
+// or worker method when an owner-specific implementation is unavailable.
 func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResult {
 	started := time.Now().UTC()
 	result := &RunResult{
@@ -232,8 +246,10 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 		StartedAt:      started,
 		Steps:          []WorkerStep{},
 		Errors:         []PhaseError{},
-		SafetySummary:  "Personal operating refresh uses only owner-scoped context and pursuit state. Global source sync, workflow execution, ambient scans, and system learning remain reserved for the system worker.",
+		SafetySummary:  "Personal operating pass uses only owner-scoped source, workflow, ambient, pursuit, and memory contracts. High-risk actions still require approval and no phase may fall back to global execution.",
 	}
+	limit := normalizeLimit(request.Limit)
+	workflowRequest := workflow.RunDueRequest{Limit: limit}
 
 	contextResult, err := s.retrieveOperationalContextForOwner(ownerIdentity, result.Trigger)
 	if err != nil {
@@ -243,19 +259,56 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 		result.ContextNote = appliedContextSummary(contextResult)
 		result.record("retrieve personal operational context", nil, result.ContextNote)
 	}
-	for _, step := range []string{
-		"recover stale claims",
-		"sync due sources",
-		"run due follow-ups",
-		"run safe workflows",
-		"scan ambient opportunities",
-		"refresh workflow dashboard",
-	} {
-		result.Steps = append(result.Steps, WorkerStep{
-			Name:    step,
-			Status:  "skipped",
-			Summary: "reserved for the separate system worker until per-owner scheduling is implemented",
-		})
+
+	ownerWorkflows, workflowsOwnerScoped := s.workflows.(OwnerScopedWorkflowCoordinator)
+	if s.workflows == nil {
+		result.addError("workflow", fmt.Errorf("workflow coordinator is not configured"))
+	} else if !workflowsOwnerScoped {
+		result.addError("workflow", fmt.Errorf("owner-scoped workflow coordinator is not configured"))
+	} else {
+		recovery, err := ownerWorkflows.RecoverStaleClaimsForOwner(ownerIdentity, workflowRequest)
+		result.Recovery = recovery
+		result.record("recover stale claims", err, recoverySummary(recovery))
+	}
+
+	if request.SkipSourceSync {
+		result.Steps = append(result.Steps, WorkerStep{Name: "sync due sources", Status: "skipped", Summary: "source sync skipped by request"})
+	} else if s.sources == nil {
+		result.addError("source_sync", fmt.Errorf("source syncer is not configured"))
+	} else if ownerSources, ok := s.sources.(OwnerScopedSourceSyncer); !ok {
+		result.addError("source_sync", fmt.Errorf("owner-scoped source syncer is not configured"))
+	} else {
+		sync, err := ownerSources.RunDueScheduledSyncsForOwner(time.Now().UTC(), ownerIdentity)
+		result.SourceSync = sync
+		result.record("sync due sources", err, sourceSummary(sync))
+	}
+
+	if workflowsOwnerScoped {
+		openLoops, err := ownerWorkflows.RunDueOpenLoopsForOwner(ownerIdentity, workflowRequest)
+		result.OpenLoops = openLoops
+		result.record("run due follow-ups", err, openLoopSummary(openLoops))
+
+		workflows, err := ownerWorkflows.RunDueForOwner(ownerIdentity, workflowRequest)
+		result.Workflows = workflows
+		result.record("run safe workflows", err, workflowSummary(workflows))
+	}
+
+	if request.SkipAmbient {
+		result.Steps = append(result.Steps, WorkerStep{Name: "scan ambient opportunities", Status: "skipped", Summary: "ambient scan skipped by request"})
+	} else if s.ambient == nil {
+		result.addError("ambient", fmt.Errorf("ambient scanner is not configured"))
+	} else if ownerAmbient, ok := s.ambient.(OwnerScopedAmbientScanner); !ok {
+		result.addError("ambient", fmt.Errorf("owner-scoped ambient scanner is not configured"))
+	} else {
+		scan, err := ownerAmbient.ScanForOwner(ownerIdentity, "agent-cycle."+result.Trigger)
+		result.AmbientScan = scan
+		result.record("scan ambient opportunities", err, ambientSummary(scan))
+	}
+
+	if workflowsOwnerScoped {
+		dashboard, err := ownerWorkflows.DashboardForOwner(ownerIdentity)
+		result.Dashboard = dashboard
+		result.record("refresh workflow dashboard", err, dashboardSummary(dashboard))
 	}
 
 	if s.pursuits == nil {
@@ -279,7 +332,7 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 	result.CompletedAt = time.Now().UTC()
 	result.Status = cycleStatus(result)
 	result.NextAction = nextAction(result)
-	result.LearningNote = "owner-scoped refresh does not write a shared operational lesson"
+	result.LearningIDs, result.LearningNote = s.rememberOperationalLessonForOwner(ownerIdentity, result)
 	return result
 }
 
@@ -331,6 +384,25 @@ func (s *Service) rememberOperationalLesson(result *RunResult) ([]string, string
 		return nil, "operational learning memory was skipped because storage failed"
 	}
 	return []string{created.ID.String()}, "stored operational lesson for future agent-cycle planning"
+}
+
+func (s *Service) rememberOperationalLessonForOwner(ownerIdentity string, result *RunResult) ([]string, string) {
+	if s.memory == nil || !operationalLessonUseful(result) {
+		return nil, "no material owner-scoped operational lesson was produced"
+	}
+	created, err := memory.CreateForOwner(s.memory, ownerIdentity, memory.CreateRequest{
+		Kind:        "procedural",
+		Content:     operationalLessonContent(result),
+		Summary:     compactText(operationalLessonSummary(result), 240),
+		Tags:        operationalLessonTags(result),
+		Confidence:  operationalLessonConfidence(result),
+		SourceURI:   "agent-cycle://" + result.Trigger,
+		SourceLabel: "Owner-scoped agent cycle operational learning",
+	})
+	if err != nil || created == nil {
+		return nil, "owner-scoped operational learning was skipped because storage failed"
+	}
+	return []string{created.ID.String()}, "stored owner-scoped operational lesson for future planning"
 }
 
 func (r *RunResult) record(name string, err error, summary string) {

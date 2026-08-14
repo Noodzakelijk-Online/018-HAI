@@ -20,8 +20,25 @@ type fakeSourceSyncer struct {
 	err   error
 }
 
+type globalOnlySourceSyncer struct {
+	calls *[]string
+}
+
+func (s globalOnlySourceSyncer) RunDueScheduledSyncs(time.Time) (*source.ScheduledSyncRun, error) {
+	*s.calls = append(*s.calls, "global-source")
+	return &source.ScheduledSyncRun{Checked: 1, Due: 1, Completed: 1}, nil
+}
+
 func (s fakeSourceSyncer) RunDueScheduledSyncs(now time.Time) (*source.ScheduledSyncRun, error) {
 	*s.calls = append(*s.calls, "source")
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &source.ScheduledSyncRun{Checked: 1, Due: 1, Completed: 1}, nil
+}
+
+func (s fakeSourceSyncer) RunDueScheduledSyncsForOwner(now time.Time, ownerIdentity string) (*source.ScheduledSyncRun, error) {
+	*s.calls = append(*s.calls, "source:"+ownerIdentity)
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -67,6 +84,38 @@ func (w fakeWorkflowCoordinator) Dashboard() (*workflow.WorkflowDashboard, error
 	return &workflow.WorkflowDashboard{Counts: map[string]int64{"ready": 0}}, nil
 }
 
+func (w fakeWorkflowCoordinator) RecoverStaleClaimsForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error) {
+	*w.calls = append(*w.calls, "recover:"+ownerIdentity)
+	if w.errAt == "recover" {
+		return nil, fmt.Errorf("recover failed")
+	}
+	return &workflow.ClaimRecoverySummary{Checked: 1}, nil
+}
+
+func (w fakeWorkflowCoordinator) RunDueOpenLoopsForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error) {
+	*w.calls = append(*w.calls, "open-loops:"+ownerIdentity)
+	if w.errAt == "open-loops" {
+		return nil, fmt.Errorf("open loops failed")
+	}
+	return &workflow.OpenLoopRunSummary{Checked: 1, Triggered: 1}, nil
+}
+
+func (w fakeWorkflowCoordinator) RunDueForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error) {
+	*w.calls = append(*w.calls, "workflows:"+ownerIdentity)
+	if w.errAt == "workflows" {
+		return nil, fmt.Errorf("workflows failed")
+	}
+	return &workflow.WorkflowRunSummary{Checked: 1, Completed: 1, Blocked: w.blocked, Retried: w.retried}, nil
+}
+
+func (w fakeWorkflowCoordinator) DashboardForOwner(ownerIdentity string) (*workflow.WorkflowDashboard, error) {
+	*w.calls = append(*w.calls, "dashboard:"+ownerIdentity)
+	if w.errAt == "dashboard" {
+		return nil, fmt.Errorf("dashboard failed")
+	}
+	return &workflow.WorkflowDashboard{Counts: map[string]int64{"ready": 0}}, nil
+}
+
 type fakeAmbientScanner struct {
 	calls *[]string
 	err   error
@@ -74,6 +123,14 @@ type fakeAmbientScanner struct {
 
 func (a fakeAmbientScanner) Scan(trigger string) (*models.AmbientScan, error) {
 	*a.calls = append(*a.calls, "ambient:"+trigger)
+	if a.err != nil {
+		return nil, a.err
+	}
+	return &models.AmbientScan{Trigger: trigger, Status: "completed", ItemsExamined: 1, OpportunitiesFound: 1, Created: 1}, nil
+}
+
+func (a fakeAmbientScanner) ScanForOwner(ownerIdentity, trigger string) (*models.AmbientScan, error) {
+	*a.calls = append(*a.calls, "ambient:"+ownerIdentity+":"+trigger)
 	if a.err != nil {
 		return nil, a.err
 	}
@@ -223,7 +280,7 @@ func TestAgentCycleRefreshesPursuitBriefAndPrioritizesRobertDecisions(t *testing
 	}
 }
 
-func TestAuthenticatedAgentCycleOnlyRefreshesOwnerScopedOperatingState(t *testing.T) {
+func TestAuthenticatedAgentCycleRunsEveryOwnerScopedOperationalPhase(t *testing.T) {
 	calls := []string{}
 	service := NewServiceWithPursuits(
 		fakeSourceSyncer{calls: &calls},
@@ -241,17 +298,100 @@ func TestAuthenticatedAgentCycleOnlyRefreshesOwnerScopedOperatingState(t *testin
 	if result.Status != "completed" || result.ExecutionScope != "owner_scoped" {
 		t.Fatalf("owner cycle status/scope = %s/%s, want completed/owner_scoped: %#v", result.Status, result.ExecutionScope, result.Errors)
 	}
-	if result.SourceSync != nil || result.Recovery != nil || result.OpenLoops != nil || result.Workflows != nil || result.AmbientScan != nil || result.Dashboard != nil {
-		t.Fatalf("owner cycle invoked global worker output: %#v", result)
+	if result.SourceSync == nil || result.Recovery == nil || result.OpenLoops == nil || result.Workflows == nil || result.AmbientScan == nil || result.Dashboard == nil {
+		t.Fatalf("owner cycle missed owner-scoped operational output: %#v", result)
 	}
 	if result.PursuitBrief == nil || len(result.PursuitDecisions) != 1 || result.NextAction != "review pursuit decisions" {
 		t.Fatalf("owner pursuit state = %#v", result)
 	}
-	if got := fmt.Sprint(calls); got != "[pursuit-brief:alice pursuit-brief pursuit-decisions:alice pursuit-decisions]" {
-		t.Fatalf("owner cycle called global engines: %s", got)
+	want := "[recover:alice source:alice open-loops:alice workflows:alice ambient:alice:agent-cycle.control-center dashboard:alice pursuit-brief:alice pursuit-brief pursuit-decisions:alice pursuit-decisions]"
+	if got := fmt.Sprint(calls); got != want {
+		t.Fatalf("owner cycle calls = %s, want only owner-scoped engines %s", got, want)
 	}
 	if result.LearningNote == "" || len(result.LearningIDs) != 0 {
 		t.Fatalf("owner cycle stored shared learning: %#v", result)
+	}
+}
+
+func TestAuthenticatedAgentCycleNeverFallsBackToGlobalSourceSync(t *testing.T) {
+	calls := []string{}
+	service := NewServiceWithPursuits(
+		globalOnlySourceSyncer{calls: &calls},
+		fakeWorkflowCoordinator{calls: &calls},
+		fakeAmbientScanner{calls: &calls},
+		fakePursuitBriefProvider{calls: &calls},
+	)
+
+	result := service.Run(RunRequest{OwnerIdentity: "alice", Trigger: "scope-check"})
+
+	if result.Status != "partial_failure" || result.SourceSync != nil {
+		t.Fatalf("global-only source sync was not rejected: %#v", result)
+	}
+	if got := fmt.Sprint(calls); strings.Contains(got, "global-source") {
+		t.Fatalf("owner cycle invoked a global source method: %s", got)
+	}
+	found := false
+	for _, phaseErr := range result.Errors {
+		if phaseErr.Phase == "source_sync" && strings.Contains(phaseErr.Message, "owner-scoped") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing fail-closed owner scope error: %#v", result.Errors)
+	}
+}
+
+func TestAuthenticatedAgentCycleHonorsOwnerScopedSkipControls(t *testing.T) {
+	calls := []string{}
+	service := NewServiceWithPursuits(
+		fakeSourceSyncer{calls: &calls},
+		fakeWorkflowCoordinator{calls: &calls},
+		fakeAmbientScanner{calls: &calls},
+		fakePursuitBriefProvider{calls: &calls},
+	)
+
+	result := service.Run(RunRequest{OwnerIdentity: "alice", Trigger: "brief-only", SkipSourceSync: true, SkipAmbient: true})
+
+	if result.Status != "completed" || result.SourceSync != nil || result.AmbientScan != nil {
+		t.Fatalf("owner skip controls were not honored: %#v", result)
+	}
+	if got := fmt.Sprint(calls); strings.Contains(got, "source") || strings.Contains(got, "ambient") {
+		t.Fatalf("skipped owner engines were called: %s", got)
+	}
+	for _, name := range []string{"sync due sources", "scan ambient opportunities"} {
+		found := false
+		for _, step := range result.Steps {
+			if step.Name == name && step.Status == "skipped" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing explicit skipped step %q: %#v", name, result.Steps)
+		}
+	}
+}
+
+func TestAuthenticatedAgentCycleStoresOnlyOwnerScopedOperationalLearning(t *testing.T) {
+	calls := []string{}
+	mem := &fakeCycleMemoryService{calls: &calls}
+	service := NewServiceWithPursuits(
+		fakeSourceSyncer{calls: &calls},
+		fakeWorkflowCoordinator{calls: &calls, retried: 1},
+		fakeAmbientScanner{calls: &calls},
+		fakePursuitBriefProvider{calls: &calls},
+		mem,
+	)
+
+	result := service.Run(RunRequest{OwnerIdentity: "alice", Trigger: "learning-proof"})
+
+	if result.Status != "completed" || len(result.LearningIDs) != 1 {
+		t.Fatalf("owner learning was not recorded: %#v", result)
+	}
+	if len(mem.createdOwners) != 1 || mem.createdOwners[0] != "alice" || len(mem.created) != 1 {
+		t.Fatalf("learning scope = owners %#v, records %#v", mem.createdOwners, mem.created)
+	}
+	if mem.created[0].SourceLabel != "Owner-scoped agent cycle operational learning" {
+		t.Fatalf("owner learning provenance = %#v", mem.created[0])
 	}
 }
 
@@ -388,6 +528,7 @@ func containsTag(tags []string, want string) bool {
 type fakeCycleMemoryService struct {
 	calls          *[]string
 	created        []memory.CreateRequest
+	createdOwners  []string
 	retrieveResult *memory.RetrieveResult
 	retrieveErr    error
 }
@@ -420,6 +561,48 @@ func (s *fakeCycleMemoryService) Delete(uuid.UUID) error {
 func (s *fakeCycleMemoryService) Retrieve(memory.RetrieveRequest) (*memory.RetrieveResult, error) {
 	if s.calls != nil {
 		*s.calls = append(*s.calls, "memory-retrieve")
+	}
+	if s.retrieveErr != nil {
+		return nil, s.retrieveErr
+	}
+	if s.retrieveResult != nil {
+		return s.retrieveResult, nil
+	}
+	return &memory.RetrieveResult{}, nil
+}
+
+func (s *fakeCycleMemoryService) CreateForOwner(ownerIdentity string, request memory.CreateRequest) (*models.ContextMemory, error) {
+	s.createdOwners = append(s.createdOwners, ownerIdentity)
+	created, err := s.Create(request)
+	if created != nil {
+		created.OwnerIdentity = ownerIdentity
+	}
+	return created, err
+}
+
+func (s *fakeCycleMemoryService) UpdateForOwner(string, uuid.UUID, memory.UpdateRequest) (*models.ContextMemory, error) {
+	return nil, nil
+}
+
+func (s *fakeCycleMemoryService) FindAllForOwner(string, string, bool) ([]models.ContextMemory, error) {
+	return nil, nil
+}
+
+func (s *fakeCycleMemoryService) FindByIDForOwner(string, uuid.UUID) (*models.ContextMemory, error) {
+	return nil, nil
+}
+
+func (s *fakeCycleMemoryService) ArchiveForOwner(string, uuid.UUID, bool) (*models.ContextMemory, error) {
+	return nil, nil
+}
+
+func (s *fakeCycleMemoryService) DeleteForOwner(string, uuid.UUID) error {
+	return nil
+}
+
+func (s *fakeCycleMemoryService) RetrieveForOwner(ownerIdentity string, request memory.RetrieveRequest) (*memory.RetrieveResult, error) {
+	if s.calls != nil {
+		*s.calls = append(*s.calls, "memory-retrieve:"+ownerIdentity)
 	}
 	if s.retrieveErr != nil {
 		return nil, s.retrieveErr
