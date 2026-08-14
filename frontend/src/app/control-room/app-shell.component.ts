@@ -1,14 +1,14 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit } from '@angular/core'
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, OnDestroy, OnInit } from '@angular/core'
 import { Title } from '@angular/platform-browser'
 import { NavigationEnd, Router } from '@angular/router'
 import { Subscription } from 'rxjs'
 import { filter } from 'rxjs/operators'
-import { HAI_MODULE_GROUPS, HAI_MODULES, HaiModuleDefinition, moduleDocumentTitle, moduleForUrl } from './module-registry'
+import { HAI_MODULE_GROUPS, HAI_MODULES, HaiModuleDefinition, HaiModuleGroup, moduleDocumentTitle, moduleForUrl } from './module-registry'
 import { HaiNavigationMode, HaiViewMode, ModuleViewPreferencesService } from './module-view-preferences.service'
 import { ThemeMode, ThemeService } from '../services/theme.service'
 
 @Component({
-  changeDetection: ChangeDetectionStrategy.Eager,
+  changeDetection: ChangeDetectionStrategy.OnPush,
   standalone: false,
   selector: 'app-shell',
   templateUrl: './app-shell.component.html',
@@ -17,6 +17,9 @@ import { ThemeMode, ThemeService } from '../services/theme.service'
 export class AppShellComponent implements OnInit, OnDestroy {
   readonly groups = HAI_MODULE_GROUPS
   readonly modules = HAI_MODULES
+  readonly modulesByGroup = Object.fromEntries(
+    HAI_MODULE_GROUPS.map((group) => [group.id, HAI_MODULES.filter((module) => module.group === group.id)]),
+  ) as Record<HaiModuleGroup, HaiModuleDefinition[]>
   current: HaiModuleDefinition = HAI_MODULES[0]
   themeMode: ThemeMode = 'dark'
   viewMode: HaiViewMode = 'basic'
@@ -39,6 +42,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
     private preferences: ModuleViewPreferencesService,
     private themeService: ThemeService,
     private documentTitle: Title,
+    private changeDetector: ChangeDetectorRef,
   ) {}
 
   ngOnInit(): void {
@@ -54,9 +58,13 @@ export class AppShellComponent implements OnInit, OnDestroy {
     document.removeEventListener('toggle', this.onDetailsToggle, true)
   }
 
-  groupModules(groupId: string): HaiModuleDefinition[] {
-    return this.modules.filter((module) => module.group === groupId)
+  groupModules(groupId: HaiModuleGroup): HaiModuleDefinition[] {
+    return this.modulesByGroup[groupId]
   }
+
+  trackGroup(_: number, group: { id: HaiModuleGroup }): HaiModuleGroup { return group.id }
+
+  trackModule(_: number, module: HaiModuleDefinition): string { return module.id }
 
   navigate(module: HaiModuleDefinition): void {
     this.mobileNavigationOpen = false
@@ -98,6 +106,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
     this.navigationMode = preferences.navigationMode
     document.body.classList.toggle('hai-view-advanced', this.viewMode === 'advanced')
     window.setTimeout(() => this.restoreDetailState())
+    this.changeDetector.markForCheck()
   }
 
   private persistDetailState(event: Event): void {

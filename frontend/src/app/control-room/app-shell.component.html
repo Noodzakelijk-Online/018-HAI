@@ -8,12 +8,12 @@
     </button>
 
     <nav>
-      <section class="hai-navigation__group" *ngFor="let group of groups">
+      <section class="hai-navigation__group" *ngFor="let group of groups; trackBy: trackGroup">
         <h2>{{ group.label }}</h2>
         <button
           type="button"
           class="hai-navigation__item"
-          *ngFor="let module of groupModules(group.id)"
+          *ngFor="let module of groupModules(group.id); trackBy: trackModule"
           [class.hai-navigation__item--active]="isActive(module)"
           [attr.aria-current]="isActive(module) ? 'page' : null"
           [attr.title]="module.title + ': ' + module.description"

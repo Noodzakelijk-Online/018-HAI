@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, EventEmitter, Input, OnChanges, Out
 import { ModuleViewPreferencesService } from './module-view-preferences.service'
 
 @Component({
-  changeDetection: ChangeDetectionStrategy.Eager,
+  changeDetection: ChangeDetectionStrategy.OnPush,
   standalone: false,
   selector: 'hai-progressive-section',
   templateUrl: './progressive-section.component.html',
