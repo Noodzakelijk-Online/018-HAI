@@ -137,6 +137,32 @@ func (a fakeAmbientScanner) ScanForOwner(ownerIdentity, trigger string) (*models
 	return &models.AmbientScan{Trigger: trigger, Status: "completed", ItemsExamined: 1, OpportunitiesFound: 1, Created: 1}, nil
 }
 
+type fakeSnapshotAmbientScanner struct {
+	calls         *[]string
+	dashboard     *pursuit.Dashboard
+	snapshotCalls int
+	fallbackCalls int
+}
+
+func (a *fakeSnapshotAmbientScanner) Scan(trigger string) (*models.AmbientScan, error) {
+	a.fallbackCalls++
+	*a.calls = append(*a.calls, "ambient-global-fallback:"+trigger)
+	return &models.AmbientScan{Trigger: trigger, Status: "completed"}, nil
+}
+
+func (a *fakeSnapshotAmbientScanner) ScanForOwner(ownerIdentity, trigger string) (*models.AmbientScan, error) {
+	a.fallbackCalls++
+	*a.calls = append(*a.calls, "ambient-owner-fallback:"+ownerIdentity+":"+trigger)
+	return &models.AmbientScan{OwnerIdentity: ownerIdentity, Trigger: trigger, Status: "completed"}, nil
+}
+
+func (a *fakeSnapshotAmbientScanner) ScanForOwnerWithPursuitDashboard(ownerIdentity, trigger string, dashboard *pursuit.Dashboard) (*models.AmbientScan, error) {
+	a.snapshotCalls++
+	a.dashboard = dashboard
+	*a.calls = append(*a.calls, "ambient-snapshot:"+ownerIdentity+":"+trigger)
+	return &models.AmbientScan{OwnerIdentity: ownerIdentity, Trigger: trigger, Status: "completed"}, nil
+}
+
 type fakePursuitBriefProvider struct {
 	calls       *[]string
 	brief       *pursuit.Brief
@@ -147,6 +173,7 @@ type fakePursuitBriefProvider struct {
 
 type fakePursuitSnapshotProvider struct {
 	fakePursuitBriefProvider
+	dashboard *pursuit.Dashboard
 }
 
 func (p fakePursuitSnapshotProvider) OperatingSnapshot() (*pursuit.OperatingSnapshot, error) {
@@ -156,7 +183,7 @@ func (p fakePursuitSnapshotProvider) OperatingSnapshot() (*pursuit.OperatingSnap
 	if p.err != nil {
 		return nil, p.err
 	}
-	return &pursuit.OperatingSnapshot{Brief: p.snapshotBrief(), Decisions: p.decisions}, p.decisionErr
+	return &pursuit.OperatingSnapshot{Brief: p.snapshotBrief(), Decisions: p.decisions, Dashboard: p.dashboard}, p.decisionErr
 }
 
 func (p fakePursuitSnapshotProvider) OperatingSnapshotForOwner(ownerIdentity string) (*pursuit.OperatingSnapshot, error) {
@@ -166,7 +193,7 @@ func (p fakePursuitSnapshotProvider) OperatingSnapshotForOwner(ownerIdentity str
 	if p.err != nil {
 		return nil, p.err
 	}
-	return &pursuit.OperatingSnapshot{Brief: p.snapshotBrief(), Decisions: p.decisions}, p.decisionErr
+	return &pursuit.OperatingSnapshot{Brief: p.snapshotBrief(), Decisions: p.decisions, Dashboard: p.dashboard}, p.decisionErr
 }
 
 func (p fakePursuitSnapshotProvider) snapshotBrief() *pursuit.Brief {
@@ -341,6 +368,48 @@ func TestAuthenticatedAgentCycleRunsEveryOwnerScopedOperationalPhase(t *testing.
 	}
 	if result.LearningNote == "" || len(result.LearningIDs) != 0 {
 		t.Fatalf("owner cycle stored shared learning: %#v", result)
+	}
+}
+
+func TestAuthenticatedAgentCycleReusesOnePursuitDashboardForAmbientAndBrief(t *testing.T) {
+	calls := []string{}
+	dashboard := &pursuit.Dashboard{
+		NeedsRobert: []pursuit.PursuitListItem{{
+			Pursuit: models.Pursuit{ID: uuid.New(), OwnerIdentity: "alice", Title: "Review legal response"},
+		}},
+	}
+	ambient := &fakeSnapshotAmbientScanner{calls: &calls}
+	service := NewServiceWithPursuits(
+		fakeSourceSyncer{calls: &calls},
+		fakeWorkflowCoordinator{calls: &calls},
+		ambient,
+		fakePursuitSnapshotProvider{
+			fakePursuitBriefProvider: fakePursuitBriefProvider{
+				calls: &calls,
+				brief: &pursuit.Brief{OperatingMode: "needs_robert", NeedsRobert: 1, PrimaryAction: "Review legal response."},
+				decisions: []pursuit.PursuitDashboardDecision{{
+					Pursuit:  dashboard.NeedsRobert[0].Pursuit,
+					Decision: pursuit.PursuitDecision{Recommended: "Review legal response."},
+				}},
+			},
+			dashboard: dashboard,
+		},
+	)
+
+	result := service.Run(RunRequest{OwnerIdentity: "alice", Trigger: "reuse-proof"})
+
+	if result.Status != "completed" || result.AmbientScan == nil || result.PursuitBrief == nil || len(result.PursuitDecisions) != 1 {
+		t.Fatalf("optimized owner cycle result = %#v", result)
+	}
+	if ambient.snapshotCalls != 1 || ambient.fallbackCalls != 0 {
+		t.Fatalf("ambient calls = snapshot %d fallback %d, want 1/0", ambient.snapshotCalls, ambient.fallbackCalls)
+	}
+	if ambient.dashboard != dashboard {
+		t.Fatalf("ambient received dashboard %p, want snapshot dashboard %p", ambient.dashboard, dashboard)
+	}
+	want := "[recover:alice source:alice open-loops:alice workflows:alice pursuit-snapshot:alice ambient-snapshot:alice:agent-cycle.reuse-proof dashboard:alice]"
+	if got := fmt.Sprint(calls); got != want {
+		t.Fatalf("optimized owner cycle calls = %s, want %s", got, want)
 	}
 }
 

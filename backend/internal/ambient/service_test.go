@@ -552,6 +552,41 @@ func TestScanForOwnerBuildsPrivatePursuitProposalsOnly(t *testing.T) {
 	}
 }
 
+func TestValidatePursuitDashboardOwnerRejectsCrossOwnerAndUnscopedLegacyData(t *testing.T) {
+	t.Setenv("HAI_LEGACY_DATA_OWNER_IDENTITY", "legacy-owner")
+	alice := models.Pursuit{ID: uuid.New(), OwnerIdentity: "alice"}
+	if err := validatePursuitDashboardOwner("alice", &pursuitpkg.Dashboard{
+		ReviewDue:     []pursuitpkg.PursuitListItem{{Pursuit: alice}},
+		DecisionQueue: []pursuitpkg.PursuitDashboardDecision{{Pursuit: alice}},
+	}); err != nil {
+		t.Fatalf("owner-matched dashboard rejected: %v", err)
+	}
+
+	for name, dashboard := range map[string]*pursuitpkg.Dashboard{
+		"cross-owner item": {
+			ReviewDue: []pursuitpkg.PursuitListItem{{Pursuit: models.Pursuit{ID: uuid.New(), OwnerIdentity: "bob"}}},
+		},
+		"cross-owner decision": {
+			DecisionQueue: []pursuitpkg.PursuitDashboardDecision{{Pursuit: models.Pursuit{ID: uuid.New(), OwnerIdentity: "bob"}}},
+		},
+		"ownerless legacy item": {
+			ReviewDue: []pursuitpkg.PursuitListItem{{Pursuit: models.Pursuit{ID: uuid.New()}}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validatePursuitDashboardOwner("alice", dashboard); err == nil {
+				t.Fatal("inaccessible dashboard data was accepted")
+			}
+		})
+	}
+
+	if err := validatePursuitDashboardOwner("legacy-owner", &pursuitpkg.Dashboard{
+		ReviewDue: []pursuitpkg.PursuitListItem{{Pursuit: models.Pursuit{ID: uuid.New()}}},
+	}); err != nil {
+		t.Fatalf("migration owner could not read ownerless legacy pursuit: %v", err)
+	}
+}
+
 func TestAmbientNeedProfilesArePrivateToEachOwner(t *testing.T) {
 	repo := &ambientRepositoryStub{needs: defaultNeeds()}
 	engine := NewService(repo, nil, nil).(*service)

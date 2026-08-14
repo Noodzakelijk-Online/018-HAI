@@ -1,6 +1,7 @@
 package ambient
 
 import (
+	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/memoryengine"
 	"automation-hub-backend/internal/models"
@@ -294,6 +295,17 @@ func (s *service) Scan(trigger string) (*models.AmbientScan, error) {
 // source, or memory queues and never starts execution. The result is a set of
 // private, reviewable proposals rather than background authority.
 func (s *service) ScanForOwner(ownerIdentity, trigger string) (*models.AmbientScan, error) {
+	return s.scanForOwner(ownerIdentity, trigger, nil)
+}
+
+// ScanForOwnerWithPursuitDashboard reuses the immutable pursuit projection
+// already built by an agent cycle after workflow execution. This avoids a
+// second full pursuit expansion while preserving the same candidate builder.
+func (s *service) ScanForOwnerWithPursuitDashboard(ownerIdentity, trigger string, dashboard *pursuitpkg.Dashboard) (*models.AmbientScan, error) {
+	return s.scanForOwner(ownerIdentity, trigger, dashboard)
+}
+
+func (s *service) scanForOwner(ownerIdentity, trigger string, dashboard *pursuitpkg.Dashboard) (*models.AmbientScan, error) {
 	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	if ownerIdentity == "" {
 		return nil, fmt.Errorf("an authenticated owner is required for a personal ambient scan")
@@ -331,8 +343,12 @@ func (s *service) ScanForOwner(ownerIdentity, trigger string) (*models.AmbientSc
 	for _, need := range needs {
 		needMap[need.Key] = need
 	}
-	dashboard, err := s.pursuits.DashboardForOwner(ownerIdentity)
-	if err != nil {
+	if dashboard == nil {
+		dashboard, err = s.pursuits.DashboardForOwner(ownerIdentity)
+		if err != nil {
+			return fail(err)
+		}
+	} else if err := validatePursuitDashboardOwner(ownerIdentity, dashboard); err != nil {
 		return fail(err)
 	}
 	pursuits, err := s.pursuits.ListForOwner(ownerIdentity, true)
@@ -368,6 +384,45 @@ func (s *service) ScanForOwner(ownerIdentity, trigger string) (*models.AmbientSc
 		log.Printf("ambient scan retention cleanup failed: %v", err)
 	}
 	return updated, nil
+}
+
+func validatePursuitDashboardOwner(ownerIdentity string, dashboard *pursuitpkg.Dashboard) error {
+	if dashboard == nil {
+		return fmt.Errorf("pursuit dashboard is required")
+	}
+	validate := func(items []pursuitpkg.PursuitListItem) error {
+		for _, item := range items {
+			itemOwner := strings.TrimSpace(item.Pursuit.OwnerIdentity)
+			if itemOwner == "" && !identity.CanReadLegacyOwnerlessData(ownerIdentity) {
+				return fmt.Errorf("pursuit dashboard contains inaccessible legacy data")
+			}
+			if itemOwner != "" && itemOwner != ownerIdentity {
+				return fmt.Errorf("pursuit dashboard contains another owner's data")
+			}
+		}
+		return nil
+	}
+	queues := [][]pursuitpkg.PursuitListItem{
+		dashboard.NeedsRobert, dashboard.VAReady, dashboard.SystemReady,
+		dashboard.Blocked, dashboard.Stale, dashboard.ReviewDue,
+		dashboard.PlanningNeeded, dashboard.RecentlyChanged,
+		dashboard.HighRisk, dashboard.CompletionCandidates,
+	}
+	for _, items := range queues {
+		if err := validate(items); err != nil {
+			return err
+		}
+	}
+	for _, decision := range dashboard.DecisionQueue {
+		decisionOwner := strings.TrimSpace(decision.Pursuit.OwnerIdentity)
+		if decisionOwner == "" && !identity.CanReadLegacyOwnerlessData(ownerIdentity) {
+			return fmt.Errorf("pursuit dashboard contains an inaccessible legacy decision")
+		}
+		if decisionOwner != "" && decisionOwner != ownerIdentity {
+			return fmt.Errorf("pursuit dashboard contains another owner's decision")
+		}
+	}
+	return nil
 }
 
 func (s *service) storeCandidates(scan *models.AmbientScan, candidates []models.AmbientOpportunity, policy Policy, now time.Time) error {

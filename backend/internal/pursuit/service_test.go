@@ -4550,6 +4550,16 @@ func TestOperatingSnapshotBuildsBriefAndDecisionsFromOneDashboard(t *testing.T) 
 		t.Fatalf("OperatingSnapshot returned error: %v", err)
 	}
 	brief := snapshot.Brief
+	if snapshot.Dashboard == nil {
+		t.Fatal("operating snapshot did not retain its source dashboard for in-cycle reuse")
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal operating snapshot: %v", err)
+	}
+	if strings.Contains(string(encoded), "dashboard") {
+		t.Fatalf("internal pursuit dashboard leaked into API JSON: %s", encoded)
+	}
 	if brief == nil || len(snapshot.Decisions) != 1 {
 		t.Fatalf("operating snapshot = %#v, want one brief and one Robert decision", snapshot)
 	}

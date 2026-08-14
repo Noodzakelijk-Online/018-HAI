@@ -42,6 +42,10 @@ type OwnerScopedAmbientScanner interface {
 	ScanForOwner(ownerIdentity, trigger string) (*models.AmbientScan, error)
 }
 
+type OwnerScopedAmbientSnapshotScanner interface {
+	ScanForOwnerWithPursuitDashboard(ownerIdentity, trigger string, dashboard *pursuit.Dashboard) (*models.AmbientScan, error)
+}
+
 type PursuitBriefProvider interface {
 	Brief() (*pursuit.Brief, error)
 }
@@ -263,6 +267,7 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 	}
 	limit := normalizeLimit(request.Limit)
 	workflowRequest := workflow.RunDueRequest{Limit: limit}
+	var pursuitSnapshot *pursuit.OperatingSnapshot
 
 	contextResult, err := s.retrieveOperationalContextForOwner(ownerIdentity, result.Trigger)
 	if err != nil {
@@ -306,8 +311,22 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 		result.record("run safe workflows", err, workflowSummary(workflows))
 	}
 
+	if provider, ok := s.pursuits.(PursuitOwnerOperatingSnapshotProvider); ok {
+		if scanner, scannerOK := s.ambient.(OwnerScopedAmbientSnapshotScanner); scannerOK && !request.SkipAmbient {
+			snapshot, snapshotErr := provider.OperatingSnapshotForOwner(ownerIdentity)
+			if snapshotErr == nil && snapshot != nil && snapshot.Dashboard != nil {
+				pursuitSnapshot = snapshot
+				scan, scanErr := scanner.ScanForOwnerWithPursuitDashboard(ownerIdentity, "agent-cycle."+result.Trigger, snapshot.Dashboard)
+				result.AmbientScan = scan
+				result.record("scan ambient opportunities", scanErr, ambientSummary(scan))
+			}
+		}
+	}
+
 	if request.SkipAmbient {
 		result.Steps = append(result.Steps, WorkerStep{Name: "scan ambient opportunities", Status: "skipped", Summary: "ambient scan skipped by request"})
+	} else if pursuitSnapshot != nil {
+		// The optimized snapshot scanner already completed the ambient phase.
 	} else if s.ambient == nil {
 		result.addError("ambient", fmt.Errorf("ambient scanner is not configured"))
 	} else if ownerAmbient, ok := s.ambient.(OwnerScopedAmbientScanner); !ok {
@@ -326,6 +345,10 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 
 	if s.pursuits == nil {
 		result.addError("pursuits", fmt.Errorf("pursuit brief provider is not configured"))
+	} else if pursuitSnapshot != nil {
+		applyPursuitSnapshot(result, pursuitSnapshot)
+		result.record("refresh personal pursuit operating brief", nil, pursuitBriefSummary(result.PursuitBrief))
+		result.record("refresh personal Robert decision queue", nil, pursuitDecisionSummary(result.PursuitDecisions))
 	} else if provider, ok := s.pursuits.(PursuitOwnerOperatingSnapshotProvider); ok {
 		snapshot, err := provider.OperatingSnapshotForOwner(ownerIdentity)
 		applyPursuitSnapshot(result, snapshot)

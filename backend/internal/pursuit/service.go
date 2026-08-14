@@ -402,6 +402,7 @@ type Brief struct {
 type OperatingSnapshot struct {
 	Brief     *Brief                     `json:"brief"`
 	Decisions []PursuitDashboardDecision `json:"decisions"`
+	Dashboard *Dashboard                 `json:"-"`
 }
 
 type BriefCard struct {
@@ -1303,6 +1304,7 @@ func (s *service) OperatingSnapshotForOwner(ownerIdentity string) (*OperatingSna
 	return &OperatingSnapshot{
 		Brief:     briefFromDashboard(dashboard),
 		Decisions: decisions,
+		Dashboard: dashboard,
 	}, nil
 }
 
