@@ -612,6 +612,85 @@ func TestOwnerScanUsesPrivateNeedProfile(t *testing.T) {
 	}
 }
 
+func TestStoreCandidatesAvoidsUnchangedHourlyWrite(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 18, 0, 0, 0, time.UTC)
+	candidate := models.AmbientOpportunity{
+		OwnerIdentity: "alice", Fingerprint: strings.Repeat("a", 64), NeedKey: "growth",
+		Title: "Review the active pursuit", Rationale: "The pursuit is due for review.",
+		NextAction: "Review the evidence and choose the next action.", PriorityScore: 72,
+		Urgency: 70, Impact: 75, Effort: 20, Confidence: 85, Risk: 20,
+		EvidenceManifest: `{"type":"pursuit_review_due"}`, Status: StatusProposed,
+	}
+	repo := &ambientRepositoryStub{opportunity: &models.AmbientOpportunity{
+		ID: uuid.New(), OwnerIdentity: candidate.OwnerIdentity, Fingerprint: candidate.Fingerprint,
+		NeedKey: candidate.NeedKey, Title: candidate.Title, Rationale: candidate.Rationale,
+		NextAction: candidate.NextAction, PriorityScore: candidate.PriorityScore,
+		Urgency: candidate.Urgency, Impact: candidate.Impact, Effort: candidate.Effort,
+		Confidence: candidate.Confidence, Risk: candidate.Risk,
+		EvidenceManifest: candidate.EvidenceManifest, Status: StatusProposed,
+		LastSeenAt: now.Add(-time.Hour),
+	}}
+	engine := NewService(repo, nil, nil).(*service)
+	scan := &models.AmbientScan{}
+
+	if err := engine.storeCandidates(scan, []models.AmbientOpportunity{candidate}, Policy{MinimumScore: 0, MinimumConfidence: 0}, now); err != nil {
+		t.Fatalf("storeCandidates: %v", err)
+	}
+	if repo.saveOpportunityCalls != 0 || scan.Updated != 0 || scan.Deduplicated != 1 {
+		t.Fatalf("unchanged candidate writes=%d scan=%#v, want no write and one deduplication", repo.saveOpportunityCalls, scan)
+	}
+	if !repo.opportunity.LastSeenAt.Equal(now.Add(-time.Hour)) {
+		t.Fatalf("unchanged candidate refreshed last seen at %s", repo.opportunity.LastSeenAt)
+	}
+}
+
+func TestStoreCandidatesPersistsSemanticChangeAndDailyFreshness(t *testing.T) {
+	now := time.Date(2026, time.August, 14, 18, 0, 0, 0, time.UTC)
+	base := models.AmbientOpportunity{
+		ID: uuid.New(), OwnerIdentity: "alice", Fingerprint: strings.Repeat("b", 64),
+		NeedKey: "growth", Title: "Plan pursuit", Rationale: "Planning is needed.",
+		NextAction: "Create the first plan.", PriorityScore: 64, Urgency: 60,
+		Impact: 70, Effort: 25, Confidence: 80, Risk: 20,
+		EvidenceManifest: `{"type":"pursuit_planning_needed"}`, Status: StatusProposed,
+		LastSeenAt: now.Add(-time.Hour),
+	}
+	repo := &ambientRepositoryStub{opportunity: &base}
+	engine := NewService(repo, nil, nil).(*service)
+	changed := base
+	changed.NextAction = "Create a source-backed plan."
+	scan := &models.AmbientScan{}
+
+	if err := engine.storeCandidates(scan, []models.AmbientOpportunity{changed}, Policy{}, now); err != nil {
+		t.Fatalf("semantic update: %v", err)
+	}
+	if repo.saveOpportunityCalls != 1 || scan.Updated != 1 || repo.opportunity.NextAction != changed.NextAction || !repo.opportunity.LastSeenAt.Equal(now) {
+		t.Fatalf("semantic update writes=%d scan=%#v item=%#v", repo.saveOpportunityCalls, scan, repo.opportunity)
+	}
+
+	repo.saveOpportunityCalls = 0
+	repo.opportunity.LastSeenAt = now.Add(-ambientLastSeenWriteInterval)
+	scan = &models.AmbientScan{}
+	if err := engine.storeCandidates(scan, []models.AmbientOpportunity{changed}, Policy{}, now); err != nil {
+		t.Fatalf("daily refresh: %v", err)
+	}
+	if repo.saveOpportunityCalls != 1 || scan.Updated != 1 || scan.Deduplicated != 1 || !repo.opportunity.LastSeenAt.Equal(now) {
+		t.Fatalf("daily refresh writes=%d scan=%#v item=%#v", repo.saveOpportunityCalls, scan, repo.opportunity)
+	}
+
+	repo.saveOpportunityCalls = 0
+	repo.opportunity.Status = StatusDismissed
+	repo.opportunity.CooldownUntil = timePointer(now.Add(-time.Minute))
+	scan = &models.AmbientScan{}
+	if err := engine.storeCandidates(scan, []models.AmbientOpportunity{changed}, Policy{}, now); err != nil {
+		t.Fatalf("cooldown reactivation: %v", err)
+	}
+	if repo.saveOpportunityCalls != 1 || scan.Updated != 1 || repo.opportunity.Status != StatusProposed {
+		t.Fatalf("cooldown reactivation writes=%d scan=%#v item=%#v", repo.saveOpportunityCalls, scan, repo.opportunity)
+	}
+}
+
+func timePointer(value time.Time) *time.Time { return &value }
+
 func findAmbientNeed(needs []models.AmbientNeed, key string) models.AmbientNeed {
 	for _, need := range needs {
 		if need.Key == key {

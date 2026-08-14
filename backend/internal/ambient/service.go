@@ -29,6 +29,8 @@ const (
 	StatusAccepted  = "accepted"
 	StatusDismissed = "dismissed"
 	StatusCompleted = "completed"
+
+	ambientLastSeenWriteInterval = 24 * time.Hour
 )
 
 var ErrScanInProgress = errors.New("ambient scan already in progress")
@@ -244,25 +246,12 @@ func (s *service) Scan(trigger string) (*models.AmbientScan, error) {
 			return fail(findErr)
 		}
 		if existing != nil {
-			existing.Title = candidate.Title
-			existing.Rationale = candidate.Rationale
-			existing.NextAction = candidate.NextAction
-			existing.PriorityScore = candidate.PriorityScore
-			existing.Urgency = candidate.Urgency
-			existing.Impact = candidate.Impact
-			existing.Effort = candidate.Effort
-			existing.Confidence = candidate.Confidence
-			existing.Risk = candidate.Risk
-			existing.RequiresApproval = candidate.RequiresApproval
-			existing.EvidenceManifest = candidate.EvidenceManifest
-			existing.LastSeenAt = now
-			if existing.Status == StatusDismissed && (existing.CooldownUntil == nil || existing.CooldownUntil.Before(now)) {
-				existing.Status = StatusProposed
+			if mergeAmbientCandidate(existing, candidate, now) {
+				if _, saveErr := s.repo.SaveOpportunity(existing); saveErr != nil {
+					return fail(saveErr)
+				}
+				scan.Updated++
 			}
-			if _, saveErr := s.repo.SaveOpportunity(existing); saveErr != nil {
-				return fail(saveErr)
-			}
-			scan.Updated++
 			scan.Deduplicated++
 			scan.DeduplicatedBytes += int64(len(candidate.Rationale) + len(candidate.NextAction) + len(candidate.EvidenceManifest))
 		} else {
@@ -426,25 +415,12 @@ func (s *service) storeCandidates(scan *models.AmbientScan, candidates []models.
 			if strings.TrimSpace(existing.OwnerIdentity) != strings.TrimSpace(candidate.OwnerIdentity) {
 				return fmt.Errorf("ambient opportunity fingerprint owner mismatch")
 			}
-			existing.Title = candidate.Title
-			existing.Rationale = candidate.Rationale
-			existing.NextAction = candidate.NextAction
-			existing.PriorityScore = candidate.PriorityScore
-			existing.Urgency = candidate.Urgency
-			existing.Impact = candidate.Impact
-			existing.Effort = candidate.Effort
-			existing.Confidence = candidate.Confidence
-			existing.Risk = candidate.Risk
-			existing.RequiresApproval = candidate.RequiresApproval
-			existing.EvidenceManifest = candidate.EvidenceManifest
-			existing.LastSeenAt = now
-			if existing.Status == StatusDismissed && (existing.CooldownUntil == nil || existing.CooldownUntil.Before(now)) {
-				existing.Status = StatusProposed
+			if mergeAmbientCandidate(existing, candidate, now) {
+				if _, err := s.repo.SaveOpportunity(existing); err != nil {
+					return err
+				}
+				scan.Updated++
 			}
-			if _, err := s.repo.SaveOpportunity(existing); err != nil {
-				return err
-			}
-			scan.Updated++
 			scan.Deduplicated++
 			scan.DeduplicatedBytes += int64(len(candidate.Rationale) + len(candidate.NextAction) + len(candidate.EvidenceManifest))
 		} else {
@@ -458,6 +434,48 @@ func (s *service) storeCandidates(scan *models.AmbientScan, candidates []models.
 		scan.ManifestBytes += int64(len(candidate.EvidenceManifest))
 	}
 	return nil
+}
+
+// mergeAmbientCandidate applies generated fields while avoiding an hourly
+// database write when an identical proposal is rediscovered. Freshness is
+// still persisted once per day, and any semantic or cooldown change is saved
+// immediately.
+func mergeAmbientCandidate(existing *models.AmbientOpportunity, candidate models.AmbientOpportunity, now time.Time) bool {
+	contentChanged := existing.Title != candidate.Title ||
+		existing.Rationale != candidate.Rationale ||
+		existing.NextAction != candidate.NextAction ||
+		existing.PriorityScore != candidate.PriorityScore ||
+		existing.Urgency != candidate.Urgency ||
+		existing.Impact != candidate.Impact ||
+		existing.Effort != candidate.Effort ||
+		existing.Confidence != candidate.Confidence ||
+		existing.Risk != candidate.Risk ||
+		existing.RequiresApproval != candidate.RequiresApproval ||
+		existing.EvidenceManifest != candidate.EvidenceManifest
+
+	existing.Title = candidate.Title
+	existing.Rationale = candidate.Rationale
+	existing.NextAction = candidate.NextAction
+	existing.PriorityScore = candidate.PriorityScore
+	existing.Urgency = candidate.Urgency
+	existing.Impact = candidate.Impact
+	existing.Effort = candidate.Effort
+	existing.Confidence = candidate.Confidence
+	existing.Risk = candidate.Risk
+	existing.RequiresApproval = candidate.RequiresApproval
+	existing.EvidenceManifest = candidate.EvidenceManifest
+
+	if existing.Status == StatusDismissed && (existing.CooldownUntil == nil || existing.CooldownUntil.Before(now)) {
+		existing.Status = StatusProposed
+		contentChanged = true
+	}
+	refreshDue := existing.LastSeenAt.IsZero() ||
+		(now.After(existing.LastSeenAt) && now.Sub(existing.LastSeenAt) >= ambientLastSeenWriteInterval)
+	if contentChanged || refreshDue {
+		existing.LastSeenAt = now
+		return true
+	}
+	return false
 }
 
 func (s *service) UpdateNeedForOwner(ownerIdentity, key string, request NeedUpdateRequest) (*models.AmbientNeed, error) {

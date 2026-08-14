@@ -162,11 +162,12 @@ func TestDismissOpportunityWithoutUsefulNoteDoesNotStoreMemory(t *testing.T) {
 }
 
 type ambientRepositoryStub struct {
-	opportunity      *models.AmbientOpportunity
-	needs            []models.AmbientNeed
-	overrides        []models.AmbientNeedOverride
-	scans            []models.AmbientScan
-	ensureNeedsCalls int
+	opportunity          *models.AmbientOpportunity
+	needs                []models.AmbientNeed
+	overrides            []models.AmbientNeedOverride
+	scans                []models.AmbientScan
+	ensureNeedsCalls     int
+	saveOpportunityCalls int
 }
 
 func (r *ambientRepositoryStub) EnsureNeeds([]models.AmbientNeed) error {
@@ -218,11 +219,16 @@ func (r *ambientRepositoryStub) FindOpportunity(uuid.UUID) (*models.AmbientOppor
 	return &copy, nil
 }
 
-func (r *ambientRepositoryStub) FindOpportunityByFingerprint(string) (*models.AmbientOpportunity, error) {
+func (r *ambientRepositoryStub) FindOpportunityByFingerprint(fingerprint string) (*models.AmbientOpportunity, error) {
+	if r.opportunity != nil && r.opportunity.Fingerprint != "" && r.opportunity.Fingerprint == fingerprint {
+		copy := *r.opportunity
+		return &copy, nil
+	}
 	return nil, nil
 }
 
 func (r *ambientRepositoryStub) SaveOpportunity(item *models.AmbientOpportunity) (*models.AmbientOpportunity, error) {
+	r.saveOpportunityCalls++
 	copy := *item
 	r.opportunity = &copy
 	return item, nil
