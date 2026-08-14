@@ -776,7 +776,13 @@ func (s *Service) GenerateContext(ctx context.Context, request GenerateRequest) 
 			LoggedAt:         time.Now().UTC(),
 		}, nil
 	}
-	maintenance := s.ensureModelFresh(provider, model, request.EffectContext)
+	maintenance, maintenanceErr := s.ensureModelFreshContext(ctx, provider, model, request.EffectContext)
+	if maintenanceErr != nil {
+		if requestCancelled(maintenanceErr) {
+			return canceledGenerationResult(started, &provider, &model, maintenanceErr), nil
+		}
+		return nil, maintenanceErr
+	}
 	if maintenance.BlocksExecution {
 		// A supplied decision can be older than its per-model maintenance
 		// record. Re-run the full policy once so a failed refresh does not
@@ -824,7 +830,13 @@ func (s *Service) GenerateContext(ctx context.Context, request GenerateRequest) 
 					LoggedAt:         time.Now().UTC(),
 				}, nil
 			}
-			maintenance = s.ensureModelFresh(provider, model, request.EffectContext)
+			maintenance, maintenanceErr = s.ensureModelFreshContext(ctx, provider, model, request.EffectContext)
+			if maintenanceErr != nil {
+				if requestCancelled(maintenanceErr) {
+					return canceledGenerationResult(started, &provider, &model, maintenanceErr), nil
+				}
+				return nil, maintenanceErr
+			}
 			if maintenance.BlocksExecution {
 				return &GenerationResult{
 					ProviderID:       provider.ID,
@@ -883,7 +895,10 @@ func (s *Service) GenerateContext(ctx context.Context, request GenerateRequest) 
 		}, nil
 	}
 	if provider.ID == "litellm" {
-		probe := probeProvider(provider, s.policy)
+		probe := probeProviderContext(ctx, provider, s.policy)
+		if err := ctx.Err(); err != nil {
+			return canceledGenerationResult(started, &provider, &model, err), nil
+		}
 		if !probe.Live {
 			return &GenerationResult{
 				ProviderID:       provider.ID,
@@ -1009,6 +1024,13 @@ func (s *Service) callProvider(ctx context.Context, provider Provider, model Mod
 }
 
 func probeProvider(provider Provider, policy Policy) ProviderProbeResult {
+	return probeProviderContext(context.Background(), provider, policy)
+}
+
+func probeProviderContext(parent context.Context, provider Provider, policy Policy) ProviderProbeResult {
+	if parent == nil {
+		parent = context.Background()
+	}
 	started := time.Now().UTC()
 	result := ProviderProbeResult{
 		ProviderID:   provider.ID,
@@ -1030,7 +1052,7 @@ func probeProvider(provider Provider, policy Policy) ProviderProbeResult {
 		return result
 	}
 	if provider.ID == "odysseus" {
-		return probeOdysseusProvider(provider, result, started)
+		return probeOdysseusProviderContext(parent, provider, result, started)
 	}
 
 	endpoint := strings.TrimRight(strings.TrimSpace(provider.EndpointURL), "/")
@@ -1038,7 +1060,7 @@ func probeProvider(provider Provider, policy Policy) ProviderProbeResult {
 	if provider.ID == "ollama" {
 		probePath = "/api/tags"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(intEnv("LLM_PROVIDER_PROBE_TIMEOUT_SECONDS", 5))*time.Second)
+	ctx, cancel := context.WithTimeout(parent, time.Duration(intEnv("LLM_PROVIDER_PROBE_TIMEOUT_SECONDS", 5))*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+probePath, nil)
 	if err != nil {
@@ -1083,12 +1105,24 @@ func probeProvider(provider Provider, policy Policy) ProviderProbeResult {
 }
 
 func probeOdysseusProvider(provider Provider, result ProviderProbeResult, started time.Time) ProviderProbeResult {
+	return probeOdysseusProviderContext(context.Background(), provider, result, started)
+}
+
+func probeOdysseusProviderContext(parent context.Context, provider Provider, result ProviderProbeResult, started time.Time) ProviderProbeResult {
+	if parent == nil {
+		parent = context.Background()
+	}
 	endpoint := strings.TrimRight(strings.TrimSpace(provider.EndpointURL), "/")
 	paths := []string{"/api/health", "/health", "/api/v1/health", "/"}
 	lastReason := ""
 
 	for _, path := range paths {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(intEnv("LLM_PROVIDER_PROBE_TIMEOUT_SECONDS", 5))*time.Second)
+		if err := parent.Err(); err != nil {
+			result.Status = "interrupted"
+			result.Reason = "provider probe stopped because the caller was cancelled"
+			return result
+		}
+		ctx, cancel := context.WithTimeout(parent, time.Duration(intEnv("LLM_PROVIDER_PROBE_TIMEOUT_SECONDS", 5))*time.Second)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+path, nil)
 		if err != nil {
 			cancel()

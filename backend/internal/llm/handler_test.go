@@ -187,6 +187,27 @@ func TestRunDueModelMaintenanceHandlerReturnsAggregateOnly(t *testing.T) {
 	}
 }
 
+func TestRunDueModelMaintenanceHandlerStopsWithCanceledRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	history := &fakeModelMaintenanceRepository{}
+	service := &Service{policy: testPolicyWithoutEndpoints(), maintenanceHistory: history, maintenanceRunning: map[string]*sync.Mutex{}}
+	handler := NewHandler(service)
+	response := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(response)
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	ginContext.Request = httptest.NewRequest(http.MethodPost, "/model-maintenance/run", nil).WithContext(requestContext)
+
+	handler.RunDueModelMaintenance(ginContext)
+
+	if response.Body.Len() != 0 {
+		t.Fatalf("canceled handler wrote a response body: %s", response.Body.String())
+	}
+	if len(history.records) != 0 {
+		t.Fatalf("canceled handler persisted maintenance records: %#v", history.records)
+	}
+}
+
 func TestRunDueModelMaintenanceHandlerRespectsEmergencyStop(t *testing.T) {
 	t.Setenv("HAI_EMERGENCY_STOP", "true")
 	service := &Service{policy: Policy{}, maintenanceHistory: &fakeModelMaintenanceRepository{}, maintenanceRunning: map[string]*sync.Mutex{}}

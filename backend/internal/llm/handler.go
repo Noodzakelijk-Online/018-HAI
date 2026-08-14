@@ -1,9 +1,12 @@
 package llm
 
 import (
-	"automation-hub-backend/internal/safety"
+	"context"
+	"errors"
 	"net/http"
 	"strconv"
+
+	"automation-hub-backend/internal/safety"
 
 	"github.com/gin-gonic/gin"
 )
@@ -80,7 +83,15 @@ func (h *Handler) RunDueModelMaintenance(c *gin.Context) {
 		})
 		return
 	}
-	c.JSON(http.StatusOK, h.service.RunDueModelMaintenance())
+	run, err := h.service.RunDueModelMaintenanceContext(c.Request.Context())
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "model maintenance failed"})
+		return
+	}
+	c.JSON(http.StatusOK, run)
 }
 
 func (h *Handler) GenerationHistory(c *gin.Context) {
