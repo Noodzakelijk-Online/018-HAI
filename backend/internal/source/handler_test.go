@@ -32,11 +32,14 @@ func (s *sourceTranscriberStub) Transcribe(_ context.Context, folder string) ([]
 
 func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	t.Setenv(identity.LegacyDataOwnerEnv, "")
 	aliceID := uuid.New()
 	bobID := uuid.New()
+	legacyID := uuid.New()
 	service := NewService(newFakeSourceRepo(
 		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
 		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: legacyID, Name: "Ownerless legacy source", Enabled: true, Status: "active"},
 	), nil)
 	handler := NewHandler(service)
 	router := gin.New()
@@ -60,12 +63,48 @@ func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 		t.Fatalf("visible sources = %#v, want only Alice source", sources)
 	}
 
+	t.Setenv(identity.LegacyDataOwnerEnv, "alice")
+	legacyResponse := httptest.NewRecorder()
+	router.ServeHTTP(legacyResponse, httptest.NewRequest(http.MethodGet, "/sources", nil))
+	if legacyResponse.Code != http.StatusOK {
+		t.Fatalf("legacy-owner list status = %d, body=%s", legacyResponse.Code, legacyResponse.Body.String())
+	}
+	if err := json.Unmarshal(legacyResponse.Body.Bytes(), &sources); err != nil {
+		t.Fatalf("decode legacy-owner sources: %v", err)
+	}
+	if len(sources) != 2 || !containsSourceID(sources, aliceID) || !containsSourceID(sources, legacyID) {
+		t.Fatalf("legacy-owner visible sources = %#v, want Alice and ownerless legacy sources", sources)
+	}
+
+	unauthenticatedRouter := gin.New()
+	unauthenticatedRouter.GET("/sources", handler.Sources)
+	unauthenticatedResponse := httptest.NewRecorder()
+	unauthenticatedRouter.ServeHTTP(unauthenticatedResponse, httptest.NewRequest(http.MethodGet, "/sources", nil))
+	if unauthenticatedResponse.Code != http.StatusOK {
+		t.Fatalf("ownerless request status = %d, body=%s", unauthenticatedResponse.Code, unauthenticatedResponse.Body.String())
+	}
+	if err := json.Unmarshal(unauthenticatedResponse.Body.Bytes(), &sources); err != nil {
+		t.Fatalf("decode ownerless request sources: %v", err)
+	}
+	if len(sources) != 0 {
+		t.Fatalf("ownerless request exposed sources: %#v", sources)
+	}
+
 	foreignRequest := httptest.NewRequest(http.MethodPost, "/sources/"+bobID.String()+"/pause", nil)
 	foreignResponse := httptest.NewRecorder()
 	router.ServeHTTP(foreignResponse, foreignRequest)
 	if foreignResponse.Code != http.StatusNotFound {
 		t.Fatalf("foreign pause status = %d, body=%s", foreignResponse.Code, foreignResponse.Body.String())
 	}
+}
+
+func containsSourceID(sources []models.ConnectedSource, id uuid.UUID) bool {
+	for _, source := range sources {
+		if source.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func TestHandlerBoundsAuditLogsAfterOwnerFiltering(t *testing.T) {

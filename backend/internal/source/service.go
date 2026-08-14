@@ -162,6 +162,7 @@ type Service interface {
 	CreateSource(request CreateSourceRequest) (*models.ConnectedSource, error)
 	UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*models.ConnectedSource, error)
 	Sources(includeDisabled bool) ([]models.ConnectedSource, error)
+	SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error)
 	SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
 	Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
 	SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
@@ -620,6 +621,14 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 
 func (s *service) Sources(includeDisabled bool) ([]models.ConnectedSource, error) {
 	return s.repo.FindSources(includeDisabled)
+}
+
+func (s *service) SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return []models.ConnectedSource{}, nil
+	}
+	return s.repo.FindSourcesForOwner(ownerIdentity, includeDisabled, identity.CanReadLegacyOwnerlessData(ownerIdentity))
 }
 
 func (s *service) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
@@ -1491,11 +1500,14 @@ func (s *service) visibleSourceIDs(ownerIdentity string) (map[uuid.UUID]bool, er
 }
 
 func (s *service) visibleSourceIDsExcluding(ownerIdentity string, excludedConnectorKeys []string) (map[uuid.UUID]bool, error) {
-	sources, err := s.repo.FindSources(true)
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return map[uuid.UUID]bool{}, nil
+	}
+	sources, err := s.repo.FindSourcesForOwner(ownerIdentity, true, identity.CanReadLegacyOwnerlessData(ownerIdentity))
 	if err != nil {
 		return nil, err
 	}
-	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	excluded := make(map[string]bool, len(excludedConnectorKeys))
 	for _, connectorKey := range excludedConnectorKeys {
 		if connectorKey = strings.TrimSpace(connectorKey); connectorKey != "" {
@@ -1510,10 +1522,7 @@ func (s *service) visibleSourceIDsExcluding(ownerIdentity string, excludedConnec
 		if source.RevokedAt != nil || strings.EqualFold(strings.TrimSpace(source.Status), "revoked") {
 			continue
 		}
-		sourceOwner := strings.TrimSpace(source.OwnerIdentity)
-		if ownerIdentity == "" || sourceOwner == ownerIdentity || (sourceOwner == "" && identity.CanReadLegacyOwnerlessData(ownerIdentity)) {
-			visible[source.ID] = true
-		}
+		visible[source.ID] = true
 	}
 	return visible, nil
 }

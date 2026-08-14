@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ type Repository interface {
 	UpdateSource(source *models.ConnectedSource) (*models.ConnectedSource, error)
 	RevokeSource(source *models.ConnectedSource, ownerIdentity string, revokedAt time.Time) (*models.ConnectedSource, error)
 	FindSources(includeDisabled bool) ([]models.ConnectedSource, error)
+	FindSourcesForOwner(ownerIdentity string, includeDisabled, includeLegacyOwnerless bool) ([]models.ConnectedSource, error)
 	FindSource(id uuid.UUID) (*models.ConnectedSource, error)
 	CreateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
 	UpdateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
@@ -176,6 +178,25 @@ func (r *GormRepository) FindSources(includeDisabled bool) ([]models.ConnectedSo
 	}
 	err := query.Find(&sources).Error
 	return sources, err
+}
+
+func (r *GormRepository) FindSourcesForOwner(ownerIdentity string, includeDisabled, includeLegacyOwnerless bool) ([]models.ConnectedSource, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return []models.ConnectedSource{}, nil
+	}
+	var sources []models.ConnectedSource
+	query := r.DB.Where("owner_identity = ?", ownerIdentity).Order("updated_at desc")
+	if includeLegacyOwnerless {
+		query = r.DB.Where("(owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL)", ownerIdentity).Order("updated_at desc")
+	}
+	if !includeDisabled {
+		query = query.Where("enabled = ? AND status <> ?", true, "revoked")
+	}
+	if err := query.Find(&sources).Error; err != nil {
+		return nil, err
+	}
+	return sources, nil
 }
 
 func (r *GormRepository) FindSource(id uuid.UUID) (*models.ConnectedSource, error) {

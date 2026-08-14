@@ -2187,6 +2187,24 @@ func (r *fakeSourceRepo) FindSources(includeDisabled bool) ([]models.ConnectedSo
 	return result, nil
 }
 
+func (r *fakeSourceRepo) FindSourcesForOwner(ownerIdentity string, includeDisabled, includeLegacyOwnerless bool) ([]models.ConnectedSource, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return []models.ConnectedSource{}, nil
+	}
+	result := []models.ConnectedSource{}
+	for _, source := range r.sources {
+		sourceOwner := strings.TrimSpace(source.OwnerIdentity)
+		if sourceOwner != ownerIdentity && !(includeLegacyOwnerless && sourceOwner == "") {
+			continue
+		}
+		if includeDisabled || (source.Enabled && source.Status != "revoked") {
+			result = append(result, *source)
+		}
+	}
+	return result, nil
+}
+
 func (r *fakeSourceRepo) FindSource(id uuid.UUID) (*models.ConnectedSource, error) {
 	source, ok := r.sources[id]
 	if !ok {

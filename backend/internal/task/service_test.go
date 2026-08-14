@@ -1723,6 +1723,10 @@ func (s *fakeTaskSourceService) Sources(includeDisabled bool) ([]models.Connecte
 	return nil, nil
 }
 
+func (s *fakeTaskSourceService) SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	return nil, nil
+}
+
 func (s *fakeTaskSourceService) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
 	return nil, nil
 }

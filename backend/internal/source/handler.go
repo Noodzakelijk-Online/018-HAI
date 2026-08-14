@@ -96,12 +96,12 @@ func (h *Handler) CreateSource(c *gin.Context) {
 
 func (h *Handler) Sources(c *gin.Context) {
 	includeDisabled, _ := strconv.ParseBool(c.Query("includeDisabled"))
-	sources, err := h.service.Sources(includeDisabled)
+	sources, err := h.service.SourcesForOwner(sourceOwner(c), includeDisabled)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, filterVisibleSources(sources, sourceOwner(c)))
+	c.JSON(http.StatusOK, sources)
 }
 
 func (h *Handler) SyncJobs(c *gin.Context) {
@@ -217,7 +217,7 @@ func (h *Handler) Transcribe(c *gin.Context) {
 	if !h.requireMutableSource(c, id) {
 		return
 	}
-	source, err := h.sourceByID(id)
+	source, err := h.sourceByID(id, sourceOwner(c))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connected source not found"})
 		return
@@ -526,43 +526,27 @@ func writeDestructiveEffectError(c *gin.Context, err error) {
 	}
 }
 
-func sourceVisible(source models.ConnectedSource, owner string) bool {
-	owner = strings.TrimSpace(owner)
-	return owner == "" || source.OwnerIdentity == "" || source.OwnerIdentity == owner
-}
-
-// sourceMutable is stricter than sourceVisible. Ownerless legacy records may
-// remain readable during local migration, but a signed-in operator cannot
-// adopt, sync, alter, revoke, or delete their source-derived records.
+// Ownerless legacy records may remain readable by the configured migration
+// owner, but no signed-in operator may adopt, mutate, sync, or delete them.
 func sourceMutable(source models.ConnectedSource, owner string) bool {
 	owner = strings.TrimSpace(owner)
 	return owner != "" && strings.TrimSpace(source.OwnerIdentity) == owner
 }
 
-func filterVisibleSources(sources []models.ConnectedSource, owner string) []models.ConnectedSource {
-	visible := make([]models.ConnectedSource, 0, len(sources))
-	for _, source := range sources {
-		if sourceVisible(source, owner) {
-			visible = append(visible, source)
-		}
-	}
-	return visible
-}
-
 func (h *Handler) visibleSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
-	sources, err := h.service.Sources(true)
+	sources, err := h.service.SourcesForOwner(sourceOwner(c), true)
 	if err != nil {
 		return nil, err
 	}
 	visible := make(map[uuid.UUID]bool, len(sources))
-	for _, source := range filterVisibleSources(sources, sourceOwner(c)) {
+	for _, source := range sources {
 		visible[source.ID] = true
 	}
 	return visible, nil
 }
 
-func (h *Handler) sourceByID(id uuid.UUID) (*models.ConnectedSource, error) {
-	sources, err := h.service.Sources(true)
+func (h *Handler) sourceByID(id uuid.UUID, ownerIdentity string) (*models.ConnectedSource, error) {
+	sources, err := h.service.SourcesForOwner(ownerIdentity, true)
 	if err != nil {
 		return nil, err
 	}
@@ -600,11 +584,11 @@ func (h *Handler) requireSourceAccess(c *gin.Context, id uuid.UUID) bool {
 }
 
 func (h *Handler) mutableSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
-	sources, err := h.service.Sources(true)
+	owner := sourceOwner(c)
+	sources, err := h.service.SourcesForOwner(owner, true)
 	if err != nil {
 		return nil, err
 	}
-	owner := sourceOwner(c)
 	mutable := make(map[uuid.UUID]bool, len(sources))
 	for _, source := range sources {
 		if sourceMutable(source, owner) {
