@@ -496,6 +496,29 @@ func TestAgentCycleStoresOperationalLessonForBlockedWork(t *testing.T) {
 	}
 }
 
+func TestOperationalLessonDoesNotRecursivelyStoreAppliedContext(t *testing.T) {
+	result := &RunResult{
+		Trigger: "command-center",
+		Status:  "completed",
+		AppliedContext: []memory.RankedMemory{{
+			Memory: models.ContextMemory{
+				Kind:    "procedural",
+				Summary: "PRIOR LESSON SENTINEL that must not be copied into a new lesson.",
+			},
+		}},
+		Workflows:  &workflow.WorkflowRunSummary{Checked: 1, Blocked: 1},
+		NextAction: "review blocked workflow",
+	}
+
+	content := operationalLessonContent(result)
+	if strings.Contains(content, "PRIOR LESSON SENTINEL") || strings.Contains(content, "prior operational lessons were loaded") {
+		t.Fatalf("operational lesson recursively embedded retrieved context: %q", content)
+	}
+	if !strings.Contains(content, "Workflow worker outcomes: 1 blocked") {
+		t.Fatalf("operational lesson lost the new material outcome: %q", content)
+	}
+}
+
 func TestAgentCycleDoesNotStoreRoutineGreenCycle(t *testing.T) {
 	calls := []string{}
 	mem := &fakeCycleMemoryService{}

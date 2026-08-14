@@ -34,6 +34,88 @@ func TestCreateDeduplicatesExactMemory(t *testing.T) {
 	}
 }
 
+func TestCreateExactDuplicateAvoidsRedundantWriteAndSemanticReindex(t *testing.T) {
+	repo := newFakeRepository()
+	semanticSpy := &semanticMemoryStub{}
+	service := NewServiceWithSemantic(repo, semanticSpy)
+	request := CreateRequest{
+		ProjectKey:  "018-hai",
+		Kind:        "procedural",
+		Content:     "Inspect approval gates before retrying blocked workflows.",
+		Summary:     "Inspect approval gates before workflow retries.",
+		Tags:        []string{"agent-cycle", "workflow-retry"},
+		Confidence:  0.74,
+		SourceURI:   "agent-cycle://command-center",
+		SourceLabel: "Owner-scoped agent cycle operational learning",
+	}
+
+	first, err := service.Create(request)
+	if err != nil {
+		t.Fatalf("Create first memory: %v", err)
+	}
+	if repo.updateCalls != 0 || len(semanticSpy.indexedMemoryIDs) != 1 {
+		t.Fatalf("first create writes/indexes = %d/%d, want 0/1", repo.updateCalls, len(semanticSpy.indexedMemoryIDs))
+	}
+
+	second, err := service.Create(request)
+	if err != nil {
+		t.Fatalf("Create exact duplicate: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("exact duplicate created a new memory: first=%s second=%s", first.ID, second.ID)
+	}
+	if repo.updateCalls != 0 {
+		t.Fatalf("exact duplicate caused %d database update(s), want 0", repo.updateCalls)
+	}
+	if len(semanticSpy.indexedMemoryIDs) != 1 {
+		t.Fatalf("exact duplicate caused %d semantic index writes, want only the initial write", len(semanticSpy.indexedMemoryIDs))
+	}
+}
+
+func TestCreatePreservesDistinctSourceProvenanceAndReplacesSameSourceRevision(t *testing.T) {
+	repo := newFakeRepository()
+	service := NewService(repo)
+
+	first, err := service.Create(CreateRequest{
+		Kind:      "project",
+		Content:   "The project deadline is Friday and Robert must review the filing.",
+		SourceURI: "mail://message-1",
+	})
+	if err != nil {
+		t.Fatalf("Create first source memory: %v", err)
+	}
+	second, err := service.Create(CreateRequest{
+		Kind:      "project",
+		Content:   "The project deadline is Friday and Robert must review the filing.",
+		SourceURI: "document://letter-2",
+	})
+	if err != nil {
+		t.Fatalf("Create second source memory: %v", err)
+	}
+	if first.ID == second.ID || len(repo.memories) != 2 {
+		t.Fatalf("distinct source records were merged: first=%s second=%s records=%d", first.ID, second.ID, len(repo.memories))
+	}
+
+	revised, err := service.Create(CreateRequest{
+		Kind:      "project",
+		Content:   "The project deadline is Monday and Robert must review the corrected filing.",
+		Summary:   "Corrected filing deadline is Monday.",
+		SourceURI: "mail://message-1",
+	})
+	if err != nil {
+		t.Fatalf("Create same-source revision: %v", err)
+	}
+	if revised.ID != first.ID || len(repo.memories) != 2 {
+		t.Fatalf("same-source revision did not update in place: first=%s revised=%s records=%d", first.ID, revised.ID, len(repo.memories))
+	}
+	if revised.Content != "The project deadline is Monday and Robert must review the corrected filing." {
+		t.Fatalf("same-source revision appended stale content: %q", revised.Content)
+	}
+	if revised.Summary != "Corrected filing deadline is Monday." {
+		t.Fatalf("same-source revision summary = %q", revised.Summary)
+	}
+}
+
 func TestRetrieveRanksRelevantProjectMemory(t *testing.T) {
 	repo := newFakeRepository()
 	service := NewService(repo)
@@ -52,6 +134,38 @@ func TestRetrieveRanksRelevantProjectMemory(t *testing.T) {
 	}
 	if result.UsedContext[0].Memory.LastUsedAt == nil {
 		t.Fatalf("expected LastUsedAt to be updated")
+	}
+}
+
+func TestRetrieveThrottlesLastUsedWriteAmplification(t *testing.T) {
+	repo := newFakeRepository()
+	service := NewService(repo)
+	_, err := service.Create(CreateRequest{
+		ProjectKey: "018-hai",
+		Kind:       "project",
+		Content:    "The Angular dashboard uses the Go backend.",
+		Confidence: 0.9,
+	})
+	if err != nil {
+		t.Fatalf("Create memory: %v", err)
+	}
+
+	request := RetrieveRequest{ProjectKey: "018-hai", Query: "Angular Go backend dashboard", Limit: 3}
+	first, err := service.Retrieve(request)
+	if err != nil || len(first.UsedContext) != 1 || first.UsedContext[0].Memory.LastUsedAt == nil {
+		t.Fatalf("first retrieve = %#v, err=%v", first, err)
+	}
+	updatesAfterFirstUse := repo.updateCalls
+	if updatesAfterFirstUse != 1 {
+		t.Fatalf("first retrieve caused %d updates, want 1", updatesAfterFirstUse)
+	}
+
+	second, err := service.Retrieve(request)
+	if err != nil || len(second.UsedContext) != 1 {
+		t.Fatalf("second retrieve = %#v, err=%v", second, err)
+	}
+	if repo.updateCalls != updatesAfterFirstUse {
+		t.Fatalf("repeat retrieve caused %d additional last-used updates", repo.updateCalls-updatesAfterFirstUse)
 	}
 }
 
@@ -398,7 +512,8 @@ func TestConfiguredLegacyOwnerCanReadButNotMutateOwnerlessMemory(t *testing.T) {
 }
 
 type fakeRepository struct {
-	memories map[uuid.UUID]models.ContextMemory
+	memories    map[uuid.UUID]models.ContextMemory
+	updateCalls int
 }
 
 func newFakeRepository() *fakeRepository {
@@ -417,6 +532,7 @@ func (r *fakeRepository) Create(memory *models.ContextMemory) (*models.ContextMe
 }
 
 func (r *fakeRepository) Update(memory *models.ContextMemory) (*models.ContextMemory, error) {
+	r.updateCalls++
 	memory.UpdatedAt = time.Now().UTC()
 	r.memories[memory.ID] = *memory
 	return memory, nil

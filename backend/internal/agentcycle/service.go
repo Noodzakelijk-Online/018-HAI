@@ -669,9 +669,6 @@ func operationalLessonContent(result *RunResult) string {
 		"Trigger: " + result.Trigger + ".",
 		"Status: " + result.Status + ".",
 	}
-	if len(result.AppliedContext) > 0 {
-		parts = append(parts, "Relevant prior operational lessons were loaded before execution: "+appliedContextSummary(result.AppliedContext)+".")
-	}
 	if len(result.Errors) > 0 {
 		errorParts := make([]string, 0, len(result.Errors))
 		for _, err := range result.Errors {
