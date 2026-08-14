@@ -1158,6 +1158,32 @@ export class GovernanceControlComponent implements OnInit, OnDestroy {
     })
   }
 
+  recoverAmbientMonitors(): void {
+    if (this.monitorMutating) return
+    const workspaceId = this.advisoryScope.workspaceId.trim()
+    if (!workspaceId || !this.monitorTargets.length) return
+
+    this.monitorMutating = true
+    this.ambientMonitor.recover(workspaceId, new Date().toISOString()).subscribe({
+      next: (result) => {
+        this.monitorMutating = false
+        if (result.recovered > 0) {
+          this.notification.success(
+            'Expired monitor work recovered',
+            `${result.collectionRecovered} collection lease${result.collectionRecovered === 1 ? '' : 's'} and ${result.compositionRecovered} advisory handoff lease${result.compositionRecovered === 1 ? '' : 's'} returned to their durable queues.`
+          )
+        } else {
+          this.notification.info(
+            'No expired monitor work',
+            'No expired collection or advisory handoff leases needed recovery.'
+          )
+        }
+        this.loadAmbientMonitor(true)
+      },
+      error: (error) => this.failMonitorMutation(error, 'Expired monitor work could not be recovered.'),
+    })
+  }
+
   get selectedMonitorTarget(): MonitorTarget | undefined {
     return this.monitorTargets.find((target) => target.id === this.selectedMonitorTargetId)
   }

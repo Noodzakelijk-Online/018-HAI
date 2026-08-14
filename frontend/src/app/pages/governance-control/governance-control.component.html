@@ -806,6 +806,13 @@
               <small>Run {{ shortDigest(composition.runDigest) }} / binding {{ shortDigest(composition.bindingDigest) }} / cannot execute, deliver, notify, or mutate state.</small>
             </span>
           </div>
+          <div class="advisory-actions">
+            <button nz-button type="button" [disabled]="monitorMutating" (click)="recoverAmbientMonitors()">
+              <i nz-icon nzType="reload" nzTheme="outline"></i>
+              Recover expired work
+            </button>
+            <small>Returns only expired collection and advisory handoff leases to their durable queues. Active work is not interrupted.</small>
+          </div>
         </hai-progressive-section>
       </section>
       <div class="advisory-boundary" *ngIf="latestOutcomeLifeGraphProjection as projection">

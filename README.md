@@ -191,7 +191,9 @@ The guarded API surface is under
 - `GET /outcomes/:outcomeId/monitor/:targetId/observations` and `/runs` expose
   bounded immutable history;
 - `POST /monitors/run-due` performs a bounded advisory pass; and
-- `POST /monitors/recover` releases only expired leases.
+- `POST /monitors/recover` releases only expired collection and advisory
+  composition leases. It reports each recovered class separately, leaves active
+  work untouched, and grants no execution or delivery authority.
 
 The durable scheduler is configured with
 `OUTCOME_MONITOR_SCHEDULER_ENABLED`, `OUTCOME_MONITOR_SWEEP_SECONDS`,
@@ -244,7 +246,7 @@ target-machine checks before relying on a path for real work.
 | --- | --- | --- |
 | Local Compose and gateway | A separate clean checkout on this Windows host generated a new `.env.local`, built the canonical stack from source, reached healthy state with empty volumes, signed in the first-run owner, and completed a bounded governed workflow. The current retained stack serves `/`, `/control-center`, `/healthz`, and `/readyz` through nginx; protected `/api/v1/*` engine routes require a signed session. | Repeat the clean-clone acceptance chain on every distinct Windows 11 release target and retain its evidence. |
 | Browser session | The unauthenticated session check returns HTTP 200 with `authenticated:false` and no-store caching; Angular routes a browser without a refreshable session to `/login`. A signed-in Playwright acceptance run completed source intake, pursuit creation, exact runtime selection, durable approval, read-only execution, terminal verification, and creation of an immutable completion attestation. The 2026-08-09 regression run reported no console or HTTP failures. | Repeat the acceptance run on each release target and add retained coverage for any new mutable or external action. |
-| Go and Angular code | The full backend and IDP Go suites, frontend production build, 400 headless Angular tests, 31 executable CI contract tests, migration-chain checks, live workflow-repository PostgreSQL tests, and signed-in browser acceptance passes are green. The production initial bundle is about 653 kB raw; five existing page-style budget warnings remain below the configured 18 kB error ceiling. | Keep these gates green and reduce the remaining style-budget warnings before a production release. The browser exercise proves the local governed flows only; it does not prove Calendar write, message delivery, paid-provider invocation, or mutable external side effects. |
+| Go and Angular code | The full backend and IDP Go suites, frontend production build, 404 headless Angular tests, 31 executable CI contract tests, migration-chain checks, live workflow-repository PostgreSQL tests, and signed-in browser acceptance passes are green. The production initial bundle is about 653 kB raw; five existing page-style budget warnings remain below the configured 18 kB error ceiling. | Keep these gates green and reduce the remaining style-budget warnings before a production release. The browser exercise proves the local governed flows only; it does not prove Calendar write, message delivery, paid-provider invocation, or mutable external side effects. |
 | Sources and LLMs | Local/export ingestion, provider probes, GitHub sync, and bounded Gmail/Trello acceptance evidence exist. | A scoped local-model task and any newly configured account need their own retained audit and verification evidence. |
 | Runtimes and external effects | Script, Docker, Hermes, Odysseus, and OpenClaw adapters have bounded, approval-aware interfaces. The local registry-to-read-only-API path is acceptance-tested with deterministic receipt verification. | Explicit upstream installation, narrow allowlists, a reviewed dry run, and a verified approved task for every mutable or external adapter. |
 

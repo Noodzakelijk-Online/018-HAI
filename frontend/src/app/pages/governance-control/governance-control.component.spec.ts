@@ -309,10 +309,11 @@ describe('GovernanceControlComponent', () => {
       'listCompositions',
       'listCompositionAttempts',
       'runDue',
+      'recover',
     ])
     notification = jasmine.createSpyObj<NzNotificationService>(
       'NzNotificationService',
-      ['success', 'warning', 'error']
+      ['success', 'info', 'warning', 'error']
     )
     modal = jasmine.createSpyObj<NzModalService>('NzModalService', ['confirm'])
     preferences = new ModuleViewPreferencesService()
@@ -1445,6 +1446,52 @@ describe('GovernanceControlComponent', () => {
     expect(notification.error).toHaveBeenCalledWith(
       'Due monitor pass failed',
       jasmine.stringMatching(/monitor_failed/i)
+    )
+  })
+
+  it('recovers both expired monitor lease classes and refreshes their state', () => {
+    spyOn(component, 'loadAmbientMonitor')
+    component.advisoryScope = { workspaceId: '018-HAI', outcomeId: 'verified-work' }
+    component.monitorTargets = [monitorTarget]
+    component.selectedMonitorTargetId = monitorTarget.id
+    ambientMonitor.recover.and.returnValue(of({
+      recovered: 2,
+      collectionRecovered: 1,
+      compositionRecovered: 1,
+      authority: monitorAuthority,
+    }))
+
+    component.recoverAmbientMonitors()
+
+    expect(ambientMonitor.recover).toHaveBeenCalledWith('018-HAI', jasmine.any(String))
+    expect(notification.success).toHaveBeenCalledWith(
+      'Expired monitor work recovered',
+      jasmine.stringMatching(/1 collection lease and 1 advisory handoff lease/i)
+    )
+    expect(component.loadAmbientMonitor).toHaveBeenCalledWith(true)
+    expect(component.monitorMutating).toBeFalse()
+  })
+
+  it('does not claim recovery when no expired monitor leases exist', () => {
+    spyOn(component, 'loadAmbientMonitor')
+    component.advisoryScope = { workspaceId: '018-HAI', outcomeId: 'verified-work' }
+    component.monitorTargets = [monitorTarget]
+    ambientMonitor.recover.and.returnValue(of({
+      recovered: 0,
+      collectionRecovered: 0,
+      compositionRecovered: 0,
+      authority: monitorAuthority,
+    }))
+
+    component.recoverAmbientMonitors()
+
+    expect(notification.info).toHaveBeenCalledWith(
+      'No expired monitor work',
+      jasmine.stringMatching(/no expired collection or advisory handoff leases/i)
+    )
+    expect(notification.success).not.toHaveBeenCalledWith(
+      'Expired monitor work recovered',
+      jasmine.any(String)
     )
   })
 
