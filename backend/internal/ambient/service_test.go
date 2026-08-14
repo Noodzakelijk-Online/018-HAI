@@ -431,7 +431,14 @@ func TestAcceptPursuitCandidateKeepsAmbientProposalAsContextOnly(t *testing.T) {
 func TestPursuitOpportunitiesAreFilteredForAuthenticatedOwner(t *testing.T) {
 	aliceID := uuid.New()
 	bobID := uuid.New()
-	engine := NewServiceWithPursuits(nil, nil, nil, &ambientPursuitSpy{owners: map[uuid.UUID]string{aliceID: "alice", bobID: "bob"}}).(*service)
+	pursuits := &ambientPursuitSpy{
+		owners: map[uuid.UUID]string{aliceID: "alice", bobID: "bob"},
+		pursuits: []models.Pursuit{
+			{ID: aliceID, OwnerIdentity: "alice"},
+			{ID: bobID, OwnerIdentity: "bob"},
+		},
+	}
+	engine := NewServiceWithPursuits(nil, nil, nil, pursuits).(*service)
 	visible := engine.visibleOpportunities("alice", []models.AmbientOpportunity{
 		{ID: uuid.New(), OwnerIdentity: "alice", SourceType: "pursuit_stale", SourceID: aliceID.String()},
 		{ID: uuid.New(), OwnerIdentity: "bob", SourceType: "pursuit_stale", SourceID: bobID.String()},
@@ -439,6 +446,83 @@ func TestPursuitOpportunitiesAreFilteredForAuthenticatedOwner(t *testing.T) {
 	})
 	if len(visible) != 1 || visible[0].SourceID != aliceID.String() {
 		t.Fatalf("owner-visible opportunities = %#v", visible)
+	}
+	if pursuits.listForOwnerCalls != 1 || pursuits.detailForOwnerCalls != 0 {
+		t.Fatalf("pursuit visibility calls = list:%d detail:%d, want 1/0", pursuits.listForOwnerCalls, pursuits.detailForOwnerCalls)
+	}
+}
+
+func TestPursuitOpportunityVisibilityUsesOneOwnerScopedRead(t *testing.T) {
+	owned := make([]models.Pursuit, 0, 75)
+	opportunities := make([]models.AmbientOpportunity, 0, 75)
+	for index := 0; index < 75; index++ {
+		id := uuid.New()
+		owned = append(owned, models.Pursuit{ID: id, OwnerIdentity: "alice"})
+		opportunities = append(opportunities, models.AmbientOpportunity{
+			ID: uuid.New(), OwnerIdentity: "alice", SourceType: "pursuit_stale", SourceID: id.String(),
+		})
+	}
+	pursuits := &ambientPursuitSpy{pursuits: owned}
+	engine := NewServiceWithPursuits(nil, nil, nil, pursuits).(*service)
+
+	visible := engine.visibleOpportunities("alice", opportunities)
+	if len(visible) != len(opportunities) {
+		t.Fatalf("visible opportunities = %d, want %d", len(visible), len(opportunities))
+	}
+	if pursuits.listForOwnerCalls != 1 || pursuits.detailForOwnerCalls != 0 {
+		t.Fatalf("pursuit visibility calls = list:%d detail:%d, want 1/0", pursuits.listForOwnerCalls, pursuits.detailForOwnerCalls)
+	}
+}
+
+func TestNonPursuitOpportunityVisibilityDoesNotReadPursuits(t *testing.T) {
+	pursuits := &ambientPursuitSpy{}
+	engine := NewServiceWithPursuits(nil, nil, nil, pursuits).(*service)
+	opportunities := []models.AmbientOpportunity{
+		{ID: uuid.New(), OwnerIdentity: "alice", SourceType: "workflow", SourceID: "workflow-1"},
+	}
+
+	visible := engine.visibleOpportunities("alice", opportunities)
+	if len(visible) != 1 {
+		t.Fatalf("visible opportunities = %d, want 1", len(visible))
+	}
+	if pursuits.listForOwnerCalls != 0 || pursuits.detailForOwnerCalls != 0 {
+		t.Fatalf("non-pursuit visibility calls = list:%d detail:%d, want 0/0", pursuits.listForOwnerCalls, pursuits.detailForOwnerCalls)
+	}
+}
+
+func TestPursuitOpportunityVisibilityFailsClosedWhenOwnerLookupFails(t *testing.T) {
+	pursuitID := uuid.New()
+	pursuits := &ambientPursuitSpy{listForOwnerErr: errors.New("pursuit repository unavailable")}
+	engine := NewServiceWithPursuits(nil, nil, nil, pursuits).(*service)
+
+	visible := engine.visibleOpportunities("alice", []models.AmbientOpportunity{
+		{ID: uuid.New(), OwnerIdentity: "alice", SourceType: "pursuit_stale", SourceID: pursuitID.String()},
+		{ID: uuid.New(), OwnerIdentity: "alice", SourceType: "workflow", SourceID: "workflow-1"},
+	})
+	if len(visible) != 1 || visible[0].SourceType != "workflow" {
+		t.Fatalf("visible opportunities after pursuit lookup failure = %#v", visible)
+	}
+	if pursuits.listForOwnerCalls != 1 || pursuits.detailForOwnerCalls != 0 {
+		t.Fatalf("pursuit visibility calls = list:%d detail:%d, want 1/0", pursuits.listForOwnerCalls, pursuits.detailForOwnerCalls)
+	}
+}
+
+func TestOverviewForOwnerIsReadOnlyAndFallsBackToDefaults(t *testing.T) {
+	repo := &ambientRepositoryStub{}
+	engine := NewService(repo, nil, nil)
+
+	overview, err := engine.OverviewForOwner("alice")
+	if err != nil {
+		t.Fatalf("OverviewForOwner: %v", err)
+	}
+	if repo.ensureNeedsCalls != 0 {
+		t.Fatalf("overview performed %d default-need writes, want 0", repo.ensureNeedsCalls)
+	}
+	if len(overview.Needs) != len(defaultNeeds()) {
+		t.Fatalf("fallback needs = %d, want %d", len(overview.Needs), len(defaultNeeds()))
+	}
+	if findAmbientNeed(overview.Needs, "safety").PriorityWeight != 100 {
+		t.Fatalf("fallback safety need = %#v", findAmbientNeed(overview.Needs, "safety"))
 	}
 }
 
@@ -575,16 +659,19 @@ func (s *ambientWorkflowSpy) RunDueOpenLoops(workflow.RunDueRequest) (*workflow.
 }
 
 type ambientPursuitSpy struct {
-	dashboard        *pursuitpkg.Dashboard
-	pursuits         []models.Pursuit
-	details          map[uuid.UUID]models.Pursuit
-	links            []pursuitpkg.LinkRequest
-	linkedPursuitIDs []uuid.UUID
-	owners           map[uuid.UUID]string
-	linkFailures     int
-	autoLinkRequests []pursuitpkg.AutoLinkWorkflowRequest
-	autoLinkResult   *pursuitpkg.AutoLinkResult
-	autoLinkErr      error
+	dashboard           *pursuitpkg.Dashboard
+	pursuits            []models.Pursuit
+	details             map[uuid.UUID]models.Pursuit
+	links               []pursuitpkg.LinkRequest
+	linkedPursuitIDs    []uuid.UUID
+	owners              map[uuid.UUID]string
+	linkFailures        int
+	autoLinkRequests    []pursuitpkg.AutoLinkWorkflowRequest
+	autoLinkResult      *pursuitpkg.AutoLinkResult
+	autoLinkErr         error
+	listForOwnerCalls   int
+	detailForOwnerCalls int
+	listForOwnerErr     error
 }
 
 type ambientPursuitRouterSpy struct {
@@ -618,6 +705,10 @@ func (s *ambientPursuitSpy) List(bool) ([]models.Pursuit, error) {
 }
 
 func (s *ambientPursuitSpy) ListForOwner(ownerIdentity string, _ bool) ([]models.Pursuit, error) {
+	s.listForOwnerCalls++
+	if s.listForOwnerErr != nil {
+		return nil, s.listForOwnerErr
+	}
 	result := []models.Pursuit{}
 	for _, item := range s.pursuits {
 		if item.OwnerIdentity == ownerIdentity {
@@ -658,6 +749,7 @@ func (s *ambientPursuitSpy) AutoLinkWorkflow(request pursuitpkg.AutoLinkWorkflow
 }
 
 func (s *ambientPursuitSpy) DetailForOwner(ownerIdentity string, id uuid.UUID) (*pursuitpkg.PursuitDetail, error) {
+	s.detailForOwnerCalls++
 	if owner, found := s.owners[id]; found && owner != "" && owner != ownerIdentity {
 		return nil, errors.New("pursuit not found")
 	}

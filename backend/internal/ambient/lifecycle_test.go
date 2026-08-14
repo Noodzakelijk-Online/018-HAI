@@ -162,13 +162,15 @@ func TestDismissOpportunityWithoutUsefulNoteDoesNotStoreMemory(t *testing.T) {
 }
 
 type ambientRepositoryStub struct {
-	opportunity *models.AmbientOpportunity
-	needs       []models.AmbientNeed
-	overrides   []models.AmbientNeedOverride
-	scans       []models.AmbientScan
+	opportunity      *models.AmbientOpportunity
+	needs            []models.AmbientNeed
+	overrides        []models.AmbientNeedOverride
+	scans            []models.AmbientScan
+	ensureNeedsCalls int
 }
 
 func (r *ambientRepositoryStub) EnsureNeeds([]models.AmbientNeed) error {
+	r.ensureNeedsCalls++
 	return nil
 }
 

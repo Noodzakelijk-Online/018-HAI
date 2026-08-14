@@ -771,9 +771,45 @@ func (s *service) visibleOpportunities(ownerIdentity string, opportunities []mod
 	if ownerIdentity == "" {
 		return opportunities
 	}
+	ownedPursuits := map[uuid.UUID]struct{}{}
+	requiresPursuitVisibility := false
+	for _, item := range opportunities {
+		if strings.TrimSpace(item.OwnerIdentity) == ownerIdentity &&
+			s.pursuits != nil &&
+			strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.SourceType)), "pursuit") {
+			requiresPursuitVisibility = true
+			break
+		}
+	}
+	pursuitVisibilityAvailable := !requiresPursuitVisibility
+	if requiresPursuitVisibility {
+		pursuits, err := s.pursuits.ListForOwner(ownerIdentity, true)
+		if err == nil {
+			pursuitVisibilityAvailable = true
+			for _, pursuit := range pursuits {
+				if pursuit.ID != uuid.Nil {
+					ownedPursuits[pursuit.ID] = struct{}{}
+				}
+			}
+		}
+	}
 	visible := make([]models.AmbientOpportunity, 0, len(opportunities))
 	for _, item := range opportunities {
-		if s.ensureOpportunityVisible(item, ownerIdentity) == nil {
+		if strings.TrimSpace(item.OwnerIdentity) != ownerIdentity {
+			continue
+		}
+		if s.pursuits == nil || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.SourceType)), "pursuit") {
+			visible = append(visible, item)
+			continue
+		}
+		if !pursuitVisibilityAvailable {
+			continue
+		}
+		pursuitID, err := uuid.Parse(strings.TrimSpace(item.SourceID))
+		if err != nil {
+			continue
+		}
+		if _, found := ownedPursuits[pursuitID]; found {
 			visible = append(visible, item)
 		}
 	}
@@ -830,12 +866,15 @@ func (s *service) ensureNeeds() error {
 }
 
 func (s *service) needsForOwner(ownerIdentity string) ([]models.AmbientNeed, error) {
-	if err := s.ensureNeeds(); err != nil {
-		return nil, err
-	}
 	needs, err := s.repo.Needs()
 	if err != nil {
 		return nil, err
+	}
+	// Default rows are seeded by the migration chain. Keeping an in-memory
+	// fallback makes lightweight and legacy repositories useful without turning
+	// this read path into a hidden write transaction.
+	if len(needs) == 0 {
+		needs = defaultNeeds()
 	}
 	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	if ownerIdentity == "" {
