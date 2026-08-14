@@ -240,6 +240,7 @@ func (s *semanticMemoryStub) SearchMemory(_ context.Context, request semantic.Me
 }
 
 func TestOwnerScopedMemoryQuarantinesOwnerlessRecords(t *testing.T) {
+	t.Setenv("HAI_LEGACY_DATA_OWNER_IDENTITY", "migration-owner")
 	repo := newFakeRepository()
 	service := NewService(repo)
 	scoped := service.(OwnerScopedService)
@@ -295,6 +296,42 @@ func TestOwnerScopedMemoryQuarantinesOwnerlessRecords(t *testing.T) {
 	}
 	if len(systemMemories) != 2 {
 		t.Fatalf("trusted unscoped list returned %d memories, want 2", len(systemMemories))
+	}
+}
+
+func TestConfiguredLegacyOwnerCanReadButNotMutateOwnerlessMemory(t *testing.T) {
+	t.Setenv("HAI_LEGACY_DATA_OWNER_IDENTITY", "alice")
+	repo := newFakeRepository()
+	service := NewService(repo)
+	scoped := service.(OwnerScopedService)
+
+	legacy, err := service.Create(CreateRequest{ProjectKey: "legal-case", Kind: "preference", Content: "Legacy owner preference."})
+	if err != nil {
+		t.Fatalf("create ownerless memory: %v", err)
+	}
+	owned, err := scoped.CreateForOwner("alice", CreateRequest{ProjectKey: "legal-case", Kind: "preference", Content: "Alice preference."})
+	if err != nil {
+		t.Fatalf("create owned memory: %v", err)
+	}
+
+	memories, err := scoped.FindAllForOwner("alice", "legal-case", false)
+	if err != nil || len(memories) != 2 {
+		t.Fatalf("migration-owner list = %#v, err=%v", memories, err)
+	}
+	if found, err := scoped.FindByIDForOwner("alice", legacy.ID); err != nil || found.ID != legacy.ID {
+		t.Fatalf("migration owner could not read legacy memory: found=%#v err=%v", found, err)
+	}
+	if _, err := scoped.UpdateForOwner("alice", legacy.ID, UpdateRequest{Summary: "claimed"}); err == nil {
+		t.Fatal("migration owner mutated ownerless memory")
+	}
+	if err := scoped.DeleteForOwner("alice", legacy.ID); err == nil {
+		t.Fatal("migration owner deleted ownerless memory")
+	}
+	if _, err := scoped.FindByIDForOwner("bob", legacy.ID); err == nil {
+		t.Fatal("non-migration owner read ownerless memory")
+	}
+	if found, err := scoped.FindByIDForOwner("alice", owned.ID); err != nil || found.ID != owned.ID {
+		t.Fatalf("owned memory became unreadable: found=%#v err=%v", found, err)
 	}
 }
 

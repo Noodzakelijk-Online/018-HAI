@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 
 	"gorm.io/gorm"
@@ -68,7 +69,11 @@ func (r *GormRepository) QueryForOwner(
 func (r *GormRepository) scopeQuery(db *gorm.DB, ownerIdentity, projectKey string, includeArchived bool) *gorm.DB {
 	query := db.Model(&models.ContextMemory{})
 	if ownerIdentity = strings.TrimSpace(ownerIdentity); ownerIdentity != "" {
-		query = query.Where("owner_identity = ?", ownerIdentity)
+		if identity.CanReadLegacyOwnerlessData(ownerIdentity) {
+			query = query.Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity)
+		} else {
+			query = query.Where("owner_identity = ?", ownerIdentity)
+		}
 	}
 	if projectKey = strings.TrimSpace(projectKey); projectKey != "" {
 		query = query.Where("project_key = ?", projectKey)

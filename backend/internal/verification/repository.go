@@ -1,6 +1,7 @@
 package verification
 
 import (
+	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
 
@@ -77,9 +78,9 @@ func (r *GormRepository) FindRuns() ([]models.VerificationRun, error) {
 	return runs, err
 }
 
-// FindRunsForOwner returns exact-owner records for authenticated callers.
-// Ownerless legacy rows remain available only through explicit internal/global
-// reads; they must never become shared data visible to every local account.
+// FindRunsForOwner returns exact-owner records for authenticated callers. The
+// explicitly configured migration owner may additionally inspect ownerless
+// legacy rows; those records never become shared data for every local account.
 func (r *GormRepository) FindRunsForOwner(ownerIdentity string) ([]models.VerificationRun, error) {
 	var runs []models.VerificationRun
 	query := verificationRunsForOwnerQuery(r.DB, ownerIdentity)
@@ -90,7 +91,11 @@ func (r *GormRepository) FindRunsForOwner(ownerIdentity string) ([]models.Verifi
 func verificationRunsForOwnerQuery(db *gorm.DB, ownerIdentity string) *gorm.DB {
 	query := db.Order("created_at desc")
 	if ownerIdentity != "" {
-		query = query.Where("owner_identity = ?", ownerIdentity)
+		if identity.CanReadLegacyOwnerlessData(ownerIdentity) {
+			query = query.Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity)
+		} else {
+			query = query.Where("owner_identity = ?", ownerIdentity)
+		}
 	}
 	return query
 }

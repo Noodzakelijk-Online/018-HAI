@@ -1044,21 +1044,42 @@ func TestSearchExcludesOtherOwnersSourceExtractions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(result.UsedContext) != 2 {
-		t.Fatalf("visible search results = %#v, want Alice and legacy only", result.UsedContext)
+	if len(result.UsedContext) != 1 {
+		t.Fatalf("visible search results = %#v, want Alice only", result.UsedContext)
 	}
 	for _, ranked := range result.UsedContext {
-		if ranked.Extraction.SourceID == bobID {
-			t.Fatalf("search returned Bob's private source extraction")
+		if ranked.Extraction.SourceID == bobID || ranked.Extraction.SourceID == legacyID {
+			t.Fatalf("search returned data outside Alice's exact owner scope")
 		}
 	}
-	if len(repo.lastExtractionSourceIDs) != 2 {
-		t.Fatalf("search loaded source ids %#v, want only Alice and legacy sources", repo.lastExtractionSourceIDs)
+	if len(repo.lastExtractionSourceIDs) != 1 {
+		t.Fatalf("search loaded source ids %#v, want only Alice's source", repo.lastExtractionSourceIDs)
 	}
 	for _, sourceID := range repo.lastExtractionSourceIDs {
-		if sourceID == bobID {
-			t.Fatalf("search repository query included Bob's private source")
+		if sourceID == bobID || sourceID == legacyID {
+			t.Fatalf("search repository query included a source outside Alice's exact owner scope")
 		}
+	}
+}
+
+func TestSearchAllowsOwnerlessSourcesOnlyForConfiguredLegacyOwner(t *testing.T) {
+	t.Setenv("HAI_LEGACY_DATA_OWNER_IDENTITY", "alice")
+	aliceID := uuid.New()
+	legacyID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: legacyID, Name: "Legacy source", Enabled: true, Status: "active"},
+	)
+	for _, sourceID := range []uuid.UUID{aliceID, legacyID} {
+		_, _ = repo.SaveExtraction(&models.SourceExtraction{ID: uuid.New(), SourceID: sourceID, Text: "migration evidence", Summary: "migration evidence"})
+	}
+
+	result, err := NewService(repo, nil).Search(SearchRequest{OwnerIdentity: "alice", Query: "migration evidence", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(result.UsedContext) != 2 {
+		t.Fatalf("configured migration owner results = %#v, want owned and ownerless", result.UsedContext)
 	}
 }
 

@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/semantic"
 	"context"
@@ -609,10 +610,8 @@ func readableByOwner(memory *models.ContextMemory, ownerIdentity string) bool {
 		// Authenticated handlers always use the owner-scoped methods below.
 		return true
 	}
-	// Legacy records without an owner are quarantined. Treating them as global
-	// would expose personal memories to every authenticated account.
-	return strings.TrimSpace(memory.OwnerIdentity) != "" &&
-		strings.TrimSpace(memory.OwnerIdentity) == ownerIdentity
+	recordOwner := strings.TrimSpace(memory.OwnerIdentity)
+	return recordOwner == ownerIdentity || (recordOwner == "" && identity.CanReadLegacyOwnerlessData(ownerIdentity))
 }
 
 func writeableByOwner(memory *models.ContextMemory, ownerIdentity string) bool {

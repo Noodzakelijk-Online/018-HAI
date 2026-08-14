@@ -1,6 +1,7 @@
 package pursuit
 
 import (
+	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/plangraph"
 	"automation-hub-backend/internal/safety"
@@ -1055,9 +1056,9 @@ func (s *service) Dashboard() (*Dashboard, error) {
 	return s.DashboardForOwner("")
 }
 
-// ListForOwner scopes authenticated users to records they own while keeping
-// ownerless records available for local single-user deployments created before
-// identity-aware pursuit ownership existed.
+// ListForOwner scopes authenticated users to records they own. Only the
+// explicitly configured migration owner can additionally inspect ownerless
+// records created before identity-aware pursuit ownership existed.
 func (s *service) ListForOwner(ownerIdentity string, includeArchived bool) ([]models.Pursuit, error) {
 	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	var (
@@ -1087,7 +1088,7 @@ func pursuitVisibleTo(pursuit models.Pursuit, ownerIdentity string) bool {
 		return true
 	}
 	recordOwner := strings.TrimSpace(pursuit.OwnerIdentity)
-	return recordOwner == "" || recordOwner == ownerIdentity
+	return recordOwner == ownerIdentity || (recordOwner == "" && identity.CanReadLegacyOwnerlessData(ownerIdentity))
 }
 
 // pursuitMutableBy is intentionally stricter than read visibility. Ownerless

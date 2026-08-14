@@ -73,9 +73,12 @@ under `/api/v1` requires `X-HAI-Backend-Key` when configured.
   `POST /pursuits/:id/candidate/accept` may activate one, and that route plus
   its handler require approval capability before it can create or unlock
   governed work.
-- Authenticated pursuit mutation routes reject ownerless legacy pursuits. They
-  remain read-compatible for local migration, while empty-owner in-process
-  workers retain the only supported path for controlled legacy maintenance.
+- Authenticated Pursuit, Source, Memory, conversation-archive, semantic-search,
+  and Verification reads expose ownerless pre-identity data only to the single
+  `HAI_LEGACY_DATA_OWNER_IDENTITY`. Unset configuration fails closed and every
+  other operator remains exact-owner isolated. Authenticated mutation routes
+  reject ownerless legacy records; empty-owner in-process workers retain the
+  only supported path for controlled legacy maintenance.
 - **Follow-up:** adopt the `apierror` envelope uniformly across handlers (error
   shapes currently vary; frontend depends on the existing shapes — migrate both
   together).

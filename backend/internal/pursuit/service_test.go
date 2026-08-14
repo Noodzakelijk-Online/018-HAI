@@ -5035,14 +5035,18 @@ func TestOwnerScopedMutationsDoNotAdoptOwnerlessLegacyPursuits(t *testing.T) {
 			_, err := service.ReviewForOwner("alice", legacy.ID, ReviewRequest{Action: "complete", Actor: "alice"})
 			return err
 		}},
-		{name: "route intake", call: func() error {
-			_, err := service.RouteIntake(IntakeRequest{OwnerIdentity: "alice", ProjectKey: "legacy-project", Input: legacy.Title})
-			return err
-		}},
 	} {
 		if err := operation.call(); err == nil {
 			t.Fatalf("%s adopted an ownerless legacy pursuit", operation.name)
 		}
+	}
+
+	routed, err := service.RouteIntake(IntakeRequest{OwnerIdentity: "alice", ProjectKey: "legacy-project", Input: legacy.Title})
+	if err != nil {
+		t.Fatalf("route intake created no owner-scoped alternative: %v", err)
+	}
+	if routed.PursuitID == legacy.ID {
+		t.Fatal("route intake adopted an ownerless legacy pursuit")
 	}
 
 	stored, err := repo.FindByID(legacy.ID)

@@ -647,6 +647,14 @@ If the Postgres data volume already exists, changing first-run values does not
 rewrite the existing account. Do not commit `.env.local`, Docker state,
 database directories, uploaded material, frontend build output, or secrets.
 
+`HAI_LEGACY_DATA_OWNER_IDENTITY` names the one authenticated owner who may read
+ownerless Pursuit, Source, Memory, conversation-archive, semantic-search, and
+Verification records created before identity scoping existed. Other operators
+remain exact-owner isolated, and the migration owner still cannot mutate or
+delete ownerless records through authenticated APIs. Keep it unset to fail
+closed, or set it to the first-run owner only until a reviewed data migration
+has assigned every legacy record.
+
 ### Optional Google sign-in and password recovery
 
 The local password login works without external accounts. The login page only

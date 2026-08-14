@@ -201,7 +201,7 @@ func TestPursuitEndpointsScopeRecordsToAuthenticatedOwner(t *testing.T) {
 	for _, pursuit := range visible {
 		seen[pursuit.ID] = true
 	}
-	if !seen[alice.ID.String()] || !seen[legacy.ID.String()] || seen[bob.ID.String()] {
+	if !seen[alice.ID.String()] || seen[legacy.ID.String()] || seen[bob.ID.String()] {
 		t.Fatalf("owner-scoped list leaked or hid records: %#v", seen)
 	}
 
@@ -215,6 +215,27 @@ func TestPursuitEndpointsScopeRecordsToAuthenticatedOwner(t *testing.T) {
 	router.ServeHTTP(denied, httptest.NewRequest(http.MethodGet, "/pursuits/"+bob.ID.String()+"/activity", nil))
 	if denied.Code != http.StatusNotFound {
 		t.Fatalf("cross-owner activity status = %d, want %d; body=%s", denied.Code, http.StatusNotFound, denied.Body.String())
+	}
+}
+
+func TestPursuitListAllowsOwnerlessRecordsOnlyForConfiguredLegacyOwner(t *testing.T) {
+	t.Setenv("HAI_LEGACY_DATA_OWNER_IDENTITY", "alice")
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	legacy, err := service.Create(CreateRequest{Title: "Local legacy pursuit"})
+	if err != nil {
+		t.Fatalf("Create legacy pursuit: %v", err)
+	}
+
+	records, err := service.ListForOwner("alice", false)
+	if err != nil {
+		t.Fatalf("ListForOwner: %v", err)
+	}
+	if len(records) != 1 || records[0].ID != legacy.ID {
+		t.Fatalf("configured migration owner records = %#v", records)
+	}
+	if records, err = service.ListForOwner("bob", false); err != nil || len(records) != 0 {
+		t.Fatalf("non-migration owner saw legacy records: records=%#v err=%v", records, err)
 	}
 }
 

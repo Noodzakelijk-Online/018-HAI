@@ -175,6 +175,7 @@ services:
       BASE_URL: ${BASE_URL}
       JWT_SECRET: ${JWT_SECRET}
       BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
+      HAI_LEGACY_DATA_OWNER_IDENTITY: ${HAI_LEGACY_DATA_OWNER_IDENTITY:-noodzakelijkonline@gmail.com}
       HAI_MEMORY_ENCRYPTION_KEY: ${HAI_MEMORY_ENCRYPTION_KEY}
       HAI_APPROVAL_PROOF_SIGNING_KEY: ${HAI_APPROVAL_PROOF_SIGNING_KEY}
       # Mutable control state is deliberately isolated from the read-only

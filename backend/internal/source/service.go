@@ -1,6 +1,7 @@
 package source
 
 import (
+	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/pursuit"
@@ -1455,7 +1456,8 @@ func (s *service) visibleSourceIDsExcluding(ownerIdentity string, excludedConnec
 		if source.RevokedAt != nil || strings.EqualFold(strings.TrimSpace(source.Status), "revoked") {
 			continue
 		}
-		if ownerIdentity == "" || source.OwnerIdentity == "" || source.OwnerIdentity == ownerIdentity {
+		sourceOwner := strings.TrimSpace(source.OwnerIdentity)
+		if ownerIdentity == "" || sourceOwner == ownerIdentity || (sourceOwner == "" && identity.CanReadLegacyOwnerlessData(ownerIdentity)) {
 			visible[source.ID] = true
 		}
 	}

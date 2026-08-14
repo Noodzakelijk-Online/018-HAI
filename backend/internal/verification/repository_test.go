@@ -12,6 +12,7 @@ import (
 )
 
 func TestVerificationRunsForOwnerQueryExcludesOwnerlessLegacyRows(t *testing.T) {
+	t.Setenv("HAI_LEGACY_DATA_OWNER_IDENTITY", "legacy-owner")
 	sqlDB, err := sql.Open("pgx", "postgres://unused")
 	if err != nil {
 		t.Fatalf("open dry-run connection: %v", err)
@@ -36,6 +37,12 @@ func TestVerificationRunsForOwnerQueryExcludesOwnerlessLegacyRows(t *testing.T) 
 	}
 	if len(statement.Vars) != 1 || statement.Vars[0] != "alice" {
 		t.Fatalf("authenticated query vars = %#v, want exact owner", statement.Vars)
+	}
+
+	statement = verificationRunsForOwnerQuery(db, "legacy-owner").Find(&runs).Statement
+	query = strings.ToLower(statement.SQL.String())
+	if !strings.Contains(query, "owner_identity is null") || !strings.Contains(query, " or ") {
+		t.Fatalf("configured migration owner cannot inspect ownerless legacy rows: %s", query)
 	}
 
 	statement = verificationRunsForOwnerQuery(db, "").Find(&runs).Statement
