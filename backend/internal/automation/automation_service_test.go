@@ -1407,6 +1407,62 @@ func TestLaunchBlocksAPILinkLocalTarget(t *testing.T) {
 	}
 }
 
+func TestAutomationHTTPClientRejectsBlockedDNSResolution(t *testing.T) {
+	t.Parallel()
+
+	client := noRedirectHTTPClientWithResolver(5*time.Second, func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
+	})
+	transport := client.Transport.(*http.Transport)
+	if transport.Proxy != nil {
+		t.Fatal("automation transport must not inherit environment proxy settings")
+	}
+	_, err := transport.DialContext(context.Background(), "tcp", "automation.example:443")
+	if err == nil || !strings.Contains(err.Error(), "blocked address space") {
+		t.Fatalf("DialContext error = %v, want blocked address rejection", err)
+	}
+}
+
+func TestAutomationServiceReusesDirectHTTPClient(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(newFakeAutomationRepo(nil), events.Publisher{}).(*service)
+	if service.httpClient == nil || service.directHTTPClient() != service.directHTTPClient() {
+		t.Fatal("automation service must reuse its bounded HTTP client")
+	}
+}
+
+func TestAutomationTargetsRejectEmbeddedCredentials(t *testing.T) {
+	t.Setenv("AUTOMATION_API_ALLOWED_HOSTS", "127.0.0.1")
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:             id,
+		Name:           "Credential URL automation",
+		URLPath:        "credential-url-automation",
+		LaunchType:     "api",
+		LaunchTarget:   "POST http://user:secret@127.0.0.1:9/start",
+		HealthCheckURL: "http://user:secret@127.0.0.1:9/health",
+	})
+	service := newTestService(repo, events.Publisher{})
+
+	health, err := service.RunHealthCheck(id)
+	if err != nil {
+		t.Fatalf("RunHealthCheck: %v", err)
+	}
+	if !strings.Contains(health.FailureReason, "must not contain credentials") {
+		t.Fatalf("health result = %#v, want credential rejection", health)
+	}
+
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if result.Status != "blocked" || !strings.Contains(result.Message, "must not contain credentials") {
+		t.Fatalf("launch result = %#v, want credential rejection", result)
+	}
+}
+
 func TestLaunchRedactsAPITargetAndResponseSecrets(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("password=hunter2"))

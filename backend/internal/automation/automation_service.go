@@ -156,6 +156,7 @@ type service struct {
 	approvalProofs  ApprovalProofService
 	executionAuth   ExecutionAuthorizer
 	finalEffects    *executionauth.FinalEffectBridge
+	httpClient      *http.Client
 }
 
 func NewService(repo Repository, publisher events.Publisher) Service {
@@ -253,6 +254,7 @@ func NewServiceWithRuntimeRegistryApprovalProofsExecutionAuthorizationAndFinalEf
 		approvalProofs:  approvalProofs,
 		executionAuth:   executionAuthorizer,
 		finalEffects:    finalEffects,
+		httpClient:      noRedirectHTTPClient(10 * time.Second),
 	}
 }
 
@@ -513,12 +515,17 @@ func (s *service) RunHealthCheck(id uuid.UUID) (*HealthResult, error) {
 			failureReason = "health check target must be an absolute http or https URL"
 			break
 		}
+		if parsed.User != nil {
+			status = classifyFailure(automation.ConsecutiveFailures + 1)
+			failureReason = "health check target must not contain credentials"
+			break
+		}
 		if reason := networkTargetBlockedReason(parsed.Hostname(), "AUTOMATION_HEALTH_ALLOWED_HOSTS", defaultAPILaunchAllowedHosts, "AUTOMATION_HEALTH_ALLOW_LINK_LOCAL"); reason != "" {
 			status = classifyFailure(automation.ConsecutiveFailures + 1)
 			failureReason = reason
 			break
 		}
-		client := noRedirectHTTPClient(10 * time.Second)
+		client := s.directHTTPClient()
 		resp, errGet := client.Get(target)
 		if errGet != nil {
 			status = classifyFailure(automation.ConsecutiveFailures + 1)
@@ -1633,6 +1640,9 @@ func (s *service) executeAPILaunch(
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return blockedLaunch("API launch target must be an absolute http or https URL", started, append(audit, "api target rejected"))
 	}
+	if parsed.User != nil {
+		return blockedLaunch("API launch target must not contain credentials", started, append(audit, "api target credentials rejected"))
+	}
 	host := parsed.Hostname()
 	allowedHosts := allowedCSVEnv("AUTOMATION_API_ALLOWED_HOSTS", defaultAPILaunchAllowedHosts)
 	if !hostAllowed(host, allowedHosts) {
@@ -1644,7 +1654,7 @@ func (s *service) executeAPILaunch(
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodPost {
 		return blockedLaunch("API launch supports only GET, HEAD, or POST without a request body", started, append(audit, "api method rejected"))
 	}
-	client := noRedirectHTTPClient(10 * time.Second)
+	client := s.directHTTPClient()
 	executionContext := request.ExecutionContext
 	if executionContext == nil {
 		executionContext = context.Background()
@@ -2357,13 +2367,66 @@ func tokenAllowed(value string, allowed map[string]bool) bool {
 	return allowed["*"] || allowed[value]
 }
 
+type automationLookupIPAddr func(context.Context, string) ([]net.IPAddr, error)
+
 func noRedirectHTTPClient(timeout time.Duration) *http.Client {
+	return noRedirectHTTPClientWithResolver(timeout, net.DefaultResolver.LookupIPAddr)
+}
+
+func noRedirectHTTPClientWithResolver(timeout time.Duration, lookup automationLookupIPAddr) *http.Client {
+	dialTimeout := timeout
+	if dialTimeout <= 0 || dialTimeout > 10*time.Second {
+		dialTimeout = 10 * time.Second
+	}
+	dialer := &net.Dialer{Timeout: dialTimeout}
 	return &http.Client{
 		Timeout: timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
+		Transport: &http.Transport{
+			Proxy:                 nil,
+			MaxIdleConns:          16,
+			MaxIdleConnsPerHost:   2,
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   5 * time.Second,
+			ResponseHeaderTimeout: dialTimeout,
+			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(address)
+				if err != nil {
+					return nil, fmt.Errorf("automation: invalid network address: %w", err)
+				}
+				resolved, err := lookup(ctx, host)
+				if err != nil {
+					return nil, fmt.Errorf("automation: resolve network target: %w", err)
+				}
+				if len(resolved) == 0 {
+					return nil, fmt.Errorf("automation: network target resolved to no addresses")
+				}
+				for _, candidate := range resolved {
+					if automationIPAddressBlocked(candidate.IP) {
+						return nil, fmt.Errorf("automation: network target resolved to blocked address space")
+					}
+				}
+				return dialer.DialContext(ctx, network, net.JoinHostPort(resolved[0].IP.String(), port))
+			},
+		},
 	}
+}
+
+func (s *service) directHTTPClient() *http.Client {
+	if s.httpClient != nil {
+		return s.httpClient
+	}
+	return noRedirectHTTPClient(10 * time.Second)
+}
+
+func automationIPAddressBlocked(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.String() == "169.254.169.254"
 }
 
 func networkTargetBlockedReason(host, allowedHostsEnv, fallbackAllowedHosts, allowLinkLocalEnv string) string {
