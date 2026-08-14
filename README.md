@@ -718,6 +718,31 @@ Expected behavior:
 If port 80 is already in use, set `GATEWAY_HOST_PORT=8088` in `.env.local`,
 recreate `gateway`, and open `http://localhost:8088`.
 
+### Fast Windows development loop
+
+After the full stack is running, rebuild and replace only the Angular frontend:
+
+```powershell
+.\scripts\rebuild-frontend.ps1 -EnvFile .\.env.local
+```
+
+The script uses Compose `--no-deps`, waits for the frontend health check, and
+verifies that the backend container identity did not change. Use the normal
+Compose command when backend, IDP, database, gateway, or environment settings
+changed; this shortcut is intentionally frontend-only.
+
+Measure HAI's current Docker footprint without counting other projects running
+in Docker Desktop:
+
+```powershell
+.\scripts\measure-hai-resources.ps1
+```
+
+The report selects running containers by the
+`com.docker.compose.project=018-hai` label and prints per-service plus aggregate
+CPU and memory. Pass `-AsJson` for machine-readable output or `-ProjectName`
+when using a deliberate non-default Compose project name.
+
 For the target-machine acceptance sequence, use
 [fresh-clone dry run](docs/fresh-clone-dryrun.md). For diagnosis, use
 [troubleshooting](docs/troubleshooting.md) and the in-product support bundle.
