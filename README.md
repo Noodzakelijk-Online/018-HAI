@@ -164,7 +164,7 @@ Constitution, run an approval-gated task, or resolve a task review item.
 | Optional local runners | Disabled-by-default Compose profiles for aggregate security scans, no-tool planning drafts, selected-folder document extraction, and disposable patch proposals. | They publish no host ports and have private networks, read-only mounts, and resource limits. Configuration or container health is not live proof; each real snapshot, model, or document path still needs retained approval, audit, and verification evidence. |
 | Proactive planning | Ambient scans identify stale work, blockers, approvals, open loops, contradiction candidates, and delegation opportunities. Governance Control records owner `accept`, `dismiss`, bounded `snooze`, indefinite `suppress`, and `resume` feedback in an immutable owner-scoped ledger that changes later attention evaluation. | Ambient mode is suggestion-first and cannot bypass approval, verification, leases, audit, or emergency stop. Attention feedback has `canExecute:false`, grants no delivery or execution authority, and invokes no notification or external effect. |
 | Advisory ambient outcome monitor | Governance Control can bind an existing outcome indicator to one of three fixed read-only local collectors: `workflow_open_loop_count`, `workflow_verified_completion_count`, or `overdue_commitment_count`. A durable singleton sweep leases due targets, appends immutable source-digested observations and run receipts, composes them into the existing outcome-evaluation service, and may surface an owner-scoped proactivity inbox decision. | The monitor is `advisory_monitor_only`. It cannot execute or deliver work, notify anyone, write Calendar data, mutate a workflow, authorize a mandate, or mutate learning. It reads only canonical local ledgers and accepts no caller-supplied SQL, URL, script, expression, or arbitrary tool instruction. Live external-account correctness and target-machine acceptance remain separate gates. |
-| Operations | nginx gateway, IDP, Postgres, Redis, Kafka, health/readiness, support bundle, doctor/reconcile/migrate commands, versioned SQL migrations, a durable job runner (persisted retry + crash recovery), CI, Compose validation, and local smoke coverage. | **Source, workflow, and ambient** scheduling all run on the durable worker: each is a self-rescheduling singleton job with backoff retry and lease-based crash recovery, and each falls back to its in-process ticker (logging that it did) if the queue is unreachable. The workflow schedule may process ordinary workflow/open-loop work; it does not deliver or execute reminder activation records. No reminder worker is active. This is a single-node worker, not a distributed or HA platform. |
+| Operations | nginx gateway, IDP, Postgres, Redis, Kafka, health/readiness, support bundle, doctor/reconcile/migrate commands, versioned SQL migrations, a durable job runner (persisted retry + crash recovery), CI, Compose validation, local smoke coverage, and an opt-in bearer-protected Prometheus endpoint. | **Source, workflow, and ambient** scheduling all run on the durable worker: each is a self-rescheduling singleton job with backoff retry and lease-based crash recovery, and each falls back to its in-process ticker (logging that it did) if the queue is unreachable. Outcome-monitor metrics are bounded and tenant-free; scraping, retention, dashboards, and alerts remain operator-managed. The workflow schedule may process ordinary workflow/open-loop work; it does not deliver or execute reminder activation records. No reminder worker is active. This is a single-node worker, not a distributed or HA platform. |
 
 ### Readiness Terms
 
@@ -202,6 +202,16 @@ The durable scheduler is configured with
 out-of-range values fall back to bounded defaults documented in
 `.env.example`. Disabling the scheduler does not remove the records or grant a
 different execution path.
+
+When the opt-in Prometheus endpoint is enabled, the same scheduler records
+`hai_outcome_monitor_sweep_duration_seconds`, bounded discovered scope gauges,
+completed/failed/interrupted/skipped sweep totals, recovered lease totals, and
+collection/composition claimed, completed, retrying, and failed item totals.
+These fixed labels contain no owner, workspace, target, source, prompt, record,
+or failure-detail value. The discovered-scope gauges are capped by
+`OUTCOME_MONITOR_SCOPE_LIMIT`; they are operational pressure signals, not exact
+global backlog counts. Prometheus scraping, retention, dashboards, and alert
+thresholds remain operator-managed.
 
 Required acceptance before relying on this path includes exact replay without
 duplicate observations or inbox items, two-owner isolation, active-lease

@@ -440,9 +440,11 @@ recurring-obligation and accounting semantics, live sourced capacity feeds,
 distributed multi-agent/A2A transport, ambiguous external-effect
 reconciliation, high-availability workflow coordination, full domain-specific
 services, and real acceptance evidence for each configured account, provider,
-financial system, and runtime. The local Compose database currently uses an
-administrative PostgreSQL role; a separate least-privilege runtime role plus
-database-enforced owner isolation remains required before production trust.
+financial system, and runtime. Local Compose now applies migrations through a
+one-shot migrator and runs the long-lived backend as the separate
+least-privilege `hai_runtime` role. Database-enforced owner isolation beyond
+the existing authenticated owner-scoped repository contracts remains required
+before multi-tenant production trust.
 The new ledgers and projections are durable local contracts, not a production-
 readiness claim or evidence that external contacts, obligations, balances,
 payments, or mandate-authorized effects have been independently verified.

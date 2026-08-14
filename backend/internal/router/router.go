@@ -64,7 +64,7 @@ func InitializeContext(ctx context.Context) error {
 	router.Use(metricsExporter.Middleware())
 
 	// initialize routes
-	err = initializeRoutes(ctx, router)
+	err = initializeRoutes(ctx, router, metricsExporter)
 	if err != nil {
 		return err
 	}

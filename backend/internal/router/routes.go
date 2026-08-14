@@ -105,7 +105,7 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
-func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
+func initializeRoutes(appCtx context.Context, router *gin.Engine, monitorObserver ambientmonitor.SweepObserver) error {
 	if appCtx == nil {
 		return fmt.Errorf("application context is required")
 	}
@@ -413,7 +413,7 @@ func initializeRoutes(appCtx context.Context, router *gin.Engine) error {
 			return err
 		}
 		if ambientmonitor.DurableSchedulerEnabled() {
-			if err := ambientmonitor.StartDurableScheduler(appCtx, ambientMonitorService, backgroundAllowed); err != nil {
+			if err := ambientmonitor.StartDurableScheduler(appCtx, ambientMonitorService, backgroundAllowed, monitorObserver); err != nil {
 				return err
 			}
 		}

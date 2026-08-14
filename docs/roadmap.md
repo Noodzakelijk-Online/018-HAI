@@ -38,10 +38,10 @@ source of truth for current state.
 - Move list/search from in-memory to SQL with composite/trigram indexes at scale
   (see `docs/performance-baseline.md`).
 - Retained live acceptance runs for each implemented, read-only provider connector.
-- Add deployed metrics and alerts for durable outcome-monitor sweep latency,
-  due backlog, lease recovery, redacted failures, and composition retries only
-  after the local acceptance contract is retained. Do not add effect authority
-  to solve an observability gap.
+- Retain local scrape acceptance for the implemented tenant-free durable
+  outcome-monitor metrics. Configure collector-side retention and alert rules
+  per deployment; HAI deliberately does not embed a second monitoring service
+  or add effect authority to solve an observability gap.
 
 ## Blocked items
 
