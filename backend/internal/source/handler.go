@@ -105,6 +105,10 @@ func (h *Handler) Sources(c *gin.Context) {
 }
 
 func (h *Handler) SyncJobs(c *gin.Context) {
+	limit, ok := sourceHistoryLimit(c, "sync job")
+	if !ok {
+		return
+	}
 	var sourceID *uuid.UUID
 	if raw := c.Query("sourceId"); raw != "" {
 		parsed, err := uuid.Parse(raw)
@@ -117,18 +121,16 @@ func (h *Handler) SyncJobs(c *gin.Context) {
 			return
 		}
 	}
-	jobs, err := h.service.SyncJobs(sourceID)
+	var jobs []models.SourceSyncJob
+	var err error
+	if sourceID == nil {
+		jobs, err = h.service.SyncJobsForOwner(sourceOwner(c), limit)
+	} else {
+		jobs, err = h.service.SyncJobs(sourceID, limit)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
-	}
-	if sourceID == nil {
-		visibleSourceIDs, err := h.visibleSourceIDs(c)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		jobs = filterVisibleSyncJobs(jobs, visibleSourceIDs)
 	}
 	c.JSON(http.StatusOK, jobs)
 }
@@ -448,14 +450,9 @@ func (h *Handler) DeleteExtraction(c *gin.Context) {
 }
 
 func (h *Handler) AuditLogs(c *gin.Context) {
-	limit := 0
-	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > 500 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "audit log limit must be between 1 and 500"})
-			return
-		}
-		limit = parsed
+	limit, ok := sourceHistoryLimit(c, "audit log")
+	if !ok {
+		return
 	}
 	var sourceID *uuid.UUID
 	if raw := c.Query("sourceId"); raw != "" {
@@ -469,23 +466,33 @@ func (h *Handler) AuditLogs(c *gin.Context) {
 			return
 		}
 	}
-	logs, err := h.service.AuditLogs(sourceID)
+	var logs []models.SourceAuditLog
+	var err error
+	if sourceID == nil {
+		logs, err = h.service.AuditLogsForOwner(sourceOwner(c), limit)
+	} else {
+		logs, err = h.service.AuditLogs(sourceID, limit)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if sourceID == nil {
-		visibleSourceIDs, err := h.visibleSourceIDs(c)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		logs = filterVisibleAuditLogs(logs, visibleSourceIDs)
-	}
-	if limit > 0 && len(logs) > limit {
-		logs = logs[:limit]
-	}
 	c.JSON(http.StatusOK, logs)
+}
+
+const sourceHistoryDefaultLimit = 100
+
+func sourceHistoryLimit(c *gin.Context, recordType string) (int, bool) {
+	raw := strings.TrimSpace(c.Query("limit"))
+	if raw == "" {
+		return sourceHistoryDefaultLimit, true
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 1 || limit > 500 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": recordType + " limit must be between 1 and 500"})
+		return 0, false
+	}
+	return limit, true
 }
 
 func sourceOwner(c *gin.Context) string {
@@ -629,26 +636,6 @@ func (h *Handler) requireMutableExtraction(c *gin.Context, id uuid.UUID) bool {
 	}
 	c.JSON(http.StatusNotFound, gin.H{"error": "source extraction not found"})
 	return false
-}
-
-func filterVisibleSyncJobs(jobs []models.SourceSyncJob, sourceIDs map[uuid.UUID]bool) []models.SourceSyncJob {
-	visible := make([]models.SourceSyncJob, 0, len(jobs))
-	for _, job := range jobs {
-		if sourceIDs[job.SourceID] {
-			visible = append(visible, job)
-		}
-	}
-	return visible
-}
-
-func filterVisibleAuditLogs(logs []models.SourceAuditLog, sourceIDs map[uuid.UUID]bool) []models.SourceAuditLog {
-	visible := make([]models.SourceAuditLog, 0, len(logs))
-	for _, log := range logs {
-		if sourceIDs[log.SourceID] {
-			visible = append(visible, log)
-		}
-	}
-	return visible
 }
 
 func parseUUID(c *gin.Context) (uuid.UUID, bool) {

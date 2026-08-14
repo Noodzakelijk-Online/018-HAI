@@ -1727,7 +1727,11 @@ func (s *fakeTaskSourceService) SourcesForOwner(ownerIdentity string, includeDis
 	return nil, nil
 }
 
-func (s *fakeTaskSourceService) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
+func (s *fakeTaskSourceService) SyncJobs(sourceID *uuid.UUID, limit int) ([]models.SourceSyncJob, error) {
+	return nil, nil
+}
+
+func (s *fakeTaskSourceService) SyncJobsForOwner(ownerIdentity string, limit int) ([]models.SourceSyncJob, error) {
 	return nil, nil
 }
 
@@ -1818,7 +1822,11 @@ func (s *fakeTaskSourceService) DeleteExtraction(id uuid.UUID) error {
 	return nil
 }
 
-func (s *fakeTaskSourceService) AuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error) {
+func (s *fakeTaskSourceService) AuditLogs(sourceID *uuid.UUID, limit int) ([]models.SourceAuditLog, error) {
+	return nil, nil
+}
+
+func (s *fakeTaskSourceService) AuditLogsForOwner(ownerIdentity string, limit int) ([]models.SourceAuditLog, error) {
 	return nil, nil
 }
 

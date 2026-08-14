@@ -149,6 +149,61 @@ func TestHandlerBoundsAuditLogsAfterOwnerFiltering(t *testing.T) {
 	}
 }
 
+func TestHandlerBoundsSyncJobsInsideOwnerScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
+	)
+	repo.jobs = []models.SourceSyncJob{
+		{ID: uuid.New(), SourceID: bobID, Status: "completed"},
+		{ID: uuid.New(), SourceID: aliceID, Status: "completed"},
+		{ID: uuid.New(), SourceID: aliceID, Status: "failed"},
+	}
+
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/sync-jobs", handler.SyncJobs)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/sync-jobs?limit=1", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("sync jobs status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var jobs []models.SourceSyncJob
+	if err := json.Unmarshal(response.Body.Bytes(), &jobs); err != nil {
+		t.Fatalf("decode sync jobs: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].SourceID != aliceID {
+		t.Fatalf("bounded owner jobs = %#v, want one Alice job", jobs)
+	}
+
+	unauthenticatedRouter := gin.New()
+	unauthenticatedRouter.GET("/sources/sync-jobs", handler.SyncJobs)
+	unauthenticatedResponse := httptest.NewRecorder()
+	unauthenticatedRouter.ServeHTTP(unauthenticatedResponse, httptest.NewRequest(http.MethodGet, "/sources/sync-jobs", nil))
+	if unauthenticatedResponse.Code != http.StatusOK {
+		t.Fatalf("ownerless sync jobs status = %d, body=%s", unauthenticatedResponse.Code, unauthenticatedResponse.Body.String())
+	}
+	if err := json.Unmarshal(unauthenticatedResponse.Body.Bytes(), &jobs); err != nil {
+		t.Fatalf("decode ownerless sync jobs: %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("ownerless request exposed sync jobs: %#v", jobs)
+	}
+
+	for _, query := range []string{"limit=0", "limit=501", "limit=invalid"} {
+		invalid := httptest.NewRecorder()
+		router.ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/sources/sync-jobs?"+query, nil))
+		if invalid.Code != http.StatusBadRequest {
+			t.Fatalf("%s status = %d, body=%s", query, invalid.Code, invalid.Body.String())
+		}
+	}
+}
+
 func TestGoogleOAuthStartRejectsForeignSourceBeforeConfigurationLookup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	foreignID := uuid.New()

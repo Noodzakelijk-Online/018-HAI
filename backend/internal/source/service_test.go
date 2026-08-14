@@ -1408,7 +1408,7 @@ func TestSyncJobsReturnsPersistentHistory(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	jobs, err := service.SyncJobs(&sourceID)
+	jobs, err := service.SyncJobs(&sourceID, sourceHistoryDefaultLimit)
 	if err != nil {
 		t.Fatalf("SyncJobs: %v", err)
 	}
@@ -2237,11 +2237,31 @@ func (r *fakeSourceRepo) UpdateSyncJob(job *models.SourceSyncJob) (*models.Sourc
 	return job, nil
 }
 
-func (r *fakeSourceRepo) FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
+func (r *fakeSourceRepo) FindSyncJobs(sourceID *uuid.UUID, limit int) ([]models.SourceSyncJob, error) {
 	result := []models.SourceSyncJob{}
 	for _, job := range r.jobs {
 		if sourceID == nil || job.SourceID == *sourceID {
 			result = append(result, job)
+			if limit > 0 && len(result) == limit {
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeSourceRepo) FindSyncJobsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceSyncJob, error) {
+	allowed := make(map[uuid.UUID]bool, len(sourceIDs))
+	for _, id := range sourceIDs {
+		allowed[id] = true
+	}
+	result := []models.SourceSyncJob{}
+	for _, job := range r.jobs {
+		if allowed[job.SourceID] {
+			result = append(result, job)
+			if limit > 0 && len(result) == limit {
+				break
+			}
 		}
 	}
 	return result, nil
@@ -2426,11 +2446,31 @@ func (r *fakeSourceRepo) SaveAuditLog(log *models.SourceAuditLog) (*models.Sourc
 	return log, nil
 }
 
-func (r *fakeSourceRepo) FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error) {
+func (r *fakeSourceRepo) FindAuditLogs(sourceID *uuid.UUID, limit int) ([]models.SourceAuditLog, error) {
 	result := []models.SourceAuditLog{}
 	for _, log := range r.auditLogs {
 		if sourceID == nil || log.SourceID == *sourceID {
 			result = append(result, log)
+			if limit > 0 && len(result) == limit {
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeSourceRepo) FindAuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error) {
+	allowed := make(map[uuid.UUID]bool, len(sourceIDs))
+	for _, id := range sourceIDs {
+		allowed[id] = true
+	}
+	result := []models.SourceAuditLog{}
+	for _, log := range r.auditLogs {
+		if allowed[log.SourceID] {
+			result = append(result, log)
+			if limit > 0 && len(result) == limit {
+				break
+			}
 		}
 	}
 	return result, nil

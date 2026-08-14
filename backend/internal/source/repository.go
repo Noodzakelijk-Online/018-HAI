@@ -22,7 +22,8 @@ type Repository interface {
 	FindSource(id uuid.UUID) (*models.ConnectedSource, error)
 	CreateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
 	UpdateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
-	FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
+	FindSyncJobs(sourceID *uuid.UUID, limit int) ([]models.SourceSyncJob, error)
+	FindSyncJobsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceSyncJob, error)
 	FindRawItem(sourceID uuid.UUID, externalID string) (*models.SourceRawItem, error)
 	SaveRawItem(item *models.SourceRawItem) (*models.SourceRawItem, error)
 	FindRawItems(sourceID uuid.UUID) ([]models.SourceRawItem, error)
@@ -39,7 +40,8 @@ type Repository interface {
 	SaveIndexEntry(entry *models.SourceIndexEntry) (*models.SourceIndexEntry, error)
 	DeletePendingVectorIndex(extractionID uuid.UUID) error
 	SaveAuditLog(log *models.SourceAuditLog) (*models.SourceAuditLog, error)
-	FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error)
+	FindAuditLogs(sourceID *uuid.UUID, limit int) ([]models.SourceAuditLog, error)
+	FindAuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error)
 	SaveOAuthToken(token *models.SourceOAuthToken) error
 	FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error)
 }
@@ -221,14 +223,29 @@ func (r *GormRepository) UpdateSyncJob(job *models.SourceSyncJob) (*models.Sourc
 	return job, nil
 }
 
-func (r *GormRepository) FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
+func (r *GormRepository) FindSyncJobs(sourceID *uuid.UUID, limit int) ([]models.SourceSyncJob, error) {
 	var jobs []models.SourceSyncJob
 	query := r.DB.Order("created_at desc")
 	if sourceID != nil {
 		query = query.Where("source_id = ?", *sourceID)
 	}
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
 	err := query.Find(&jobs).Error
 	return jobs, err
+}
+
+func (r *GormRepository) FindSyncJobsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceSyncJob, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceSyncJob{}, nil
+	}
+	var jobs []models.SourceSyncJob
+	query := r.DB.Where("source_id IN ?", sourceIDs).Order("created_at desc")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	return jobs, query.Find(&jobs).Error
 }
 
 func (r *GormRepository) FindRawItem(sourceID uuid.UUID, externalID string) (*models.SourceRawItem, error) {
@@ -384,14 +401,29 @@ func (r *GormRepository) SaveAuditLog(log *models.SourceAuditLog) (*models.Sourc
 	return log, nil
 }
 
-func (r *GormRepository) FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error) {
+func (r *GormRepository) FindAuditLogs(sourceID *uuid.UUID, limit int) ([]models.SourceAuditLog, error) {
 	var logs []models.SourceAuditLog
 	query := r.DB.Order("created_at desc")
 	if sourceID != nil {
 		query = query.Where("source_id = ?", *sourceID)
 	}
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
 	err := query.Find(&logs).Error
 	return logs, err
+}
+
+func (r *GormRepository) FindAuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceAuditLog{}, nil
+	}
+	var logs []models.SourceAuditLog
+	query := r.DB.Where("source_id IN ?", sourceIDs).Order("created_at desc")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	return logs, query.Find(&logs).Error
 }
 
 // SaveOAuthToken upserts the token for a source (one token set per source).

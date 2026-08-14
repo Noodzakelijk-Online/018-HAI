@@ -163,7 +163,8 @@ type Service interface {
 	UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*models.ConnectedSource, error)
 	Sources(includeDisabled bool) ([]models.ConnectedSource, error)
 	SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error)
-	SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
+	SyncJobs(sourceID *uuid.UUID, limit int) ([]models.SourceSyncJob, error)
+	SyncJobsForOwner(ownerIdentity string, limit int) ([]models.SourceSyncJob, error)
 	Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
 	SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
 	// DueSources lists enabled sources whose schedule is due at now. The durable
@@ -180,7 +181,8 @@ type Service interface {
 	UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error)
 	ArchiveExtraction(id uuid.UUID, archived bool) (*models.SourceExtraction, error)
 	DeleteExtraction(id uuid.UUID) error
-	AuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error)
+	AuditLogs(sourceID *uuid.UUID, limit int) ([]models.SourceAuditLog, error)
+	AuditLogsForOwner(ownerIdentity string, limit int) ([]models.SourceAuditLog, error)
 	StartGoogleOAuth(sourceID uuid.UUID) (string, error)
 	CompleteGoogleOAuth(ctx context.Context, code, state string) (uuid.UUID, error)
 }
@@ -631,8 +633,16 @@ func (s *service) SourcesForOwner(ownerIdentity string, includeDisabled bool) ([
 	return s.repo.FindSourcesForOwner(ownerIdentity, includeDisabled, identity.CanReadLegacyOwnerlessData(ownerIdentity))
 }
 
-func (s *service) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
-	return s.repo.FindSyncJobs(sourceID)
+func (s *service) SyncJobs(sourceID *uuid.UUID, limit int) ([]models.SourceSyncJob, error) {
+	return s.repo.FindSyncJobs(sourceID, limit)
+}
+
+func (s *service) SyncJobsForOwner(ownerIdentity string, limit int) ([]models.SourceSyncJob, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.FindSyncJobsForSources(sourceIDsFromSet(visibleSourceIDs), limit)
 }
 
 func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error) {
@@ -1665,8 +1675,16 @@ func (s *service) DeleteExtractionAuthorized(
 	return nil
 }
 
-func (s *service) AuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error) {
-	return s.repo.FindAuditLogs(sourceID)
+func (s *service) AuditLogs(sourceID *uuid.UUID, limit int) ([]models.SourceAuditLog, error) {
+	return s.repo.FindAuditLogs(sourceID, limit)
+}
+
+func (s *service) AuditLogsForOwner(ownerIdentity string, limit int) ([]models.SourceAuditLog, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.FindAuditLogsForSources(sourceIDsFromSet(visibleSourceIDs), limit)
 }
 
 func (s *service) localFolderItems(source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {
