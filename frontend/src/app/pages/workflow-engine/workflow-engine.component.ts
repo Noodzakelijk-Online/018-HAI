@@ -123,6 +123,10 @@ export class WorkflowEngineComponent implements OnInit {
   ) {}
 
   ngOnInit(): void {
+    const requestedQueue = this.route.snapshot.queryParamMap.get('queue');
+    if (this.isWorkflowQueue(requestedQueue)) {
+      this.activeQueue = requestedQueue;
+    }
     this.refresh();
     this.intakeForm.valueChanges.subscribe(() => {
       // A changed signal must be matched again; never link edited intake to a stale pursuit choice.
@@ -136,6 +140,12 @@ export class WorkflowEngineComponent implements OnInit {
         error: () => this.notification.error('Error', 'The linked workflow could not be opened.'),
       });
     }
+  }
+
+  private isWorkflowQueue(
+    value: string | null
+  ): value is 'all' | 'approval' | 'ready' | 'blocked' | 'review' {
+    return !!value && ['all', 'approval', 'ready', 'blocked', 'review'].includes(value);
   }
 
   refresh(showNotification = false, preserveLastOperation = false): void {

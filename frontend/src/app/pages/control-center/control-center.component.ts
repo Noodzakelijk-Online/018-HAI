@@ -54,6 +54,7 @@ interface CommandAction {
   secondaryMetric: string
   context: string
   route?: string
+  queryParams?: Record<string, string>
   section?: ControlCenterSection
   execute?: () => void
 }
@@ -560,7 +561,8 @@ export class ControlCenterComponent implements OnInit {
         primaryMetric: `${this.attentionItemsView.length} waiting`,
         secondaryMetric: 'High-risk actions stay blocked',
         context: 'Legal, financial, public, account, destructive, and external-message actions require approval before execution.',
-        section: 'attention',
+        route: '/workflow-engine',
+        queryParams: { queue: 'approval' },
       },
       {
         id: 'automation',
@@ -810,13 +812,13 @@ export class ControlCenterComponent implements OnInit {
     }
   }
 
-  navigate(route: string): void {
+  navigate(route: string, queryParams?: Record<string, string>): void {
     this.mobileNavigationOpen = false
     if (route === '/control-center') {
       this.activeSection = 'overview'
       setTimeout(() => this.scrollToSection('overview'))
     }
-    this.router.navigate([route])
+    this.router.navigate([route], queryParams ? { queryParams } : undefined)
   }
 
   activateNavigationItem(item: NavigationItem): void {
@@ -914,7 +916,7 @@ export class ControlCenterComponent implements OnInit {
       return
     }
     if (action.route) {
-      this.navigate(action.route)
+      this.navigate(action.route, action.queryParams)
       return
     }
     if (action.section) {
