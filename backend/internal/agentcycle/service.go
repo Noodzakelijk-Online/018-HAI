@@ -1,6 +1,8 @@
 package agentcycle
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -20,6 +22,10 @@ type OwnerScopedSourceSyncer interface {
 	RunDueScheduledSyncsForOwner(now time.Time, ownerIdentity string) (*source.ScheduledSyncRun, error)
 }
 
+type OwnerScopedContextSourceSyncer interface {
+	RunDueScheduledSyncsForOwnerContext(context.Context, time.Time, string) (*source.ScheduledSyncRun, error)
+}
+
 type WorkflowCoordinator interface {
 	RecoverStaleClaims(request workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error)
 	RunDueOpenLoops(request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error)
@@ -32,6 +38,12 @@ type OwnerScopedWorkflowCoordinator interface {
 	RunDueOpenLoopsForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error)
 	RunDueForOwner(ownerIdentity string, request workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error)
 	DashboardForOwner(ownerIdentity string) (*workflow.WorkflowDashboard, error)
+}
+
+type OwnerScopedContextWorkflowCoordinator interface {
+	RecoverStaleClaimsForOwnerContext(context.Context, string, workflow.RunDueRequest) (*workflow.ClaimRecoverySummary, error)
+	RunDueOpenLoopsForOwnerContext(context.Context, string, workflow.RunDueRequest) (*workflow.OpenLoopRunSummary, error)
+	RunDueForOwnerContext(context.Context, string, workflow.RunDueRequest) (*workflow.WorkflowRunSummary, error)
 }
 
 type AmbientScanner interface {
@@ -151,10 +163,29 @@ func NewServiceWithPursuits(sources SourceSyncer, workflows WorkflowCoordinator,
 }
 
 func (s *Service) Run(request RunRequest) *RunResult {
-	if ownerIdentity := strings.TrimSpace(request.OwnerIdentity); ownerIdentity != "" {
-		return s.runForOwner(ownerIdentity, request)
+	result, _ := s.RunContext(context.Background(), request)
+	return result
+}
+
+// RunContext binds an interactive owner-scoped operating pass to its caller.
+// Durable in-process workers continue to use Run, which supplies a background
+// context. Cancellation is observed only between phases and atomic work units;
+// already-claimed effects are allowed to settle and persist their audit state.
+func (s *Service) RunContext(ctx context.Context, request RunRequest) (*RunResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return s.runSystem(request)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if ownerIdentity := strings.TrimSpace(request.OwnerIdentity); ownerIdentity != "" {
+		return s.runForOwnerContext(ctx, ownerIdentity, request)
+	}
+	result := s.runSystem(request)
+	if err := ctx.Err(); err != nil {
+		return interruptCycle(result, err)
+	}
+	return result, nil
 }
 
 func (s *Service) runSystem(request RunRequest) *RunResult {
@@ -254,7 +285,7 @@ func (s *Service) runSystem(request RunRequest) *RunResult {
 // runForOwner is the authenticated operator path. Every operational phase must
 // expose an owner-scoped contract; this path never falls back to a global read
 // or worker method when an owner-specific implementation is unavailable.
-func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResult {
+func (s *Service) runForOwnerContext(ctx context.Context, ownerIdentity string, request RunRequest) (*RunResult, error) {
 	started := time.Now().UTC()
 	result := &RunResult{
 		ExecutionScope: "owner_scoped",
@@ -268,6 +299,9 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 	limit := normalizeLimit(request.Limit)
 	workflowRequest := workflow.RunDueRequest{Limit: limit}
 	var pursuitSnapshot *pursuit.OperatingSnapshot
+	if err := ctx.Err(); err != nil {
+		return interruptCycle(result, err)
+	}
 
 	contextResult, err := s.retrieveOperationalContextForOwner(ownerIdentity, result.Trigger)
 	if err != nil {
@@ -277,6 +311,9 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 		result.ContextNote = appliedContextSummary(contextResult)
 		result.record("retrieve personal operational context", nil, result.ContextNote)
 	}
+	if err := ctx.Err(); err != nil {
+		return interruptCycle(result, err)
+	}
 
 	ownerWorkflows, workflowsOwnerScoped := s.workflows.(OwnerScopedWorkflowCoordinator)
 	if s.workflows == nil {
@@ -284,9 +321,21 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 	} else if !workflowsOwnerScoped {
 		result.addError("workflow", fmt.Errorf("owner-scoped workflow coordinator is not configured"))
 	} else {
-		recovery, err := ownerWorkflows.RecoverStaleClaimsForOwner(ownerIdentity, workflowRequest)
+		var recovery *workflow.ClaimRecoverySummary
+		var err error
+		if contextual, ok := s.workflows.(OwnerScopedContextWorkflowCoordinator); ok {
+			recovery, err = contextual.RecoverStaleClaimsForOwnerContext(ctx, ownerIdentity, workflowRequest)
+		} else {
+			recovery, err = ownerWorkflows.RecoverStaleClaimsForOwner(ownerIdentity, workflowRequest)
+		}
 		result.Recovery = recovery
+		if requestContextError(err) {
+			return interruptCycle(result, err)
+		}
 		result.record("recover stale claims", err, recoverySummary(recovery))
+	}
+	if err := ctx.Err(); err != nil {
+		return interruptCycle(result, err)
 	}
 
 	if request.SkipSourceSync {
@@ -296,19 +345,54 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 	} else if ownerSources, ok := s.sources.(OwnerScopedSourceSyncer); !ok {
 		result.addError("source_sync", fmt.Errorf("owner-scoped source syncer is not configured"))
 	} else {
-		sync, err := ownerSources.RunDueScheduledSyncsForOwner(time.Now().UTC(), ownerIdentity)
+		var sync *source.ScheduledSyncRun
+		var err error
+		if contextual, ok := s.sources.(OwnerScopedContextSourceSyncer); ok {
+			sync, err = contextual.RunDueScheduledSyncsForOwnerContext(ctx, time.Now().UTC(), ownerIdentity)
+		} else {
+			sync, err = ownerSources.RunDueScheduledSyncsForOwner(time.Now().UTC(), ownerIdentity)
+		}
 		result.SourceSync = sync
+		if requestContextError(err) {
+			return interruptCycle(result, err)
+		}
 		result.record("sync due sources", err, sourceSummary(sync))
+	}
+	if err := ctx.Err(); err != nil {
+		return interruptCycle(result, err)
 	}
 
 	if workflowsOwnerScoped {
-		openLoops, err := ownerWorkflows.RunDueOpenLoopsForOwner(ownerIdentity, workflowRequest)
+		var openLoops *workflow.OpenLoopRunSummary
+		var err error
+		if contextual, ok := s.workflows.(OwnerScopedContextWorkflowCoordinator); ok {
+			openLoops, err = contextual.RunDueOpenLoopsForOwnerContext(ctx, ownerIdentity, workflowRequest)
+		} else {
+			openLoops, err = ownerWorkflows.RunDueOpenLoopsForOwner(ownerIdentity, workflowRequest)
+		}
 		result.OpenLoops = openLoops
+		if requestContextError(err) {
+			return interruptCycle(result, err)
+		}
 		result.record("run due follow-ups", err, openLoopSummary(openLoops))
 
-		workflows, err := ownerWorkflows.RunDueForOwner(ownerIdentity, workflowRequest)
+		if err := ctx.Err(); err != nil {
+			return interruptCycle(result, err)
+		}
+		var workflows *workflow.WorkflowRunSummary
+		if contextual, ok := s.workflows.(OwnerScopedContextWorkflowCoordinator); ok {
+			workflows, err = contextual.RunDueForOwnerContext(ctx, ownerIdentity, workflowRequest)
+		} else {
+			workflows, err = ownerWorkflows.RunDueForOwner(ownerIdentity, workflowRequest)
+		}
 		result.Workflows = workflows
+		if requestContextError(err) {
+			return interruptCycle(result, err)
+		}
 		result.record("run safe workflows", err, workflowSummary(workflows))
+	}
+	if err := ctx.Err(); err != nil {
+		return interruptCycle(result, err)
 	}
 
 	if provider, ok := s.pursuits.(PursuitOwnerOperatingSnapshotProvider); ok {
@@ -321,6 +405,9 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 				result.record("scan ambient opportunities", scanErr, ambientSummary(scan))
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return interruptCycle(result, err)
 	}
 
 	if request.SkipAmbient {
@@ -336,11 +423,17 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 		result.AmbientScan = scan
 		result.record("scan ambient opportunities", err, ambientSummary(scan))
 	}
+	if err := ctx.Err(); err != nil {
+		return interruptCycle(result, err)
+	}
 
 	if workflowsOwnerScoped {
 		dashboard, err := ownerWorkflows.DashboardForOwner(ownerIdentity)
 		result.Dashboard = dashboard
 		result.record("refresh workflow dashboard", err, dashboardSummary(dashboard))
+	}
+	if err := ctx.Err(); err != nil {
+		return interruptCycle(result, err)
 	}
 
 	if s.pursuits == nil {
@@ -369,12 +462,33 @@ func (s *Service) runForOwner(ownerIdentity string, request RunRequest) *RunResu
 			result.addError("pursuit_decisions", fmt.Errorf("owner-scoped pursuit decisions are not configured"))
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return interruptCycle(result, err)
+	}
 
 	result.CompletedAt = time.Now().UTC()
 	result.Status = cycleStatus(result)
 	result.NextAction = nextAction(result)
 	result.LearningIDs, result.LearningNote = s.rememberOperationalLessonForOwner(ownerIdentity, result)
-	return result
+	return result, nil
+}
+
+func requestContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func interruptCycle(result *RunResult, err error) (*RunResult, error) {
+	if result != nil {
+		result.CompletedAt = time.Now().UTC()
+		result.Status = "interrupted"
+		result.NextAction = "run the operating pass again when the caller is available"
+		result.Steps = append(result.Steps, WorkerStep{
+			Name:    "stop cancelled operating pass",
+			Status:  "interrupted",
+			Summary: "caller cancelled the pass; no additional phase or work unit was started",
+		})
+	}
+	return result, err
 }
 
 func applyPursuitSnapshot(result *RunResult, snapshot *pursuit.OperatingSnapshot) {

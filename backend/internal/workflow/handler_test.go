@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -426,6 +427,34 @@ func TestRunDueHandlerRunsOnlyVerifiedOwnerWorkflow(t *testing.T) {
 	}
 	if repo.items[bob.Item.ID].CurrentState != StateReady {
 		t.Fatalf("handler executed Bob workflow for Alice: %#v", repo.items[bob.Item.ID])
+	}
+}
+
+func TestRunDueHandlerHonorsCancelledRequestContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeWorkflowRepo()
+	runner := &fakeTaskRunner{result: &TaskRunResult{PlanID: "cancelled-handler-plan", CompletionStatus: "validated", VerificationStatus: "verified", Passed: true}}
+	service := NewServiceWithTaskRunner(repo, runner)
+	if _, err := service.Intake(IntakeRequest{OwnerIdentity: "alice", Input: "Create Alice's low-risk cancellation test checklist."}); err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	handler := NewHandler(service)
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodPost, "/workflow/run-due", bytes.NewBufferString(`{"limit":5}`)).WithContext(requestContext)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(response)
+	ginContext.Request = request
+	ginContext.Set(identity.ContextSubjectKey, "alice")
+
+	handler.RunDue(ginContext)
+
+	if len(runner.requests) != 0 {
+		t.Fatalf("cancelled handler started work: %#v", runner.requests)
+	}
+	if response.Body.Len() != 0 {
+		t.Fatalf("cancelled handler wrote response body: %s", response.Body.String())
 	}
 }
 

@@ -1,7 +1,9 @@
 package workflow
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -539,8 +541,11 @@ func (h *Handler) RunDue(c *gin.Context) {
 	if !bindOptionalWorkflowRunRequest(c, &request, "invalid workflow run request") {
 		return
 	}
-	result, err := h.service.RunDueForOwner(verifiedWorkflowOwner(c), request)
+	result, err := RunDueForOwnerWithContext(h.service, c.Request.Context(), verifiedWorkflowOwner(c), request)
 	if err != nil {
+		if requestContextEnded(err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowRunFailedMessage})
 		return
 	}
@@ -555,8 +560,11 @@ func (h *Handler) RunOne(c *gin.Context) {
 	if !h.ensureWorkflowMutable(c, id) {
 		return
 	}
-	result, err := h.service.RunOneForOwner(verifiedWorkflowOwner(c), id)
+	result, err := RunOneForOwnerWithContext(h.service, c.Request.Context(), verifiedWorkflowOwner(c), id)
 	if err != nil {
+		if requestContextEnded(err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowRunFailedMessage})
 		return
 	}
@@ -568,8 +576,11 @@ func (h *Handler) RecoverStaleClaims(c *gin.Context) {
 	if !bindOptionalWorkflowRunRequest(c, &request, "invalid workflow recovery request") {
 		return
 	}
-	result, err := h.service.RecoverStaleClaimsForOwner(verifiedWorkflowOwner(c), request)
+	result, err := RecoverStaleClaimsForOwnerWithContext(h.service, c.Request.Context(), verifiedWorkflowOwner(c), request)
 	if err != nil {
+		if requestContextEnded(err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowRecoveryFailedMessage})
 		return
 	}
@@ -581,12 +592,19 @@ func (h *Handler) RunDueOpenLoops(c *gin.Context) {
 	if !bindOptionalWorkflowRunRequest(c, &request, "invalid workflow follow-up request") {
 		return
 	}
-	result, err := h.service.RunDueOpenLoopsForOwner(verifiedWorkflowOwner(c), request)
+	result, err := RunDueOpenLoopsForOwnerWithContext(h.service, c.Request.Context(), verifiedWorkflowOwner(c), request)
 	if err != nil {
+		if requestContextEnded(err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowOpenLoopRunFailedMessage})
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func requestContextEnded(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func bindOptionalWorkflowRunRequest(c *gin.Context, request *RunDueRequest, message string) bool {

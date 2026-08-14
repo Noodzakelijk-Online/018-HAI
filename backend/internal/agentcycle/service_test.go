@@ -4,6 +4,8 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/pursuit"
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -16,8 +18,9 @@ import (
 )
 
 type fakeSourceSyncer struct {
-	calls *[]string
-	err   error
+	calls  *[]string
+	err    error
+	cancel context.CancelFunc
 }
 
 type globalOnlySourceSyncer struct {
@@ -43,6 +46,45 @@ func (s fakeSourceSyncer) RunDueScheduledSyncsForOwner(now time.Time, ownerIdent
 		return nil, s.err
 	}
 	return &source.ScheduledSyncRun{Checked: 1, Due: 1, Completed: 1}, nil
+}
+
+func (s fakeSourceSyncer) RunDueScheduledSyncsForOwnerContext(ctx context.Context, now time.Time, ownerIdentity string) (*source.ScheduledSyncRun, error) {
+	*s.calls = append(*s.calls, "source:"+ownerIdentity)
+	if s.cancel != nil {
+		s.cancel()
+	}
+	if err := ctx.Err(); err != nil {
+		return &source.ScheduledSyncRun{Checked: 1}, err
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &source.ScheduledSyncRun{Checked: 1, Due: 1, Completed: 1}, nil
+}
+
+func TestRunContextStopsAfterCancelledSourceBatch(t *testing.T) {
+	calls := []string{}
+	ctx, cancel := context.WithCancel(context.Background())
+	service := NewServiceWithPursuits(
+		fakeSourceSyncer{calls: &calls, cancel: cancel},
+		fakeWorkflowCoordinator{calls: &calls},
+		fakeAmbientScanner{calls: &calls},
+		fakePursuitBriefProvider{calls: &calls},
+	)
+
+	result, err := service.RunContext(ctx, RunRequest{OwnerIdentity: "alice", Trigger: "cancel-proof"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunContext error = %v, want context canceled", err)
+	}
+	if result == nil || result.Status != "interrupted" {
+		t.Fatalf("result = %#v, want interrupted partial result", result)
+	}
+	if got, want := fmt.Sprint(calls), "[recover:alice source:alice]"; got != want {
+		t.Fatalf("calls = %s, want %s", got, want)
+	}
+	if result.SourceSync == nil || result.SourceSync.Checked != 1 {
+		t.Fatalf("partial source result = %#v, want retained settled batch summary", result.SourceSync)
+	}
 }
 
 type fakeWorkflowCoordinator struct {

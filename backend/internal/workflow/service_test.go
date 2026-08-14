@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -1374,6 +1375,105 @@ func TestRunDueConsumesApprovedWorkflowWithTaskRunner(t *testing.T) {
 	}
 	if !foundEvent {
 		t.Fatalf("framework selection audit event missing: %#v", updated.Events)
+	}
+}
+
+func TestRunDueForOwnerContextStopsBeforeClaimingAnotherWorkflow(t *testing.T) {
+	repo := newFakeWorkflowRepo()
+	ctx, cancel := context.WithCancel(context.Background())
+	runner := &fakeTaskRunner{
+		result: &TaskRunResult{
+			PlanID:             "cancel-between-workflows",
+			CompletionStatus:   "validated",
+			VerificationStatus: "verified",
+			Output:             "completed",
+			Passed:             true,
+		},
+		onRun: func(TaskRunRequest) { cancel() },
+	}
+	service := NewServiceWithTaskRunner(repo, runner)
+	for i := 0; i < 2; i++ {
+		record, err := service.Intake(IntakeRequest{
+			OwnerIdentity: "alice",
+			Input:         fmt.Sprintf("Create low risk Trello checklist %d", i),
+		})
+		if err != nil {
+			t.Fatalf("Intake %d: %v", i, err)
+		}
+		if record.Item.CurrentState != StateReady {
+			t.Fatalf("workflow %d state = %q, want ready", i, record.Item.CurrentState)
+		}
+	}
+
+	summary, err := RunDueForOwnerWithContext(service, ctx, "alice", RunDueRequest{Limit: 5})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunDueForOwnerWithContext error = %v, want context canceled", err)
+	}
+	if summary == nil || summary.Completed != 1 || len(summary.Results) != 1 {
+		t.Fatalf("partial summary = %#v, want exactly one settled workflow", summary)
+	}
+	if len(runner.requests) != 1 {
+		t.Fatalf("runner requests = %d, want 1", len(runner.requests))
+	}
+	ready := 0
+	completed := 0
+	for _, item := range repo.items {
+		switch item.CurrentState {
+		case StateReady:
+			ready++
+		case StateCompleted:
+			completed++
+		}
+	}
+	if ready != 1 || completed != 1 {
+		t.Fatalf("workflow states: ready=%d completed=%d, want one of each", ready, completed)
+	}
+}
+
+func TestOwnerBatchContextHelpersRejectPreCancelledWork(t *testing.T) {
+	service := NewService(newFakeWorkflowRepo())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "recovery",
+			run: func() error {
+				_, err := RecoverStaleClaimsForOwnerWithContext(service, ctx, "alice", RunDueRequest{Limit: 5})
+				return err
+			},
+		},
+		{
+			name: "workflows",
+			run: func() error {
+				_, err := RunDueForOwnerWithContext(service, ctx, "alice", RunDueRequest{Limit: 5})
+				return err
+			},
+		},
+		{
+			name: "open loops",
+			run: func() error {
+				_, err := RunDueOpenLoopsForOwnerWithContext(service, ctx, "alice", RunDueRequest{Limit: 5})
+				return err
+			},
+		},
+		{
+			name: "single workflow",
+			run: func() error {
+				_, err := RunOneForOwnerWithContext(service, ctx, "alice", uuid.New())
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.run(); !errors.Is(err, context.Canceled) {
+				t.Fatalf("error = %v, want context canceled", err)
+			}
+		})
 	}
 }
 

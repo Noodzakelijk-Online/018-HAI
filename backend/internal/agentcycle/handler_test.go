@@ -2,6 +2,7 @@ package agentcycle
 
 import (
 	"automation-hub-backend/internal/identity"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -85,5 +86,35 @@ func TestHandlerRejectsMalformedChunkedRequestBeforeStartingCycle(t *testing.T) 
 	}
 	if len(calls) != 0 {
 		t.Fatalf("malformed cycle request started work: %v", calls)
+	}
+}
+
+func TestHandlerDoesNotStartCycleForCancelledRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	calls := []string{}
+	handler := NewHandler(NewServiceWithPursuits(
+		fakeSourceSyncer{calls: &calls},
+		fakeWorkflowCoordinator{calls: &calls},
+		fakeAmbientScanner{calls: &calls},
+		fakePursuitBriefProvider{calls: &calls},
+	))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.POST("/agent-cycle/run", handler.Run)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodPost, "/agent-cycle/run", nil).WithContext(ctx)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if len(calls) != 0 {
+		t.Fatalf("cancelled request started work: %v", calls)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("cancelled request wrote response body: %s", recorder.Body.String())
 	}
 }
