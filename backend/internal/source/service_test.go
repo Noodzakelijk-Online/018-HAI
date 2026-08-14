@@ -765,6 +765,54 @@ func TestSyncJSONFeedImportsItemsAndAdvancesCursor(t *testing.T) {
 	}
 }
 
+func TestSyncContextCancelsRemoteFeedAndRetainsCursor(t *testing.T) {
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: "json-feed", Name: "Cancelable local bridge",
+		Category: "generic_feed", Enabled: true, LocalOnly: true, Status: "active",
+		SyncTarget: server.URL, Cursor: "cursor-before",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.SyncContext(ctx, sourceID, ImportRequest{Mode: ModeIncrementalSync})
+		done <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("source sync did not reach the remote feed")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("SyncContext error = %v, want context canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("source sync ignored caller cancellation")
+	}
+	if len(repo.jobs) != 1 || repo.jobs[0].Status != "failed" || repo.jobs[0].CursorAfter != "cursor-before" {
+		t.Fatalf("canceled sync job = %#v", repo.jobs)
+	}
+	stored, err := repo.FindSource(sourceID)
+	if err != nil {
+		t.Fatalf("FindSource: %v", err)
+	}
+	if stored.Cursor != "cursor-before" {
+		t.Fatalf("source cursor = %q, want retained cursor", stored.Cursor)
+	}
+}
+
 func TestSyncJSONFeedRejectsUnallowlistedHost(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{

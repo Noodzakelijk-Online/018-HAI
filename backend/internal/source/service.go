@@ -163,6 +163,7 @@ type Service interface {
 	Sources(includeDisabled bool) ([]models.ConnectedSource, error)
 	SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
 	Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
+	SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
 	// DueSources lists enabled sources whose schedule is due at now. The durable
 	// scheduler uses it to enqueue one retryable job per source.
 	DueSources(now time.Time) ([]models.ConnectedSource, error)
@@ -668,6 +669,13 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 }
 
 func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
+	return s.SyncContext(context.Background(), sourceID, request)
+}
+
+func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !s.beginSync(sourceID) {
 		return nil, ErrSyncInProgress
 	}
@@ -749,6 +757,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		Mode:         mode,
 		Status:       "running",
 		CursorBefore: source.Cursor,
+		CursorAfter:  source.Cursor,
 		StartedAt:    started,
 	})
 	if err != nil {
@@ -763,13 +772,31 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	failed := 0
 	itemErrors := []string{}
 	warnings := []string{}
+	items := request.Items
 	recordFailure := func(item ImportItem, stage string, err error) {
 		failed++
 		if len(itemErrors) < maxSyncErrorDetails {
 			itemErrors = append(itemErrors, itemFailure(item, stage, err))
 		}
 	}
-	items := request.Items
+	abortCanceledSync := func() error {
+		errContext := ctx.Err()
+		if errContext == nil {
+			return nil
+		}
+		now := time.Now().UTC()
+		job.Status = "failed"
+		job.Message = "sync canceled before all source items were processed; cursor retained for retry"
+		job.ItemsSeen = len(items)
+		job.ItemsAdded = added
+		job.ItemsUpdated = updated
+		job.ItemsFailed = failed
+		job.CursorAfter = job.CursorBefore
+		job.CompletedAt = &now
+		_, _ = s.repo.UpdateSyncJob(job)
+		s.audit(sourceID, "source.sync_canceled", job.Message)
+		return errContext
+	}
 	adapterCursor := ""
 	adapterCursorAuthoritative := false
 	if len(items) == 0 && sourceUsesLocalFolder(source.ConnectorKey) {
@@ -786,7 +813,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == "json-feed" {
-		items, adapterCursor, err = fetchJSONFeed(source)
+		items, adapterCursor, err = fetchJSONFeed(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -798,7 +825,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == "github" {
-		items, adapterCursor, err = fetchGitHubSource(source)
+		items, adapterCursor, err = fetchGitHubSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -810,7 +837,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == gmailConnectorKey {
-		items, adapterCursor, err = s.fetchGmailSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchGmailSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -822,7 +849,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == driveConnectorKey {
-		items, adapterCursor, err = s.fetchDriveSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchDriveSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -834,7 +861,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == contactsConnectorKey {
-		items, adapterCursor, err = s.fetchContactsSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchContactsSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -846,7 +873,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == calendarConnectorKey {
-		items, adapterCursor, err = s.fetchCalendarSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchCalendarSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -858,7 +885,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == trelloConnectorKey {
-		items, adapterCursor, err = fetchTrelloSource(source)
+		items, adapterCursor, err = fetchTrelloSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -870,7 +897,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == odooJSON2ConnectorKey {
-		items, adapterCursor, err = fetchOdooJSON2Source(context.Background(), source)
+		items, adapterCursor, err = fetchOdooJSON2Source(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -883,7 +910,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		s.audit(sourceID, "source.odoo_json2_read", fmt.Sprintf("read %d bounded Odoo JSON-2 record(s) through the configured model allowlist", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == shareTConnectorKey {
-		items, adapterCursor, err = fetchShareTSource(context.Background(), source)
+		items, adapterCursor, err = fetchShareTSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -909,7 +936,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		s.audit(sourceID, "source.cloudquery_summary_read", fmt.Sprintf("read %d bounded CloudQuery sync summary record(s) from the configured local summary file", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == airbyteInventoryConnectorKey {
-		items, adapterCursor, err = fetchAirbyteInventory(context.Background(), source)
+		items, adapterCursor, err = fetchAirbyteInventory(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -923,7 +950,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	}
 	if len(items) == 0 && source.ConnectorKey == laroConnectorKey {
 		var laroResult laroFetchResult
-		laroResult, err = fetchLAROSource(context.Background(), source)
+		laroResult, err = fetchLAROSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -1015,6 +1042,9 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	for index, item := range items {
+		if errContext := abortCanceledSync(); errContext != nil {
+			return nil, errContext
+		}
 		if shouldExclude(source.ExcludePatterns, item.Title+" "+item.SourceURI) {
 			continue
 		}
@@ -1033,11 +1063,11 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			recordFailure(item, "extraction failed", errExtract)
 			continue
 		}
-		if errIndex := s.indexExtraction(extraction); errIndex != nil {
+		if errIndex := s.indexExtraction(ctx, extraction); errIndex != nil {
 			recordFailure(item, "index update failed", errIndex)
 			continue
 		}
-		projection, errProjection := s.projectExtractionToLifeGraph(context.Background(), source, extraction)
+		projection, errProjection := s.projectExtractionToLifeGraph(ctx, source, extraction)
 		if errProjection != nil {
 			warning := itemFailure(item, "life graph projection failed", errProjection)
 			if len(warnings) < maxSyncErrorDetails {
@@ -1080,6 +1110,9 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 		extractions = append(extractions, *extraction)
 		s.storeUsefulMemory(source, extraction)
+	}
+	if errContext := abortCanceledSync(); errContext != nil {
+		return nil, errContext
 	}
 
 	now := time.Now().UTC()
@@ -1479,7 +1512,7 @@ func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction
 	updated, err := s.repo.SaveExtraction(extraction)
 	if err == nil && updated != nil {
 		s.audit(extraction.SourceID, "extraction.corrected", "operator corrected extraction")
-		if errIndex := s.indexExtraction(updated); errIndex != nil {
+		if errIndex := s.indexExtraction(context.Background(), updated); errIndex != nil {
 			return updated, fmt.Errorf("extraction corrected but index update failed: %w", errIndex)
 		}
 		if errWorkflow := s.reconcileWorkflowFromExtraction(updated); errWorkflow != nil {
@@ -2312,7 +2345,7 @@ func (s *service) retractWorkflowForExtraction(extraction *models.SourceExtracti
 	return s.workflowService.RetractSource(source.Category, extraction.ID.String(), reason)
 }
 
-func (s *service) indexExtraction(extraction *models.SourceExtraction) error {
+func (s *service) indexExtraction(ctx context.Context, extraction *models.SourceExtraction) error {
 	keywords := strings.Join(mapKeys(tokenSet(extraction.Text+" "+extraction.Summary+" "+extraction.Entities+" "+extraction.Tasks)), ",")
 	if _, err := s.repo.SaveIndexEntry(&models.SourceIndexEntry{
 		SourceID:     extraction.SourceID,
@@ -2329,7 +2362,7 @@ func (s *service) indexExtraction(extraction *models.SourceExtraction) error {
 	if s.semanticService == nil || !s.semanticService.Enabled() {
 		return nil
 	}
-	if err := s.semanticService.Index(context.Background(), extraction); err != nil {
+	if err := s.semanticService.Index(ctx, extraction); err != nil {
 		// Semantic indexing is optional enrichment. Preserve the extracted record
 		// and keyword index, then expose the degraded state in the source audit.
 		s.audit(extraction.SourceID, "semantic.index_failed", "local semantic index was not updated: "+compact(err.Error(), 240))
@@ -2560,7 +2593,7 @@ type jsonFeedEnvelope struct {
 	NextCursor string       `json:"nextCursor,omitempty"`
 }
 
-func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error) {
+func fetchJSONFeed(ctx context.Context, source *models.ConnectedSource) ([]ImportItem, string, error) {
 	if source == nil {
 		return nil, "", fmt.Errorf("source is required")
 	}
@@ -2585,7 +2618,7 @@ func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error)
 		query.Set("cursor", source.Cursor)
 		target.RawQuery = query.Encode()
 	}
-	request, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("create json-feed request: %w", err)
 	}
@@ -2631,7 +2664,7 @@ func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error)
 	return normalizeFeedItems(envelope.Items, source), firstNonEmpty(strings.TrimSpace(envelope.NextCursor), source.Cursor), nil
 }
 
-func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, error) {
+func fetchGitHubSource(ctx context.Context, source *models.ConnectedSource) ([]ImportItem, string, error) {
 	if source == nil {
 		return nil, "", fmt.Errorf("source is required")
 	}
@@ -2661,7 +2694,7 @@ func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, er
 	items := []ImportItem{}
 	latest := strings.TrimSpace(source.Cursor)
 	for _, endpoint := range endpoints {
-		value, err := fetchGitHubJSON(parsedBase, endpoint.path, source.Cursor)
+		value, err := fetchGitHubJSON(ctx, parsedBase, endpoint.path, source.Cursor)
 		if err != nil {
 			return nil, "", fmt.Errorf("fetch github %s: %w", endpoint.kind, err)
 		}
@@ -2680,7 +2713,7 @@ func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, er
 	return items, latest, nil
 }
 
-func fetchGitHubJSON(base *url.URL, resourcePath, cursor string) (any, error) {
+func fetchGitHubJSON(ctx context.Context, base *url.URL, resourcePath, cursor string) (any, error) {
 	target := *base
 	target.Path = strings.TrimRight(base.Path, "/") + resourcePath
 	query := target.Query()
@@ -2694,7 +2727,7 @@ func fetchGitHubJSON(base *url.URL, resourcePath, cursor string) (any, error) {
 		}
 	}
 	target.RawQuery = query.Encode()
-	request, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, err
 	}
