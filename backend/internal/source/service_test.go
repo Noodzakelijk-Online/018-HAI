@@ -543,6 +543,27 @@ func TestRunDueScheduledSyncsForOwnerDoesNotTouchAnotherOwnersSources(t *testing
 	}
 }
 
+func TestRunDueScheduledSyncsForOwnerContextStopsBeforeRepositoryWorkWhenCanceled(t *testing.T) {
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: uuid.New(), OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Alice folder",
+		Enabled: true, LocalOnly: true, Status: "active", SyncFrequency: "1m", SyncTarget: ".",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	run, err := RunDueScheduledSyncsForOwnerWithContext(service, ctx, time.Now().UTC(), "alice")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunDueScheduledSyncsForOwnerContext error = %v, want context canceled", err)
+	}
+	if run != nil {
+		t.Fatalf("run = %#v, want no batch after pre-cancellation", run)
+	}
+	if repo.ownerSourceReads != 0 || len(repo.jobs) != 0 {
+		t.Fatalf("pre-canceled batch performed repository work: owner reads=%d jobs=%d", repo.ownerSourceReads, len(repo.jobs))
+	}
+}
+
 func TestRunDueScheduledSyncsSkipsManualAndNotDueSources(t *testing.T) {
 	lastSync := time.Now().UTC()
 	repo := newFakeSourceRepo(

@@ -298,8 +298,11 @@ func (h *Handler) RunDueScheduledSyncs(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "scheduled source sync requires an authenticated owner"})
 		return
 	}
-	result, err := h.service.RunDueScheduledSyncsForOwner(time.Now().UTC(), ownerIdentity)
+	result, err := RunDueScheduledSyncsForOwnerWithContext(h.service, c.Request.Context(), time.Now().UTC(), ownerIdentity)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

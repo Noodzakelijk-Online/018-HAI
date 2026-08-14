@@ -282,6 +282,67 @@ func TestHandlerRunsDueSyncsOnlyForAuthenticatedOwner(t *testing.T) {
 	}
 }
 
+func TestHandlerCancelsDueSyncBatchWithRequestContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "json-feed", Name: "Cancelable feed",
+		Category: "generic_feed", Enabled: true, Status: "active", SyncFrequency: "1m",
+		SyncTarget: server.URL, Cursor: "cursor-before",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	handler := NewHandler(NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+	})
+	router.POST("/sources/sync-due", handler.RunDueScheduledSyncs)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodPost, "/sources/sync-due", nil).WithContext(ctx)
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		router.ServeHTTP(response, request)
+		close(done)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("scheduled HTTP batch did not reach the remote connector")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("scheduled HTTP batch ignored request cancellation")
+	}
+	if response.Body.Len() != 0 {
+		t.Fatalf("canceled handler wrote a misleading response: %s", response.Body.String())
+	}
+	if len(repo.jobs) != 1 || repo.jobs[0].Status != "failed" || repo.jobs[0].CursorAfter != "cursor-before" {
+		t.Fatalf("canceled scheduled sync job = %#v", repo.jobs)
+	}
+	stored, err := repo.FindSource(sourceID)
+	if err != nil {
+		t.Fatalf("FindSource: %v", err)
+	}
+	if stored.Cursor != "cursor-before" || stored.LastSyncedAt != nil {
+		t.Fatalf("canceled scheduled sync advanced source state: %#v", stored)
+	}
+	if len(workflowSpy.requests) != 0 {
+		t.Fatalf("request cancellation created %d misleading failure workflows", len(workflowSpy.requests))
+	}
+}
+
 func TestHandlerListsOnlyOwnerScopedExtractionsFromRepository(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	aliceID := uuid.New()

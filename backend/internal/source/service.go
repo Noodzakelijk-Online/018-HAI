@@ -194,6 +194,28 @@ type ContextSearchService interface {
 	SearchContext(context.Context, SearchRequest) (*SearchResult, error)
 }
 
+// ContextScheduledSyncService lets interactive owner-scoped batches stop when
+// their HTTP caller disconnects. Trusted background schedulers keep using the
+// durable, background-context Service methods.
+type ContextScheduledSyncService interface {
+	RunDueScheduledSyncsForOwnerContext(context.Context, time.Time, string) (*ScheduledSyncRun, error)
+}
+
+// RunDueScheduledSyncsForOwnerWithContext prefers the cancellable production
+// path while retaining compatibility with narrow in-process Service doubles.
+func RunDueScheduledSyncsForOwnerWithContext(service Service, ctx context.Context, now time.Time, ownerIdentity string) (*ScheduledSyncRun, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if cancellable, ok := service.(ContextScheduledSyncService); ok {
+		return cancellable.RunDueScheduledSyncsForOwnerContext(ctx, now, ownerIdentity)
+	}
+	return service.RunDueScheduledSyncsForOwner(now, ownerIdentity)
+}
+
 // SearchWithContext uses the cancellable search path when the service supports
 // it and fails promptly when the caller is already gone.
 func SearchWithContext(service Service, ctx context.Context, request SearchRequest) (*SearchResult, error) {
@@ -1243,27 +1265,46 @@ func (s *service) RunDueScheduledSyncs(now time.Time) (*ScheduledSyncRun, error)
 	if err != nil {
 		return nil, err
 	}
-	return s.runDueScheduledSyncs(now, sources)
+	return s.runDueScheduledSyncs(context.Background(), now, sources)
 }
 
 // RunDueScheduledSyncsForOwner refreshes only sources explicitly owned by the
 // authenticated user. Ownerless legacy sources remain readable for local
 // compatibility but are never modified by an owner-scoped task request.
 func (s *service) RunDueScheduledSyncsForOwner(now time.Time, ownerIdentity string) (*ScheduledSyncRun, error) {
+	return s.RunDueScheduledSyncsForOwnerContext(context.Background(), now, ownerIdentity)
+}
+
+func (s *service) RunDueScheduledSyncsForOwnerContext(ctx context.Context, now time.Time, ownerIdentity string) (*ScheduledSyncRun, error) {
 	ownerIdentity = strings.TrimSpace(ownerIdentity)
 	if ownerIdentity == "" {
 		return nil, fmt.Errorf("owner identity is required for owner-scoped scheduled source sync")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	sources, err := s.repo.FindSourcesForOwner(ownerIdentity, false, false)
 	if err != nil {
 		return nil, err
 	}
-	return s.runDueScheduledSyncs(now, sources)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.runDueScheduledSyncs(ctx, now, sources)
 }
 
-func (s *service) runDueScheduledSyncs(now time.Time, sources []models.ConnectedSource) (*ScheduledSyncRun, error) {
+func (s *service) runDueScheduledSyncs(ctx context.Context, now time.Time, sources []models.ConnectedSource) (*ScheduledSyncRun, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	run := &ScheduledSyncRun{Checked: len(sources)}
 	for _, source := range sources {
+		if err := ctx.Err(); err != nil {
+			return run, err
+		}
 		due, reason := scheduledSourceDue(source, now)
 		if !due {
 			run.Skipped++
@@ -1273,12 +1314,15 @@ func (s *service) runDueScheduledSyncs(now time.Time, sources []models.Connected
 			continue
 		}
 		run.Due++
-		result, errSync := s.Sync(source.ID, ImportRequest{
+		result, errSync := s.SyncContext(ctx, source.ID, ImportRequest{
 			Mode:       ModeScheduledSync,
 			FolderPath: source.SyncTarget,
 			ProjectKey: source.DefaultProjectKey,
 		})
 		if errSync != nil {
+			if errors.Is(errSync, context.Canceled) || errors.Is(errSync, context.DeadlineExceeded) {
+				return run, errSync
+			}
 			if errors.Is(errSync, ErrSyncInProgress) {
 				run.Skipped++
 				run.Messages = append(run.Messages, fmt.Sprintf("%s skipped: sync already in progress", source.Name))
