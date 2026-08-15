@@ -157,6 +157,10 @@ type ConnectionHealthService interface {
 	ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error)
 }
 
+type OverviewService interface {
+	OverviewForOwner(ownerIdentity, projectKey string, includeArchived bool) (*SourceOverview, error)
+}
+
 type Service interface {
 	Connectors() ([]models.SourceConnector, error)
 	CreateSource(request CreateSourceRequest) (*models.ConnectedSource, error)
@@ -671,6 +675,14 @@ func (s *service) SourcesForOwner(ownerIdentity string, includeDisabled bool) ([
 		return []models.ConnectedSource{}, nil
 	}
 	return s.repo.FindSourcesForOwner(ownerIdentity, includeDisabled, identity.CanReadLegacyOwnerlessData(ownerIdentity))
+}
+
+func (s *service) OverviewForOwner(ownerIdentity, projectKey string, includeArchived bool) (*SourceOverview, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.FindOverviewForSources(sourceIDsFromSet(visibleSourceIDs), projectKey, includeArchived)
 }
 
 func (s *service) SyncJobs(sourceID *uuid.UUID, limit int) ([]models.SourceSyncJob, error) {

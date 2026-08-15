@@ -107,6 +107,21 @@ func (h *Handler) Sources(c *gin.Context) {
 	c.JSON(http.StatusOK, sources)
 }
 
+func (h *Handler) Overview(c *gin.Context) {
+	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
+	overviewService, ok := h.service.(OverviewService)
+	if !ok {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "source overview is not available"})
+		return
+	}
+	overview, err := overviewService.OverviewForOwner(sourceOwner(c), c.Query("projectKey"), includeArchived)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, overview)
+}
+
 func (h *Handler) SyncJobs(c *gin.Context) {
 	limit, ok := sourceHistoryLimit(c, "sync job")
 	if !ok {

@@ -2636,6 +2636,44 @@ func (r *fakeSourceRepo) FindAuditLogsForSources(sourceIDs []uuid.UUID, limit in
 	return result, nil
 }
 
+func (r *fakeSourceRepo) FindOverviewForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) (*SourceOverview, error) {
+	overview := emptySourceOverview()
+	allowed := make(map[uuid.UUID]bool, len(sourceIDs))
+	for _, id := range sourceIDs {
+		allowed[id] = true
+	}
+	for _, extraction := range r.extractions {
+		if !allowed[extraction.SourceID] || (projectKey != "" && extraction.ProjectKey != projectKey) || (!includeArchived && extraction.Archived) {
+			continue
+		}
+		overview.ExtractionCount++
+		overview.ExtractionCountsBySource[extraction.SourceID.String()]++
+		if extraction.Sensitive {
+			overview.SensitiveExtractionCount++
+		}
+		if extraction.Uncertain {
+			overview.UncertainExtractionCount++
+		}
+	}
+	latestCreatedAt := map[uuid.UUID]time.Time{}
+	for _, job := range r.jobs {
+		if !allowed[job.SourceID] {
+			continue
+		}
+		switch job.Status {
+		case "failed", "partial_failure":
+			overview.FailedJobs++
+		case "pending", "running":
+			overview.PendingJobs++
+		}
+		if current, exists := latestCreatedAt[job.SourceID]; !exists || job.CreatedAt.After(current) {
+			latestCreatedAt[job.SourceID] = job.CreatedAt
+			overview.LatestJobStatusBySource[job.SourceID.String()] = job.Status
+		}
+	}
+	return overview, nil
+}
+
 func (r *fakeSourceRepo) hasAudit(action string) bool {
 	for _, log := range r.auditLogs {
 		if log.Action == action {

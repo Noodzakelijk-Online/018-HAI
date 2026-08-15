@@ -1315,6 +1315,7 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 	{
 		sourceRoutes.GET("/connectors", requirePermission(rbac.PermRead), sourceHandler.Connectors)
 		sourceRoutes.GET("/", requirePermission(rbac.PermRead), sourceHandler.Sources)
+		sourceRoutes.GET("/overview", requirePermission(rbac.PermRead), sourceHandler.Overview)
 		sourceRoutes.POST("/", requirePermission(rbac.PermWrite), sourceHandler.CreateSource)
 		sourceRoutes.POST("/search", requirePermission(rbac.PermRead), sourceHandler.Search)
 		// The HTTP handler scopes this batch to the authenticated owner. The

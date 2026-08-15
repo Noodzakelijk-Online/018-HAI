@@ -170,6 +170,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	sources := r.Group("/api/v1").Group("/sources")
 	sources.GET("/connectors", mark("sourceConnectors"))
 	sources.GET("/", mark("sourceList"))
+	sources.GET("/overview", mark("sourceOverview"))
 	sources.POST("/", mark("sourceCreate"))
 	sources.POST("/search", mark("sourceSearch"))
 	sources.POST("/sync-due", mark("sourceSyncDue"))

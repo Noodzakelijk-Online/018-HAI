@@ -9,6 +9,7 @@ import {
   ISourceAuditLog,
   ISourceConnector,
   ISourceConnectionHealth,
+  ISourceOverview,
   ISourceExtraction,
   ISourceSearchRequest,
   ISourceSearchResult,
@@ -139,5 +140,13 @@ export class ConnectedSourceService implements IConnectedSourceService {
       params = params.set('limit', limit);
     }
     return this.http.get<ISourceAuditLog[]>(`${this.apiUrl}/audit-logs`, { params });
+  }
+
+  overview(projectKey: string, includeArchived: boolean): Observable<ISourceOverview> {
+    return this.http.get<ISourceOverview>(`${this.apiUrl}/overview`, {
+      params: new HttpParams()
+        .set('projectKey', projectKey || '')
+        .set('includeArchived', includeArchived),
+    });
   }
 }

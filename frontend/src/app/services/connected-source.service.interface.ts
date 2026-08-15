@@ -6,6 +6,7 @@ import {
   ISourceAuditLog,
   ISourceConnector,
   ISourceConnectionHealth,
+  ISourceOverview,
   ISourceExtraction,
   ISourceSearchRequest,
   ISourceSearchResult,
@@ -18,6 +19,7 @@ import {
 export interface IConnectedSourceService {
   connectors(): Observable<ISourceConnector[]>;
   sources(includeDisabled: boolean): Observable<IConnectedSource[]>;
+  overview(projectKey: string, includeArchived: boolean): Observable<ISourceOverview>;
   connectionHealth(sourceId: string): Observable<ISourceConnectionHealth>;
   syncJobs(sourceId?: string): Observable<ISourceSyncJob[]>;
   createSource(request: ICreateSourceRequest): Observable<IConnectedSource>;

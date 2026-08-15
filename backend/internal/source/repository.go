@@ -44,10 +44,28 @@ type Repository interface {
 	SaveAuditLog(log *models.SourceAuditLog) (*models.SourceAuditLog, error)
 	FindAuditLogs(sourceID *uuid.UUID, limit int) ([]models.SourceAuditLog, error)
 	FindAuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error)
+	FindOverviewForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) (*SourceOverview, error)
 	SaveOAuthState(state *models.SourceOAuthState) error
 	ConsumeOAuthState(sourceID uuid.UUID, ownerIdentity, stateDigest string, consumedAt time.Time) error
 	SaveOAuthToken(token *models.SourceOAuthToken) error
 	FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error)
+}
+
+type SourceOverview struct {
+	ExtractionCount          int64             `json:"extractionCount"`
+	SensitiveExtractionCount int64             `json:"sensitiveExtractionCount"`
+	UncertainExtractionCount int64             `json:"uncertainExtractionCount"`
+	FailedJobs               int64             `json:"failedJobs"`
+	PendingJobs              int64             `json:"pendingJobs"`
+	ExtractionCountsBySource map[string]int64  `json:"extractionCountsBySource"`
+	LatestJobStatusBySource  map[string]string `json:"latestJobStatusBySource"`
+}
+
+func emptySourceOverview() *SourceOverview {
+	return &SourceOverview{
+		ExtractionCountsBySource: map[string]int64{},
+		LatestJobStatusBySource:  map[string]string{},
+	}
 }
 
 type GormRepository struct {
@@ -459,6 +477,75 @@ func (r *GormRepository) FindAuditLogsForSources(sourceIDs []uuid.UUID, limit in
 		query = query.Limit(limit)
 	}
 	return logs, query.Find(&logs).Error
+}
+
+func (r *GormRepository) FindOverviewForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) (*SourceOverview, error) {
+	overview := emptySourceOverview()
+	if len(sourceIDs) == 0 {
+		return overview, nil
+	}
+
+	type extractionAggregate struct {
+		SourceID       uuid.UUID
+		Total          int64
+		SensitiveTotal int64
+		UncertainTotal int64
+	}
+	var extractionRows []extractionAggregate
+	extractions := r.DB.Model(&models.SourceExtraction{}).
+		Select(`source_id,
+			COUNT(*) AS total,
+			SUM(CASE WHEN sensitive THEN 1 ELSE 0 END) AS sensitive_total,
+			SUM(CASE WHEN uncertain THEN 1 ELSE 0 END) AS uncertain_total`).
+		Where("source_id IN ?", sourceIDs)
+	if strings.TrimSpace(projectKey) != "" {
+		extractions = extractions.Where("project_key = ?", strings.TrimSpace(projectKey))
+	}
+	if !includeArchived {
+		extractions = extractions.Where("archived = ?", false)
+	}
+	if err := extractions.Group("source_id").Scan(&extractionRows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range extractionRows {
+		overview.ExtractionCount += row.Total
+		overview.SensitiveExtractionCount += row.SensitiveTotal
+		overview.UncertainExtractionCount += row.UncertainTotal
+		overview.ExtractionCountsBySource[row.SourceID.String()] = row.Total
+	}
+
+	type jobAggregate struct {
+		FailedTotal  int64
+		PendingTotal int64
+	}
+	var jobTotals jobAggregate
+	if err := r.DB.Model(&models.SourceSyncJob{}).
+		Select(`
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'partial_failure') THEN 1 ELSE 0 END), 0) AS failed_total,
+			COALESCE(SUM(CASE WHEN status IN ('pending', 'running') THEN 1 ELSE 0 END), 0) AS pending_total`).
+		Where("source_id IN ?", sourceIDs).
+		Scan(&jobTotals).Error; err != nil {
+		return nil, err
+	}
+	overview.FailedJobs = jobTotals.FailedTotal
+	overview.PendingJobs = jobTotals.PendingTotal
+
+	type latestJobStatus struct {
+		SourceID uuid.UUID
+		Status   string
+	}
+	var latestRows []latestJobStatus
+	if err := r.DB.Model(&models.SourceSyncJob{}).
+		Select("DISTINCT ON (source_id) source_id, status").
+		Where("source_id IN ?", sourceIDs).
+		Order("source_id, created_at DESC, id DESC").
+		Scan(&latestRows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range latestRows {
+		overview.LatestJobStatusBySource[row.SourceID.String()] = row.Status
+	}
+	return overview, nil
 }
 
 // SaveOAuthState replaces any earlier pending attempt for the source. The

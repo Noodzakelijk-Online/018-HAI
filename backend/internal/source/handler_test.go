@@ -110,6 +110,66 @@ func containsSourceID(sources []models.ConnectedSource, id uuid.UUID) bool {
 	return false
 }
 
+func TestHandlerReturnsOwnerScopedSourceOverview(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	now := time.Now().UTC()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
+	)
+	repo.extractions[uuid.New()] = &models.SourceExtraction{
+		ID: uuid.New(), SourceID: aliceID, ProjectKey: "project-1", Sensitive: true, Uncertain: true,
+	}
+	repo.extractions[uuid.New()] = &models.SourceExtraction{
+		ID: uuid.New(), SourceID: aliceID, ProjectKey: "project-1", Archived: true,
+	}
+	repo.extractions[uuid.New()] = &models.SourceExtraction{
+		ID: uuid.New(), SourceID: bobID, ProjectKey: "project-1", Sensitive: true,
+	}
+	repo.jobs = []models.SourceSyncJob{
+		{ID: uuid.New(), SourceID: aliceID, Status: "running", CreatedAt: now},
+		{ID: uuid.New(), SourceID: aliceID, Status: "failed", CreatedAt: now.Add(-time.Minute)},
+		{ID: uuid.New(), SourceID: bobID, Status: "failed", CreatedAt: now.Add(time.Minute)},
+	}
+
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/overview", handler.Overview)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/overview?projectKey=project-1&includeArchived=false", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("overview status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var overview struct {
+		ExtractionCount          int64             `json:"extractionCount"`
+		SensitiveExtractionCount int64             `json:"sensitiveExtractionCount"`
+		UncertainExtractionCount int64             `json:"uncertainExtractionCount"`
+		FailedJobs               int64             `json:"failedJobs"`
+		PendingJobs              int64             `json:"pendingJobs"`
+		ExtractionCountsBySource map[string]int64  `json:"extractionCountsBySource"`
+		LatestJobStatusBySource  map[string]string `json:"latestJobStatusBySource"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview: %v", err)
+	}
+	if overview.ExtractionCount != 1 || overview.SensitiveExtractionCount != 1 || overview.UncertainExtractionCount != 1 {
+		t.Fatalf("owner extraction summary = %#v", overview)
+	}
+	if overview.FailedJobs != 1 || overview.PendingJobs != 1 {
+		t.Fatalf("owner job summary = %#v", overview)
+	}
+	if overview.ExtractionCountsBySource[aliceID.String()] != 1 || overview.ExtractionCountsBySource[bobID.String()] != 0 {
+		t.Fatalf("per-source extraction counts = %#v", overview.ExtractionCountsBySource)
+	}
+	if overview.LatestJobStatusBySource[aliceID.String()] != "running" || overview.LatestJobStatusBySource[bobID.String()] != "" {
+		t.Fatalf("latest owner job statuses = %#v", overview.LatestJobStatusBySource)
+	}
+}
+
 func TestHandlerBoundsAuditLogsAfterOwnerFiltering(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	aliceID := uuid.New()
