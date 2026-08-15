@@ -400,8 +400,17 @@ func (h *Handler) Search(c *gin.Context) {
 }
 
 func (h *Handler) Extractions(c *gin.Context) {
+	limit, ok := sourceHistoryLimit(c, "extraction")
+	if !ok {
+		return
+	}
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
-	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), c.Query("projectKey"), includeArchived)
+	extractions, err := h.service.ExtractionsForOwnerLimit(
+		sourceOwner(c),
+		c.Query("projectKey"),
+		includeArchived,
+		limit,
+	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -643,8 +652,12 @@ func (h *Handler) requireMutableSource(c *gin.Context, id uuid.UUID) bool {
 }
 
 func (h *Handler) requireMutableExtraction(c *gin.Context, id uuid.UUID) bool {
-	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), "", true)
+	extraction, err := h.service.ExtractionForOwner(sourceOwner(c), id)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "source extraction not found"})
+			return false
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return false
 	}
@@ -653,10 +666,8 @@ func (h *Handler) requireMutableExtraction(c *gin.Context, id uuid.UUID) bool {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return false
 	}
-	for _, extraction := range extractions {
-		if extraction.ID == id && mutableSourceIDs[extraction.SourceID] {
-			return true
-		}
+	if mutableSourceIDs[extraction.SourceID] {
+		return true
 	}
 	c.JSON(http.StatusNotFound, gin.H{"error": "source extraction not found"})
 	return false

@@ -2484,7 +2484,7 @@ func (r *fakeSourceRepo) SaveExtraction(extraction *models.SourceExtraction) (*m
 }
 
 func (r *fakeSourceRepo) FindExtractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
-	return r.findExtractions(nil, projectKey, includeArchived)
+	return r.findExtractions(nil, projectKey, includeArchived, 0)
 }
 
 func (r *fakeSourceRepo) FindExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
@@ -2496,10 +2496,22 @@ func (r *fakeSourceRepo) FindExtractionsForSources(sourceIDs []uuid.UUID, projec
 	for _, id := range sourceIDs {
 		allowed[id] = true
 	}
-	return r.findExtractions(allowed, projectKey, includeArchived)
+	return r.findExtractions(allowed, projectKey, includeArchived, 0)
 }
 
-func (r *fakeSourceRepo) findExtractions(sourceIDs map[uuid.UUID]bool, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
+func (r *fakeSourceRepo) FindRecentExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, error) {
+	r.lastExtractionSourceIDs = append([]uuid.UUID{}, sourceIDs...)
+	if len(sourceIDs) == 0 {
+		return []models.SourceExtraction{}, nil
+	}
+	allowed := make(map[uuid.UUID]bool, len(sourceIDs))
+	for _, id := range sourceIDs {
+		allowed[id] = true
+	}
+	return r.findExtractions(allowed, projectKey, includeArchived, limit)
+}
+
+func (r *fakeSourceRepo) findExtractions(sourceIDs map[uuid.UUID]bool, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, error) {
 	result := []models.SourceExtraction{}
 	for _, extraction := range r.extractions {
 		if sourceIDs != nil && !sourceIDs[extraction.SourceID] {
@@ -2512,6 +2524,9 @@ func (r *fakeSourceRepo) findExtractions(sourceIDs map[uuid.UUID]bool, projectKe
 			continue
 		}
 		result = append(result, *extraction)
+		if limit > 0 && len(result) >= limit {
+			break
+		}
 	}
 	return result, nil
 }
@@ -2523,6 +2538,18 @@ func (r *fakeSourceRepo) FindExtraction(id uuid.UUID) (*models.SourceExtraction,
 	}
 	copied := *extraction
 	return &copied, nil
+}
+
+func (r *fakeSourceRepo) FindExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error) {
+	extraction, err := r.FindExtraction(id)
+	if err != nil {
+		return nil, err
+	}
+	source, err := r.FindSource(extraction.SourceID)
+	if err != nil || strings.TrimSpace(source.OwnerIdentity) != strings.TrimSpace(ownerIdentity) || strings.TrimSpace(ownerIdentity) == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return extraction, nil
 }
 
 func (r *fakeSourceRepo) DeleteExtractionForOwner(

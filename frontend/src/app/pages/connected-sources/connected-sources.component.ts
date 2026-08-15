@@ -1279,7 +1279,7 @@ export class ConnectedSourcesComponent implements OnInit {
     this.extractionHistoryLoading = true;
     this.extractionHistoryError = '';
     this.sourceService
-      .extractions(this.searchForm.value.projectKey, this.includeArchived)
+      .extractions(this.searchForm.value.projectKey, this.includeArchived, 8)
       .pipe(
         timeout(this.loadTimeoutMs),
         finalize(() => (this.extractionHistoryLoading = false))
@@ -1307,7 +1307,7 @@ export class ConnectedSourcesComponent implements OnInit {
     this.activityHistoryError = '';
     let failed = false;
     forkJoin({
-      jobs: this.sourceService.syncJobs().pipe(
+      jobs: this.sourceService.syncJobs(undefined, 6).pipe(
         timeout(this.loadTimeoutMs),
         catchError(() => {
           failed = true;

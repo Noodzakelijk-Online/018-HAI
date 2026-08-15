@@ -31,4 +31,24 @@ describe('ConnectedSourceService', () => {
       done();
     });
   });
+
+  it('requests bounded extraction and sync-job histories when limits are provided', () => {
+    const http = {
+      get: jasmine.createSpy('get').and.returnValue(of([])),
+    };
+    const service = new ConnectedSourceService(http as any);
+
+    service.extractions('018-HAI', false, 8).subscribe();
+    let [url, options] = http.get.calls.mostRecent().args;
+    expect(url).toBe('/api/v1/sources/extractions');
+    expect(options.params.get('projectKey')).toBe('018-HAI');
+    expect(options.params.get('includeArchived')).toBe('false');
+    expect(options.params.get('limit')).toBe('8');
+
+    service.syncJobs(undefined, 6).subscribe();
+    [url, options] = http.get.calls.mostRecent().args;
+    expect(url).toBe('/api/v1/sources/sync-jobs');
+    expect(options.params.get('sourceId')).toBeNull();
+    expect(options.params.get('limit')).toBe('6');
+  });
 });

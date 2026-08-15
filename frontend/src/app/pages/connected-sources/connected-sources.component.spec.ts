@@ -176,6 +176,7 @@ describe('ConnectedSourcesComponent progressive evidence loading', () => {
     component.setExtractionHistoryOpen(true);
 
     expect(service.extractions).toHaveBeenCalledTimes(1);
+    expect(service.extractions).toHaveBeenCalledWith('018-HAI', false, 8);
   });
 
   it('loads jobs and audit records once when activity is first opened', () => {
@@ -187,7 +188,9 @@ describe('ConnectedSourcesComponent progressive evidence loading', () => {
     component.setActivityHistoryOpen(true);
 
     expect(service.syncJobs).toHaveBeenCalledTimes(1);
+    expect(service.syncJobs).toHaveBeenCalledWith(undefined, 6);
     expect(service.auditLogs).toHaveBeenCalledTimes(1);
+    expect(service.auditLogs).toHaveBeenCalledWith(undefined, 8);
   });
 
   it('refreshes only detail histories that the operator has opened', () => {

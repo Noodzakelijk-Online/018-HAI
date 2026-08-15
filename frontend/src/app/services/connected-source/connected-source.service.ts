@@ -41,10 +41,13 @@ export class ConnectedSourceService implements IConnectedSourceService {
     return this.http.get<ISourceConnectionHealth>(`${this.apiUrl}/${sourceId}/health`);
   }
 
-  syncJobs(sourceId?: string): Observable<ISourceSyncJob[]> {
+  syncJobs(sourceId?: string, limit?: number): Observable<ISourceSyncJob[]> {
     let params = new HttpParams();
     if (sourceId) {
       params = params.set('sourceId', sourceId);
+    }
+    if (limit) {
+      params = params.set('limit', limit);
     }
     return this.http.get<ISourceSyncJob[]>(`${this.apiUrl}/sync-jobs`, { params });
   }
@@ -111,12 +114,14 @@ export class ConnectedSourceService implements IConnectedSourceService {
     });
   }
 
-  extractions(projectKey: string, includeArchived: boolean): Observable<ISourceExtraction[]> {
-    return this.http.get<ISourceExtraction[]>(`${this.apiUrl}/extractions`, {
-      params: new HttpParams()
-        .set('projectKey', projectKey || '')
-        .set('includeArchived', includeArchived),
-    });
+  extractions(projectKey: string, includeArchived: boolean, limit?: number): Observable<ISourceExtraction[]> {
+    let params = new HttpParams()
+      .set('projectKey', projectKey || '')
+      .set('includeArchived', includeArchived);
+    if (limit) {
+      params = params.set('limit', limit);
+    }
+    return this.http.get<ISourceExtraction[]>(`${this.apiUrl}/extractions`, { params });
   }
 
   updateExtraction(id: string, extraction: Partial<ISourceExtraction>): Observable<ISourceExtraction> {

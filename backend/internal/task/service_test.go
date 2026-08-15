@@ -1857,6 +1857,14 @@ func (s *fakeTaskSourceService) ExtractionsForOwner(ownerIdentity, projectKey st
 	return nil, nil
 }
 
+func (s *fakeTaskSourceService) ExtractionsForOwnerLimit(ownerIdentity, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, error) {
+	return nil, nil
+}
+
+func (s *fakeTaskSourceService) ExtractionForOwner(ownerIdentity string, id uuid.UUID) (*models.SourceExtraction, error) {
+	return nil, gorm.ErrRecordNotFound
+}
+
 func (s *fakeTaskSourceService) UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error) {
 	return nil, nil
 }

@@ -182,6 +182,8 @@ type Service interface {
 	Search(request SearchRequest) (*SearchResult, error)
 	Extractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	ExtractionsForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
+	ExtractionsForOwnerLimit(ownerIdentity, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, error)
+	ExtractionForOwner(ownerIdentity string, id uuid.UUID) (*models.SourceExtraction, error)
 	UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error)
 	ArchiveExtraction(id uuid.UUID, archived bool) (*models.SourceExtraction, error)
 	DeleteExtraction(id uuid.UUID) error
@@ -1635,6 +1637,23 @@ func (s *service) ExtractionsForOwner(ownerIdentity, projectKey string, includeA
 		return nil, err
 	}
 	return s.repo.FindExtractionsForSources(sourceIDsFromSet(visibleSourceIDs), projectKey, includeArchived)
+}
+
+func (s *service) ExtractionsForOwnerLimit(ownerIdentity, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.FindRecentExtractionsForSources(
+		sourceIDsFromSet(visibleSourceIDs),
+		strings.TrimSpace(projectKey),
+		includeArchived,
+		limit,
+	)
+}
+
+func (s *service) ExtractionForOwner(ownerIdentity string, id uuid.UUID) (*models.SourceExtraction, error) {
+	return s.repo.FindExtractionForOwner(id, ownerIdentity)
 }
 
 func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error) {

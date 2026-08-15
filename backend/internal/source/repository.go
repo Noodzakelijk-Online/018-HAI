@@ -33,7 +33,9 @@ type Repository interface {
 	SaveExtraction(extraction *models.SourceExtraction) (*models.SourceExtraction, error)
 	FindExtractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	FindExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
+	FindRecentExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, error)
 	FindExtraction(id uuid.UUID) (*models.SourceExtraction, error)
+	FindExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error)
 	DeleteExtractionForOwner(
 		extraction *models.SourceExtraction,
 		source *models.ConnectedSource,
@@ -338,19 +340,26 @@ func (r *GormRepository) SaveExtraction(extraction *models.SourceExtraction) (*m
 }
 
 func (r *GormRepository) FindExtractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
-	return r.findExtractions(nil, projectKey, includeArchived)
+	return r.findExtractions(nil, projectKey, includeArchived, 0)
 }
 
 func (r *GormRepository) FindExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
 	if len(sourceIDs) == 0 {
 		return []models.SourceExtraction{}, nil
 	}
-	return r.findExtractions(sourceIDs, projectKey, includeArchived)
+	return r.findExtractions(sourceIDs, projectKey, includeArchived, 0)
 }
 
-func (r *GormRepository) findExtractions(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
+func (r *GormRepository) FindRecentExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceExtraction{}, nil
+	}
+	return r.findExtractions(sourceIDs, projectKey, includeArchived, limit)
+}
+
+func (r *GormRepository) findExtractions(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, error) {
 	var extractions []models.SourceExtraction
-	query := r.DB.Order("updated_at desc")
+	query := r.DB.Order("updated_at desc").Order("id desc")
 	if sourceIDs != nil {
 		query = query.Where("source_id IN ?", sourceIDs)
 	}
@@ -360,6 +369,9 @@ func (r *GormRepository) findExtractions(sourceIDs []uuid.UUID, projectKey strin
 	if !includeArchived {
 		query = query.Where("archived = ?", false)
 	}
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
 	err := query.Find(&extractions).Error
 	return extractions, err
 }
@@ -367,6 +379,23 @@ func (r *GormRepository) findExtractions(sourceIDs []uuid.UUID, projectKey strin
 func (r *GormRepository) FindExtraction(id uuid.UUID) (*models.SourceExtraction, error) {
 	var extraction models.SourceExtraction
 	if err := r.DB.First(&extraction, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &extraction, nil
+}
+
+func (r *GormRepository) FindExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var extraction models.SourceExtraction
+	err := r.DB.Model(&models.SourceExtraction{}).
+		Select("source_extractions.*").
+		Joins("JOIN connected_sources ON connected_sources.id = source_extractions.source_id").
+		Where("source_extractions.id = ? AND connected_sources.owner_identity = ?", id, ownerIdentity).
+		First(&extraction).Error
+	if err != nil {
 		return nil, err
 	}
 	return &extraction, nil

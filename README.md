@@ -617,13 +617,15 @@ limits, and evidence. On the retained local dataset, the summary response was
 (32.45% less). Command Dashboard startup now issues that request once rather
 than twice.
 
-Connected Sources requests only the eight audit records it renders. Sync-job
-and audit-history endpoints default to the newest 100 records and accept an
-explicit limit from 1 through 500. Ownership scope and the row limit are both
-applied by PostgreSQL, so a request neither loads another account's history nor
-performs an unbounded in-process filter. With 387 retained owner-visible audit
-records, the eight-record page request measured 1,795 bytes instead of 100,447
-bytes (98.21% less).
+Connected Sources requests only the eight extraction and audit records, plus
+the six sync jobs, that its progressive evidence panels render. Extraction,
+sync-job, and audit-history endpoints default to the newest 100 records and
+accept an explicit limit from 1 through 500. Ownership scope and the row limit
+are both applied by PostgreSQL, so a request neither loads another account's
+history nor performs an unbounded in-process filter. Extraction mutations also
+resolve the exact owner-scoped record by ID instead of loading the owner's full
+history. With 387 retained owner-visible audit records, the eight-record page
+request measured 1,795 bytes instead of 100,447 bytes (98.21% less).
 
 The gateway keeps login, registration, recovery, local-preview, logout, and
 user-management mutations in the bounded identity rate-limit zone. Read-only

@@ -443,6 +443,57 @@ func TestHandlerListsOnlyOwnerScopedExtractionsFromRepository(t *testing.T) {
 	}
 }
 
+func TestHandlerBoundsExtractionsAfterOwnerFiltering(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
+	)
+	for _, extraction := range []models.SourceExtraction{
+		{ID: uuid.New(), SourceID: bobID, Summary: "Bob hidden context"},
+		{ID: uuid.New(), SourceID: aliceID, Summary: "Alice latest context"},
+		{ID: uuid.New(), SourceID: aliceID, Summary: "Alice previous context"},
+		{ID: uuid.New(), SourceID: aliceID, Summary: "Alice oldest context"},
+	} {
+		if _, err := repo.SaveExtraction(&extraction); err != nil {
+			t.Fatalf("SaveExtraction: %v", err)
+		}
+	}
+
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/extractions", handler.Extractions)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/extractions?limit=2", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("extractions status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var extractions []models.SourceExtraction
+	if err := json.Unmarshal(response.Body.Bytes(), &extractions); err != nil {
+		t.Fatalf("decode extractions: %v", err)
+	}
+	if len(extractions) != 2 {
+		t.Fatalf("bounded extractions = %d, want 2", len(extractions))
+	}
+	for _, extraction := range extractions {
+		if extraction.SourceID != aliceID {
+			t.Fatalf("bounded extractions exposed foreign source: %#v", extractions)
+		}
+	}
+
+	for _, query := range []string{"limit=0", "limit=501", "limit=invalid"} {
+		invalid := httptest.NewRecorder()
+		router.ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/sources/extractions?"+query, nil))
+		if invalid.Code != http.StatusBadRequest {
+			t.Fatalf("%s status = %d, body=%s", query, invalid.Code, invalid.Body.String())
+		}
+	}
+}
+
 func TestHandlerRejectsOwnerlessLegacySourceAndExtractionMutations(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	sourceID := uuid.New()
