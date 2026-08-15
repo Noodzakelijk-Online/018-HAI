@@ -157,6 +157,61 @@ func TestDashboardCountsViewReturnsOnlyAggregateQueues(t *testing.T) {
 	}
 }
 
+func TestPursuitListSummaryOmitsDetailOnlyFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	created, err := service.Create(CreateRequest{
+		Title:                "Compact pursuit list",
+		Description:          "Long private context",
+		OwnerIdentity:        "alice",
+		CompletionDefinition: "All evidence is verified.",
+		SuccessCriteria:      []models.PursuitSuccessCriterion{{ID: "criterion-1", Description: "Evidence verified"}},
+		ResourceLimits:       models.PursuitResourceLimits{MaxEffortHours: 4},
+	})
+	if err != nil {
+		t.Fatalf("Create pursuit: %v", err)
+	}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.GET("/pursuits/", NewHandler(service).List)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/pursuits/?view=summary", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("summary list status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var records []models.Pursuit
+	if err := json.Unmarshal(recorder.Body.Bytes(), &records); err != nil {
+		t.Fatalf("decode summary list: %v", err)
+	}
+	if len(records) != 1 || records[0].ID != created.ID || records[0].Title != created.Title {
+		t.Fatalf("summary list identity = %#v", records)
+	}
+	if records[0].OwnerIdentity != "" || records[0].Description != "" || records[0].CompletionDefinition != "" || records[0].SuccessCriteria != nil || records[0].ResourceLimits.MaxEffortHours != 0 {
+		t.Fatalf("summary list retained detail-only fields: %#v", records[0])
+	}
+}
+
+func TestPursuitListRejectsUnknownView(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.GET("/pursuits/", NewHandler(NewService(newFakeRepo(), nil)).List)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/pursuits/?view=everything", nil))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("unknown list view status = %d, want %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+}
+
 func TestArchiveEndpointRequiresExplicitArchiveIntent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeRepo()

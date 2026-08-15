@@ -162,6 +162,19 @@ describe('PursuitsComponent action lanes', () => {
     expect(component.selected).toBeUndefined();
   });
 
+  it('keeps the basic pursuit list compact until the user selects a pursuit', () => {
+    const pursuit = { id: 'pursuit-1', title: 'Inspect only on demand' } as any;
+    const pursuitService = (component as any).pursuitsService;
+    pursuitService.list = jasmine.createSpy('list').and.returnValue(of([pursuit]));
+    spyOn(component, 'selectPursuit');
+
+    component.loadPursuits();
+
+    expect(component.pursuits).toEqual([pursuit]);
+    expect(component.selectPursuit).not.toHaveBeenCalled();
+    expect(component.selected).toBeUndefined();
+  });
+
   it('creates a structured outcome contract from the basic pursuit form', () => {
     const pursuitService = (component as any).pursuitsService;
     const created = { id: 'pursuit-1', title: 'Operational outcome' } as any;

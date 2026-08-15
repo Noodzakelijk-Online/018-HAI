@@ -343,18 +343,19 @@ func dashboardSummary(source *Dashboard) *Dashboard {
 	result.DecisionQueue = make([]PursuitDashboardDecision, len(source.DecisionQueue))
 	for index, decision := range source.DecisionQueue {
 		decision.Pursuit = dashboardPursuitSummary(decision.Pursuit)
+		decision.Decision = dashboardDecisionSummary(decision.Decision)
 		result.DecisionQueue[index] = decision
 	}
-	result.NeedsRobert = dashboardListSummary(source.NeedsRobert)
-	result.VAReady = dashboardListSummary(source.VAReady)
-	result.SystemReady = dashboardListSummary(source.SystemReady)
-	result.Blocked = dashboardListSummary(source.Blocked)
-	result.Stale = dashboardListSummary(source.Stale)
-	result.ReviewDue = dashboardListSummary(source.ReviewDue)
-	result.PlanningNeeded = dashboardListSummary(source.PlanningNeeded)
-	result.RecentlyChanged = dashboardListSummary(source.RecentlyChanged)
-	result.HighRisk = dashboardListSummary(source.HighRisk)
-	result.CompletionCandidates = dashboardListSummary(source.CompletionCandidates)
+	result.NeedsRobert = dashboardListSummary(source.NeedsRobert, 1)
+	result.VAReady = dashboardListSummary(source.VAReady, 1)
+	result.SystemReady = dashboardListSummary(source.SystemReady, 1)
+	result.Blocked = dashboardListSummary(source.Blocked, 1)
+	result.Stale = dashboardListSummary(source.Stale, 1)
+	result.ReviewDue = dashboardListSummary(source.ReviewDue, 1)
+	result.PlanningNeeded = dashboardListSummary(source.PlanningNeeded, 1)
+	result.RecentlyChanged = dashboardListSummary(source.RecentlyChanged, 1)
+	result.HighRisk = dashboardListSummary(source.HighRisk, 1)
+	result.CompletionCandidates = dashboardListSummary(source.CompletionCandidates, 1)
 	return &result
 }
 
@@ -382,9 +383,13 @@ func dashboardCounts(source *Dashboard) *Dashboard {
 	}
 }
 
-func dashboardListSummary(source []PursuitListItem) []PursuitListItem {
-	result := make([]PursuitListItem, len(source))
-	for index, item := range source {
+func dashboardListSummary(source []PursuitListItem, limit int) []PursuitListItem {
+	length := len(source)
+	if limit > 0 && length > limit {
+		length = limit
+	}
+	result := make([]PursuitListItem, length)
+	for index, item := range source[:length] {
 		item.Pursuit = dashboardPursuitSummary(item.Pursuit)
 		result[index] = item
 	}
@@ -392,17 +397,44 @@ func dashboardListSummary(source []PursuitListItem) []PursuitListItem {
 }
 
 func dashboardPursuitSummary(pursuit models.Pursuit) models.Pursuit {
-	pursuit.OwnerIdentity = ""
-	pursuit.Description = ""
-	pursuit.MandateID = nil
-	pursuit.DesiredOutcome = ""
-	pursuit.SourceOfCreation = ""
-	pursuit.CompletionDefinition = ""
-	pursuit.SuccessCriteria = nil
-	pursuit.StopConditions = nil
-	pursuit.Dependencies = nil
-	pursuit.ResourceLimits = models.PursuitResourceLimits{}
-	return pursuit
+	return models.Pursuit{
+		ID:                    pursuit.ID,
+		Title:                 pursuit.Title,
+		WhyItMatters:          pursuit.WhyItMatters,
+		ProjectKey:            pursuit.ProjectKey,
+		Domain:                pursuit.Domain,
+		CurrentStateSummary:   pursuit.CurrentStateSummary,
+		Status:                pursuit.Status,
+		PriorityScore:         pursuit.PriorityScore,
+		RiskLevel:             pursuit.RiskLevel,
+		Confidence:            pursuit.Confidence,
+		AutonomyLevel:         pursuit.AutonomyLevel,
+		NeedCategory:          pursuit.NeedCategory,
+		NextRecommendedAction: pursuit.NextRecommendedAction,
+		CompletionState:       pursuit.CompletionState,
+		LastActivityAt:        pursuit.LastActivityAt,
+		NextReviewAt:          pursuit.NextReviewAt,
+		TargetAt:              pursuit.TargetAt,
+		ReviewCadenceDays:     pursuit.ReviewCadenceDays,
+		Archived:              pursuit.Archived,
+		CreatedAt:             pursuit.CreatedAt,
+		UpdatedAt:             pursuit.UpdatedAt,
+	}
+}
+
+func dashboardDecisionSummary(decision PursuitDecision) PursuitDecision {
+	return PursuitDecision{
+		ID:               decision.ID,
+		DecisionType:     decision.DecisionType,
+		Status:           decision.Status,
+		Recommended:      decision.Recommended,
+		Reason:           decision.Reason,
+		RiskLevel:        decision.RiskLevel,
+		YesLabel:         decision.YesLabel,
+		NoLabel:          decision.NoLabel,
+		RequiresApproval: decision.RequiresApproval,
+		Approved:         decision.Approved,
+	}
 }
 
 type Brief struct {

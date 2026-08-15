@@ -52,9 +52,33 @@ func TestDashboardSummaryKeepsActionContextAndDropsDetailOnlyFields(t *testing.T
 		ResourceLimits:        models.PursuitResourceLimits{MaxEffortHours: 2, Notes: "detail only"},
 	}
 	dashboard := &Dashboard{
-		Counts:        map[string]int64{"active": 1},
-		DecisionQueue: []PursuitDashboardDecision{{Pursuit: full}},
-		NeedsRobert:   []PursuitListItem{{Pursuit: full, NeedsRobert: 1}},
+		Counts: map[string]int64{"active": 1},
+		DecisionQueue: []PursuitDashboardDecision{{
+			Pursuit: full,
+			Decision: PursuitDecision{
+				ID:               "decision-1",
+				WorkflowID:       "workflow-1",
+				WorkflowTitle:    "Private workflow title",
+				DecisionType:     "approval",
+				Status:           "pending",
+				Recommended:      "Review the response.",
+				Reason:           "The response affects an external party.",
+				RiskLevel:        "high",
+				EvidenceURI:      "private://evidence/1",
+				EvidenceLabel:    "Private evidence label",
+				YesLabel:         "Approve",
+				NoLabel:          "Reject",
+				YesConsequence:   "The workflow may continue.",
+				NoConsequence:    "The workflow remains paused.",
+				RequiresApproval: true,
+				Actor:            "alice",
+				CreatedAt:        time.Now().UTC().Format(time.RFC3339),
+			},
+		}},
+		NeedsRobert: []PursuitListItem{
+			{Pursuit: full, NeedsRobert: 1},
+			{Pursuit: models.Pursuit{ID: uuid.New(), Title: "Second decision"}, NeedsRobert: 1},
+		},
 	}
 
 	summary := dashboardSummary(dashboard)
@@ -74,6 +98,16 @@ func TestDashboardSummaryKeepsActionContextAndDropsDetailOnlyFields(t *testing.T
 	}
 	if dashboard.NeedsRobert[0].Pursuit.Description == "" || len(dashboard.NeedsRobert[0].Pursuit.SuccessCriteria) != 1 {
 		t.Fatalf("summary mutated the full dashboard: %#v", dashboard.NeedsRobert[0].Pursuit)
+	}
+	if len(summary.NeedsRobert) != 1 {
+		t.Fatalf("summary needs-Robert queue length = %d, want one actionable preview", len(summary.NeedsRobert))
+	}
+	decision := summary.DecisionQueue[0].Decision
+	if decision.ID != "decision-1" || decision.Status != "pending" || decision.Recommended == "" || decision.YesLabel != "Approve" || !decision.RequiresApproval {
+		t.Fatalf("summary removed decision action fields: %#v", decision)
+	}
+	if decision.WorkflowID != "" || decision.WorkflowTitle != "" || decision.EvidenceURI != "" || decision.EvidenceLabel != "" || decision.YesConsequence != "" || decision.NoConsequence != "" || decision.Actor != "" || decision.CreatedAt != "" {
+		t.Fatalf("summary retained decision detail fields: %#v", decision)
 	}
 }
 

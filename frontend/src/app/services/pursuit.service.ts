@@ -55,9 +55,12 @@ export class PursuitService {
 
   constructor(private http: HttpClient) {}
 
-  list(includeArchived: boolean = false): Observable<IPursuit[]> {
+  list(
+    includeArchived: boolean = false,
+    view: 'summary' | 'full' = 'summary'
+  ): Observable<IPursuit[]> {
     return this.http.get<IPursuit[]>(`${this.apiUrl}/`, {
-      params: new HttpParams().set('includeArchived', includeArchived),
+      params: new HttpParams().set('includeArchived', includeArchived).set('view', view),
     }).pipe(map((records) => (records || []).map((record) => this.normalizePursuit(record))));
   }
 

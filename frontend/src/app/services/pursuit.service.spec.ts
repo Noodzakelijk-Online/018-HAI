@@ -2,6 +2,21 @@ import { PursuitService } from './pursuit.service';
 import { of } from 'rxjs';
 
 describe('PursuitService response normalization', () => {
+  it('loads compact pursuit list records by default', (done) => {
+    const http = {
+      get: jasmine.createSpy('get').and.returnValue(of([])),
+    };
+    const service = new PursuitService(http as any);
+
+    service.list().subscribe(() => {
+      const [url, options] = http.get.calls.mostRecent().args;
+      expect(url).toBe('/api/v1/pursuits/');
+      expect(options.params.get('includeArchived')).toBe('false');
+      expect(options.params.get('view')).toBe('summary');
+      done();
+    });
+  });
+
   it('loads the bounded pursuit dashboard view and normalizes empty queues', (done) => {
     const http = {
       get: jasmine.createSpy('get').and.returnValue(of({ counts: { active: 2 } })),

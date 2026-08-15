@@ -60,11 +60,21 @@ func (h *Handler) Create(c *gin.Context) {
 }
 
 func (h *Handler) List(c *gin.Context) {
+	viewMode := strings.ToLower(strings.TrimSpace(c.Query("view")))
+	if viewMode != "" && viewMode != "full" && viewMode != "summary" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pursuit list view must be full or summary"})
+		return
+	}
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
 	records, err := h.service.ListForOwner(pursuitOwner(c), includeArchived)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if viewMode == "summary" {
+		for index := range records {
+			records[index] = dashboardPursuitSummary(records[index])
+		}
 	}
 	c.JSON(http.StatusOK, records)
 }
