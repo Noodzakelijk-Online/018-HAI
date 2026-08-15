@@ -366,7 +366,7 @@ describe('GovernanceControlComponent', () => {
   it('loads independent surfaces and reports source-backed counts', () => {
     component.ngOnInit()
 
-    expect(service.listExecutionReceipts).toHaveBeenCalledWith(50)
+    expect(service.listExecutionReceipts).toHaveBeenCalledWith(50, 'summary')
     expect(service.listMandates).toHaveBeenCalled()
     expect(service.listLearningProposals).toHaveBeenCalledWith(100)
     expect(service.listLearningOutcomes).not.toHaveBeenCalled()
@@ -379,6 +379,41 @@ describe('GovernanceControlComponent', () => {
     expect(component.surfaceMetric('domains')).toBe('1 enabled')
   })
 
+  it('does not load collapsed advisory engines in the default Basic view', () => {
+    component.ngOnInit()
+
+    expect(service.listAgentTeams).not.toHaveBeenCalled()
+    expect(service.listLifeEntities).not.toHaveBeenCalled()
+    expect(service.listLifeRelations).not.toHaveBeenCalled()
+    expect(service.listLifeMergeProposals).not.toHaveBeenCalled()
+    expect(service.listContactReviewDecisions).not.toHaveBeenCalled()
+    expect(service.listLifeCommitments).not.toHaveBeenCalled()
+    expect(service.listLifeCosts).not.toHaveBeenCalled()
+    expect(service.proactivityPolicy).not.toHaveBeenCalled()
+    expect(service.listProactivitySignals).not.toHaveBeenCalled()
+    expect(service.listProactivityDecisions).not.toHaveBeenCalled()
+    expect(service.listProactivityFeedback).not.toHaveBeenCalled()
+  })
+
+  it('restores only advisory engines whose sections were saved open', () => {
+    preferences.setSection('governance-control', 'whole-life-context', true)
+    preferences.setSection('governance-control', 'proactivity-policy', true)
+
+    component.ngOnInit()
+
+    expect(service.listLifeEntities).toHaveBeenCalled()
+    expect(service.listLifeRelations).toHaveBeenCalled()
+    expect(service.listLifeMergeProposals).toHaveBeenCalled()
+    expect(service.listContactReviewDecisions).toHaveBeenCalled()
+    expect(service.proactivityPolicy).toHaveBeenCalled()
+    expect(service.listProactivitySignals).toHaveBeenCalled()
+    expect(service.listProactivityDecisions).toHaveBeenCalled()
+    expect(service.listProactivityFeedback).toHaveBeenCalled()
+    expect(service.listAgentTeams).not.toHaveBeenCalled()
+    expect(service.listLifeCommitments).not.toHaveBeenCalled()
+    expect(service.listLifeCosts).not.toHaveBeenCalled()
+  })
+
   it('loads full controlled-learning outcome history only when its section opens', () => {
     component.ngOnInit()
     expect(service.listLearningOutcomes).not.toHaveBeenCalled()
@@ -387,6 +422,16 @@ describe('GovernanceControlComponent', () => {
 
     expect(service.listLearningOutcomes).toHaveBeenCalledOnceWith(100)
     expect(service.listLearningProposals).toHaveBeenCalledTimes(2)
+  })
+
+  it('loads full authorization evidence only when its section opens', () => {
+    component.ngOnInit()
+    expect(service.listExecutionReceipts).toHaveBeenCalledOnceWith(50, 'summary')
+
+    component.loadExecutionSection(true)
+
+    expect(service.listExecutionReceipts).toHaveBeenCalledTimes(2)
+    expect(service.listExecutionReceipts).toHaveBeenCalledWith(50, 'full')
   })
 
   it('builds the Basic decision queue only from unresolved records', () => {
@@ -713,7 +758,12 @@ describe('GovernanceControlComponent', () => {
     )
   })
 
-  it('loads source-backed advisory engines while leaving scoped engines unconfigured', () => {
+  it('loads opened source-backed advisory engines while leaving scoped engines unconfigured', () => {
+    preferences.setSection('governance-control', 'agent-teams', true)
+    preferences.setSection('governance-control', 'whole-life-context', true)
+    preferences.setSection('governance-control', 'life-ledger-overview', true)
+    preferences.setSection('governance-control', 'proactivity-policy', true)
+
     component.ngOnInit()
 
     expect(service.listAgentTeams).toHaveBeenCalled()

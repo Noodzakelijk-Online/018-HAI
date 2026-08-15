@@ -81,8 +81,22 @@ export interface ExecutionAuthorizationReceipt {
   lifeGraphProjectionWarning?: string
 }
 
+export interface ExecutionAuthorizationSummary {
+  id: string
+  contractVersion: number
+  action: string
+  stage: string
+  resourceType: string
+  resourceId?: string
+  domain?: string
+  outcome: AuthorizationOutcome
+  reason: string
+  risk: GovernanceRisk
+  evaluatedAt: string
+}
+
 export interface ExecutionAuthorizationList {
-  receipts: ExecutionAuthorizationReceipt[]
+  receipts: ExecutionAuthorizationSummary[]
   count: number
   limit: number
 }

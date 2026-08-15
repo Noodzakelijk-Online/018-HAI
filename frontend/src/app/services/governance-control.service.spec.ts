@@ -19,7 +19,8 @@ describe('GovernanceControlService', () => {
     const listRequest = http.expectOne(
       (request) =>
         request.url === '/api/v1/execution-authorizations' &&
-        request.params.get('limit') === '25'
+        request.params.get('limit') === '25' &&
+        request.params.get('view') === 'summary'
     )
     expect(listRequest.request.method).toBe('GET')
     listRequest.flush({ receipts: [], count: 0, limit: 25 })
@@ -30,6 +31,18 @@ describe('GovernanceControlService', () => {
     )
     expect(consumptionRequest.request.method).toBe('GET')
     consumptionRequest.flush({})
+  })
+
+  it('requests full authorization evidence only when explicitly asked', () => {
+    service.listExecutionReceipts(25, 'full').subscribe()
+
+    const request = http.expectOne((candidate) =>
+      candidate.url === '/api/v1/execution-authorizations' &&
+      candidate.params.get('limit') === '25' &&
+      candidate.params.get('view') === 'full'
+    )
+    expect(request.request.method).toBe('GET')
+    request.flush({ receipts: [], count: 0, limit: 25 })
   })
 
   it('sends optimistic mandate lifecycle revisions', () => {

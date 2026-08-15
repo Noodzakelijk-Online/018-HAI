@@ -920,6 +920,7 @@
       sectionId="execution-receipts"
       title="Execution authorization receipts"
       summary="Immutable decisions, policy evidence, and single-use consumption."
+      (openChange)="loadExecutionSection($event)"
     >
       <div class="section-error" *ngIf="state.execution.error">{{ state.execution.error }}</div>
       <div class="section-loading" *ngIf="state.execution.loading" role="status"><i nz-icon nzType="loading"></i> Loading authorization receipts</div>

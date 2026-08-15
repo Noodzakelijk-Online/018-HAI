@@ -78,9 +78,12 @@ export class GovernanceControlService {
 
   constructor(private http: HttpClient) {}
 
-  listExecutionReceipts(limit = 50): Observable<ExecutionAuthorizationList> {
+  listExecutionReceipts(
+    limit = 50,
+    view: 'summary' | 'full' = 'summary'
+  ): Observable<ExecutionAuthorizationList> {
     return this.http.get<ExecutionAuthorizationList>(this.executionUrl, {
-      params: new HttpParams().set('limit', limit),
+      params: new HttpParams().set('limit', limit).set('view', view),
     })
   }
 
