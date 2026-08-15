@@ -30,6 +30,7 @@ export class RuntimeLabComponent implements OnInit {
   mcpLoading = false
   parityLoading = false
   capabilityLoading = false
+  parityOpen = false
   busy: Record<string, boolean> = {}
   mcpBusy: Record<string, boolean> = {}
 
@@ -47,8 +48,10 @@ export class RuntimeLabComponent implements OnInit {
   refresh(): void {
     this.loading = true
     this.refreshMCPPreflight()
-    this.refreshFeatureParity()
-    this.refreshCapabilities()
+    if (this.parityOpen) {
+      this.refreshFeatureParity(true)
+      this.refreshCapabilities(true)
+    }
     this.service.overview().subscribe({
       next: (res) => {
         this.runtimes = res.runtimes ?? []
@@ -61,7 +64,10 @@ export class RuntimeLabComponent implements OnInit {
     })
   }
 
-  refreshCapabilities(): void {
+  refreshCapabilities(force = false): void {
+    if (this.capabilityLoading || (!force && this.capabilityOverview)) {
+      return
+    }
     this.capabilityLoading = true
     this.service.capabilities().subscribe({
       next: (overview) => {
@@ -79,7 +85,10 @@ export class RuntimeLabComponent implements OnInit {
     return (this.capabilityOverview?.cards ?? []).filter((card) => card.runtimeId === runtimeId)
   }
 
-  refreshFeatureParity(): void {
+  refreshFeatureParity(force = false): void {
+    if (this.parityLoading || (!force && this.parityOverview)) {
+      return
+    }
     this.parityLoading = true
     this.service.featureParity().subscribe({
       next: (overview) => {
@@ -91,6 +100,15 @@ export class RuntimeLabComponent implements OnInit {
         this.parityLoading = false
       },
     })
+  }
+
+  onParityToggle(event: Event): void {
+    this.parityOpen = (event.target as HTMLDetailsElement).open
+    if (!this.parityOpen) {
+      return
+    }
+    this.refreshFeatureParity()
+    this.refreshCapabilities()
   }
 
   dispositionColor(disposition: RuntimeFeatureDisposition): string {
