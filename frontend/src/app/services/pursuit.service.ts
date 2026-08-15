@@ -61,9 +61,9 @@ export class PursuitService {
     }).pipe(map((records) => (records || []).map((record) => this.normalizePursuit(record))));
   }
 
-  dashboard(): Observable<IPursuitDashboard> {
+  dashboard(view: 'summary' | 'counts' = 'summary'): Observable<IPursuitDashboard> {
     return this.http.get<IPursuitDashboard>(`${this.apiUrl}/dashboard`, {
-      params: new HttpParams().set('view', 'summary'),
+      params: new HttpParams().set('view', view),
     }).pipe(
       map((dashboard) => this.normalizeDashboard(dashboard)),
     );

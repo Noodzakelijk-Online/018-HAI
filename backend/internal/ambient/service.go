@@ -108,6 +108,7 @@ type pursuitAmbientOpportunityRouter interface {
 type Service interface {
 	Overview() (*Overview, error)
 	OverviewForOwner(ownerIdentity string) (*Overview, error)
+	OverviewSummaryForOwner(ownerIdentity string) (*Overview, error)
 	Scan(trigger string) (*models.AmbientScan, error)
 	ScanForOwner(ownerIdentity, trigger string) (*models.AmbientScan, error)
 	UpdateNeedForOwner(ownerIdentity, key string, request NeedUpdateRequest) (*models.AmbientNeed, error)
@@ -137,16 +138,27 @@ func (s *service) Overview() (*Overview, error) {
 }
 
 func (s *service) OverviewForOwner(ownerIdentity string) (*Overview, error) {
+	return s.overviewForOwner(ownerIdentity, true, 12)
+}
+
+func (s *service) OverviewSummaryForOwner(ownerIdentity string) (*Overview, error) {
+	return s.overviewForOwner(ownerIdentity, false, 3)
+}
+
+func (s *service) overviewForOwner(ownerIdentity string, includeOpportunities bool, scanLimit int) (*Overview, error) {
 	needs, err := s.needsForOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
 	}
-	opportunities, err := s.repo.OpportunitiesForOwner(strings.TrimSpace(ownerIdentity), "", 75)
-	if err != nil {
-		return nil, err
+	opportunities := []models.AmbientOpportunity{}
+	if includeOpportunities {
+		opportunities, err = s.repo.OpportunitiesForOwner(strings.TrimSpace(ownerIdentity), "", 75)
+		if err != nil {
+			return nil, err
+		}
+		opportunities = s.visibleOpportunities(ownerIdentity, opportunities)
 	}
-	opportunities = s.visibleOpportunities(ownerIdentity, opportunities)
-	scans, err := s.repo.ScansForOwner(strings.TrimSpace(ownerIdentity), 12)
+	scans, err := s.repo.ScansForOwner(strings.TrimSpace(ownerIdentity), scanLimit)
 	if err != nil {
 		return nil, err
 	}

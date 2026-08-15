@@ -162,11 +162,13 @@ func TestDismissOpportunityWithoutUsefulNoteDoesNotStoreMemory(t *testing.T) {
 }
 
 type ambientRepositoryStub struct {
-	opportunity          *models.AmbientOpportunity
-	needs                []models.AmbientNeed
-	overrides            []models.AmbientNeedOverride
-	scans                []models.AmbientScan
-	saveOpportunityCalls int
+	opportunity                *models.AmbientOpportunity
+	needs                      []models.AmbientNeed
+	overrides                  []models.AmbientNeedOverride
+	scans                      []models.AmbientScan
+	saveOpportunityCalls       int
+	opportunitiesForOwnerCalls int
+	lastScanLimit              int
 }
 
 func (r *ambientRepositoryStub) Needs() ([]models.AmbientNeed, error) {
@@ -236,6 +238,7 @@ func (r *ambientRepositoryStub) Opportunities(string, int) ([]models.AmbientOppo
 }
 
 func (r *ambientRepositoryStub) OpportunitiesForOwner(ownerIdentity, status string, limit int) ([]models.AmbientOpportunity, error) {
+	r.opportunitiesForOwnerCalls++
 	items, _ := r.Opportunities(status, limit)
 	result := make([]models.AmbientOpportunity, 0, len(items))
 	for _, item := range items {
@@ -259,12 +262,16 @@ func (r *ambientRepositoryStub) Scans(int) ([]models.AmbientScan, error) {
 	return r.scans, nil
 }
 
-func (r *ambientRepositoryStub) ScansForOwner(ownerIdentity string, _ int) ([]models.AmbientScan, error) {
+func (r *ambientRepositoryStub) ScansForOwner(ownerIdentity string, limit int) ([]models.AmbientScan, error) {
+	r.lastScanLimit = limit
 	result := []models.AmbientScan{}
 	for _, scan := range r.scans {
 		if scan.OwnerIdentity == ownerIdentity {
 			result = append(result, scan)
 		}
+	}
+	if len(result) > limit {
+		result = result[:limit]
 	}
 	return result, nil
 }

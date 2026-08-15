@@ -358,6 +358,30 @@ func dashboardSummary(source *Dashboard) *Dashboard {
 	return &result
 }
 
+func dashboardCounts(source *Dashboard) *Dashboard {
+	if source == nil {
+		return nil
+	}
+	counts := make(map[string]int64, len(source.Counts))
+	for key, value := range source.Counts {
+		counts[key] = value
+	}
+	return &Dashboard{
+		Counts:               counts,
+		DecisionQueue:        []PursuitDashboardDecision{},
+		NeedsRobert:          []PursuitListItem{},
+		VAReady:              []PursuitListItem{},
+		SystemReady:          []PursuitListItem{},
+		Blocked:              []PursuitListItem{},
+		Stale:                []PursuitListItem{},
+		ReviewDue:            []PursuitListItem{},
+		PlanningNeeded:       []PursuitListItem{},
+		RecentlyChanged:      []PursuitListItem{},
+		HighRisk:             []PursuitListItem{},
+		CompletionCandidates: []PursuitListItem{},
+	}
+}
+
 func dashboardListSummary(source []PursuitListItem) []PursuitListItem {
 	result := make([]PursuitListItem, len(source))
 	for index, item := range source {

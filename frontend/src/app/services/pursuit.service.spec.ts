@@ -19,6 +19,21 @@ describe('PursuitService response normalization', () => {
     });
   });
 
+  it('requests aggregate-only pursuit counts for lightweight consumers', (done) => {
+    const http = {
+      get: jasmine.createSpy('get').and.returnValue(of({ counts: { active: 2, needsRobert: 1 } })),
+    };
+    const service = new PursuitService(http as any);
+
+    service.dashboard('counts').subscribe((dashboard) => {
+      expect(dashboard.counts['active']).toBe(2);
+      expect(dashboard.needsRobert).toEqual([]);
+      const [, options] = http.get.calls.mostRecent().args;
+      expect(options.params.get('view')).toBe('counts');
+      done();
+    });
+  });
+
   it('submits portfolio planning to the advisory collection endpoint', (done) => {
     const response = { authority: 'advisory_only', canExecute: false, priorities: [], exclusions: [] };
     const http = {

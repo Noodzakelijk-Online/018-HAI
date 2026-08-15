@@ -125,6 +125,38 @@ func TestPursuitRoutesRequireAnAuthenticatedOwner(t *testing.T) {
 	}
 }
 
+func TestDashboardCountsViewReturnsOnlyAggregateQueues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	if _, err := service.Create(CreateRequest{Title: "Count this pursuit", OwnerIdentity: "alice"}); err != nil {
+		t.Fatalf("Create pursuit: %v", err)
+	}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.GET("/pursuits/dashboard", NewHandler(service).Dashboard)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/pursuits/dashboard?view=counts", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("counts dashboard status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var result Dashboard
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode counts dashboard: %v", err)
+	}
+	if result.Counts["active"] != 1 {
+		t.Fatalf("counts dashboard active = %d, want 1", result.Counts["active"])
+	}
+	if len(result.DecisionQueue) != 0 || len(result.NeedsRobert) != 0 || len(result.RecentlyChanged) != 0 {
+		t.Fatalf("counts dashboard retained record queues: %#v", result)
+	}
+}
+
 func TestArchiveEndpointRequiresExplicitArchiveIntent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeRepo()

@@ -523,6 +523,31 @@ func TestOverviewForOwnerFallsBackToDefaults(t *testing.T) {
 	}
 }
 
+func TestOverviewSummaryForOwnerSkipsOpportunitiesAndBoundsScanHistory(t *testing.T) {
+	repo := &ambientRepositoryStub{needs: defaultNeeds()}
+	for index := 0; index < 8; index++ {
+		repo.scans = append(repo.scans, models.AmbientScan{OwnerIdentity: "alice", Trigger: "scheduled"})
+	}
+	engine := NewService(repo, nil, nil)
+
+	overview, err := engine.OverviewSummaryForOwner("alice")
+	if err != nil {
+		t.Fatalf("OverviewSummaryForOwner: %v", err)
+	}
+	if repo.opportunitiesForOwnerCalls != 0 {
+		t.Fatalf("summary loaded %d opportunity collections, want 0", repo.opportunitiesForOwnerCalls)
+	}
+	if repo.lastScanLimit != 3 {
+		t.Fatalf("summary scan limit = %d, want 3", repo.lastScanLimit)
+	}
+	if len(overview.Scans) != 3 {
+		t.Fatalf("summary scans = %d, want 3", len(overview.Scans))
+	}
+	if overview.Opportunities == nil || len(overview.Opportunities) != 0 {
+		t.Fatalf("summary opportunities = %#v, want an empty collection", overview.Opportunities)
+	}
+}
+
 func TestScanForOwnerBuildsPrivatePursuitProposalsOnly(t *testing.T) {
 	pursuitID := uuid.New()
 	repo := &ambientRepositoryStub{needs: defaultNeeds()}

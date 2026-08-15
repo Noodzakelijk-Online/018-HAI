@@ -215,7 +215,7 @@ export class ControlCenterComponent implements OnInit {
         },
       })
 
-    this.ambientService.overview().pipe(
+    this.ambientService.overview('summary').pipe(
         timeout(2500),
         catchError(() => of(undefined))
       ).subscribe({
@@ -229,7 +229,7 @@ export class ControlCenterComponent implements OnInit {
         },
       })
 
-    this.pursuitService.dashboard().pipe(
+    this.pursuitService.dashboard('counts').pipe(
         timeout(1800),
         catchError(() => of(undefined))
       ).subscribe({
@@ -528,13 +528,10 @@ export class ControlCenterComponent implements OnInit {
   pursuitAttentionCount(): number {
     const dashboard = this.pursuitDashboard
     if (!dashboard) return 0
-    // The backend serialises empty lists as null (Go nil slices), so a brand-new
-    // account with no pursuits sends null here — guard each list rather than
-    // assuming an array.
     return (
-      (dashboard.needsRobert?.length ?? 0) +
-      (dashboard.blocked?.length ?? 0) +
-      (dashboard.stale?.length ?? 0)
+      Number(dashboard.counts?.['needsRobert'] || 0) +
+      Number(dashboard.counts?.['blocked'] || 0) +
+      Number(dashboard.counts?.['stale'] || 0)
     )
   }
 
