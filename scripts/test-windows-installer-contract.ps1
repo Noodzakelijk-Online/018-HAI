@@ -7,10 +7,11 @@ $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Pat
 $buildScript = Join-Path $PSScriptRoot "build-windows-installer.ps1"
 $installerScript = Join-Path $repositoryRoot "installer\windows\HAI.iss"
 $supportScript = Join-Path $repositoryRoot "installer\windows\Hai-InstallerSupport.ps1"
+$localModelScript = Join-Path $repositoryRoot "installer\windows\Enable-LocalModel.ps1"
 $initializerScript = Join-Path $PSScriptRoot "initialize-windows.ps1"
 $documentation = Join-Path $repositoryRoot "docs\windows-installer.md"
 
-foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $initializerScript, $documentation)) {
+foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $localModelScript, $initializerScript, $documentation)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Windows installer contract is missing: $requiredFile"
     }
@@ -30,6 +31,7 @@ if ($gitignore -notmatch [Regex]::Escape("/installer/release/")) {
 foreach ($script in @(
     $buildScript,
     $supportScript,
+    $localModelScript,
     (Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"),
     (Join-Path $repositoryRoot "installer\windows\Stop-HAI.ps1"),
     (Join-Path $repositoryRoot "installer\windows\HAI-Status.ps1"),
@@ -48,6 +50,41 @@ foreach ($required in @(
 )) {
     if ($build -notmatch [Regex]::Escape($required)) {
         throw "Installer build contract is missing '$required'."
+    }
+}
+
+if ($support -match [Regex]::Escape('{{index .Config.Labels "com.docker.compose.project.working_dir"}}')) {
+    throw "Installer conflict detection must not pass nested quotes through Docker's Go template."
+}
+if ($support -notmatch [Regex]::Escape('{{json .Config.Labels}}')) {
+    throw "Installer conflict detection must parse Docker labels as JSON."
+}
+if ($support -notmatch [Regex]::Escape('inspectExitCode')) {
+    throw "Installer conflict detection must preserve Docker's exit code before processing output."
+}
+
+foreach ($required in @(
+    "Enable local model",
+    "Enable-LocalModel.ps1"
+)) {
+    if ($installer -notmatch [Regex]::Escape($required)) {
+        throw "Inno Setup local-model activation is missing '$required'."
+    }
+}
+
+$localModel = [IO.File]::ReadAllText($localModelScript)
+foreach ($required in @(
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL_IDS",
+    "qwen2.5:0.5b",
+    "ollama pull",
+    "--profile",
+    "Wait-HaiReady",
+    "containerIDLine",
+    "serviceExitCode"
+)) {
+    if ($localModel -notmatch [Regex]::Escape($required)) {
+        throw "Local-model activation contract is missing '$required'."
     }
 }
 
@@ -157,6 +194,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot ".env.example") -PathTy
 foreach ($requiredPayloadPath in @(
     "docker-compose.local.yml",
     "installer\windows\Start-HAI.ps1",
+    "installer\windows\Enable-LocalModel.ps1",
     "installer\windows\Stop-HAI.ps1",
     "installer\windows\HAI-Status.ps1"
 )) {

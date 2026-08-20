@@ -77,7 +77,20 @@ function Assert-HaiSingleInstallation {
 
     $workingDirectories = @(
         $containerIds |
-            ForEach-Object { & docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' $_ 2>$null } |
+            ForEach-Object {
+                $labelLines = @(& docker inspect --format '{{json .Config.Labels}}' $_ 2>$null)
+                $inspectExitCode = $LASTEXITCODE
+                $labelsJSON = $labelLines | Select-Object -First 1
+                if ($inspectExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($labelsJSON)) {
+                    throw "Could not inspect the existing HAI container $_ before checking its installation directory."
+                }
+                try {
+                    $labels = $labelsJSON | ConvertFrom-Json -ErrorAction Stop
+                } catch {
+                    throw "Existing HAI container $_ returned invalid Compose labels. Stop it manually before starting this installation."
+                }
+                [string]$labels.'com.docker.compose.project.working_dir'
+            } |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
             Select-Object -Unique
     )
