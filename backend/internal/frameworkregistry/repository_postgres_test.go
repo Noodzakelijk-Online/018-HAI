@@ -260,9 +260,9 @@ func TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun(t *testing.T) {
 		t.Fatalf("reapply framework registry migration: %v", err)
 	}
 	// The extension and baseline migrations remain applied throughout this
-	// focused rollback. Only migrations after the framework-registry migration
-	// are eligible to be replayed here.
-	if want := len(preMigrationVersionsAfter(t, frameworkRegistryMigrationVersion)); reapplied != want {
+	// focused rollback. The framework registry itself plus every later
+	// migration are replayed.
+	if want := len(preMigrationVersionsAfter(t, frameworkRegistryMigrationVersion)) + 1; reapplied != want {
 		t.Fatalf("reapplied %d migrations, want %d", reapplied, want)
 	}
 	if !relationExists(t, db, "framework_selection_records") {
