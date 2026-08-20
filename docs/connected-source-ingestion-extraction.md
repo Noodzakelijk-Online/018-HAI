@@ -40,6 +40,14 @@ is never stored in the source row or request URL, and can only read LARO's
 bounded `hai:read` feed. HAI marks every LARO extraction sensitive, prevents
 automatic memory promotion, and has no LARO write operation.
 
+Worker Control uses a separate `worker-control` adapter for owner-scoped
+commitment and reminder events. Its revocable dashboard key remains only in the
+environment; HAI requests a bounded read-only feed, rejects redirects and
+unexpected record contracts, and persists only constrained
+`worker-control://commitments/<id>/events/<id>` provenance. Every extraction is
+sensitive and review-gated. HAI has no Worker Control create, update, reminder,
+or completion write operation.
+
 The ShareT path uses an operator-created `connector:read` credential stored only
 in the HAI environment. It verifies read capability, follows all link-history
 pages up to an explicit completeness limit, and fails instead of silently
