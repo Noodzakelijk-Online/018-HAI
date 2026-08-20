@@ -259,7 +259,10 @@ func TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reapply framework registry migration: %v", err)
 	}
-	if want := len(preMigrationVersionsAfter(t, "pre/0000")); reapplied != want {
+	// The extension and baseline migrations remain applied throughout this
+	// focused rollback. Only migrations after the framework-registry migration
+	// are eligible to be replayed here.
+	if want := len(preMigrationVersionsAfter(t, frameworkRegistryMigrationVersion)); reapplied != want {
 		t.Fatalf("reapplied %d migrations, want %d", reapplied, want)
 	}
 	if !relationExists(t, db, "framework_selection_records") {
@@ -272,6 +275,9 @@ func TestFrameworkRegistryPostgresOwnerScopeConstraintsAndHistory(t *testing.T) 
 	executeEmbeddedMigration(t, db, "pre/0001_extensions.up.sql")
 	executeEmbeddedMigration(t, db, "pre/0003_framework_registry.up.sql")
 	executeEmbeddedMigration(t, db, "pre/0005_framework_operating_contract.up.sql")
+	// Selection records now include the selector-v5 risk contract. Apply its
+	// migration before testing repository writes against that schema.
+	executeEmbeddedMigration(t, db, "pre/0029_framework_selector_v5_digest.up.sql")
 	repo := NewGormRepository(db)
 
 	t.Run("preferences are owner scoped and unique per owner and framework", func(t *testing.T) {

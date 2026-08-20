@@ -316,8 +316,10 @@ jobs:
           DB_USER: postgres
           DB_PASSWORD: postgres
           DB_NAME: automation_hub
-          # Empty CI database: let the schema materialise on boot.
-          DB_AUTOMIGRATE: "true"
+          # Real-stack acceptance verifies the versioned schema exactly as an
+          # installed deployment uses it. AutoMigrate is development-only and
+          # must not reconcile migration-owned constraints here.
+          DB_AUTOMIGRATE: "false"
           JWT_SECRET: devsecret
           # Production-mode startup requires a non-placeholder approval proof
           # key. This test-only value never ships in an installer payload.
