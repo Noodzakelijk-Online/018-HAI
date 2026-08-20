@@ -117,7 +117,10 @@ func RunMigrations(db *gorm.DB) error {
 			&models.WorkflowSourceLink{},
 			&models.WorkflowDecision{},
 			&models.WorkflowEvent{},
-			&models.WorkflowCompletionAttestation{},
+			// workflow_completion_attestations is governed by a versioned SQL
+			// migration. Including it here makes GORM try to remove the named
+			// database uniqueness constraint when the Go model intentionally has
+			// no generated unique index.
 			&models.WorkflowReminderActivationRequest{},
 			&models.WorkflowReminderActivationDecision{},
 			&models.Pursuit{},
