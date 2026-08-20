@@ -12,6 +12,7 @@ images/
 frontend/node_modules/
 frontend/.npm-cache/
 frontend/dist/
+.angular/
 backend/images/
 backend/.gocache-*/
 **/__pycache__/

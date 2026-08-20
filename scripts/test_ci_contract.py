@@ -45,6 +45,17 @@ class CIWorkflowContractTest(unittest.TestCase):
                 )
                 self.assertIn("FROM ubuntu:24.04", dockerfile)
 
+    def test_local_compose_uses_one_lightweight_kafka_protocol_broker(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        self.assertIn("docker.redpanda.com/redpandadata/redpanda:", compose)
+        self.assertNotIn("confluentinc/cp-zookeeper", compose)
+        self.assertNotIn("confluentinc/cp-kafka", compose)
+        self.assertNotIn("  zookeeper:\n", compose)
+        self.assertNotIn("  kafka-network:\n", compose)
+        self.assertIn("mem_limit: ${KAFKA_MEMORY_LIMIT:-256m}", compose)
+        self.assertIn("cpus: ${KAFKA_CPU_LIMIT:-0.5}", compose)
+        self.assertIn("--overprovisioned=true", compose)
+
     def test_directly_invoked_contract_and_smoke_files_exist(self) -> None:
         for relative_path in (
             "nginx-config/test_gateway_contract.py",

@@ -179,6 +179,10 @@ services:
       HAI_ODOO_API_KEY: ${HAI_ODOO_API_KEY:-}
       HAI_ODOO_ALLOWED_MODELS: ${HAI_ODOO_ALLOWED_MODELS:-crm.lead,project.task}
       HAI_ODOO_SYNC_LIMIT: ${HAI_ODOO_SYNC_LIMIT:-20}
+      HAI_SHARET_ENABLED: ${HAI_SHARET_ENABLED:-false}
+      HAI_SHARET_BASE_URL: ${HAI_SHARET_BASE_URL:-}
+      HAI_SHARET_CONNECTOR_TOKEN: ${HAI_SHARET_CONNECTOR_TOKEN:-}
+      HAI_SHARET_SYNC_LIMIT: ${HAI_SHARET_SYNC_LIMIT:-1000}
       HAI_AIRBYTE_ENABLED: ${HAI_AIRBYTE_ENABLED:-false}
       HAI_AIRBYTE_BASE_URL: ${HAI_AIRBYTE_BASE_URL:-}
       HAI_AIRBYTE_API_KEY: ${HAI_AIRBYTE_API_KEY:-}
@@ -187,6 +191,10 @@ services:
       HAI_LARO_BASE_URL: ${HAI_LARO_BASE_URL:-}
       HAI_LARO_CONNECTOR_TOKEN: ${HAI_LARO_CONNECTOR_TOKEN:-}
       HAI_LARO_SYNC_LIMIT: ${HAI_LARO_SYNC_LIMIT:-50}
+      HAI_WORKER_CONTROL_ENABLED: ${HAI_WORKER_CONTROL_ENABLED:-false}
+      HAI_WORKER_CONTROL_BASE_URL: ${HAI_WORKER_CONTROL_BASE_URL:-}
+      HAI_WORKER_CONTROL_CONNECTOR_TOKEN: ${HAI_WORKER_CONTROL_CONNECTOR_TOKEN:-}
+      HAI_WORKER_CONTROL_SYNC_LIMIT: ${HAI_WORKER_CONTROL_SYNC_LIMIT:-50}
       HAI_CLOUDQUERY_SUMMARY_ENABLED: ${HAI_CLOUDQUERY_SUMMARY_ENABLED:-false}
       HAI_CLOUDQUERY_ALLOWED_ROOT: ${HAI_CLOUDQUERY_ALLOWED_ROOT:-/cloudquery-summary}
       HAI_CLOUDQUERY_SUMMARY_PATH: ${HAI_CLOUDQUERY_SUMMARY_PATH:-/cloudquery-summary/summary.jsonl}
@@ -1408,52 +1416,57 @@ services:
       - idp-network
       - automation-hub-network
 
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.1
-    container_name: 018-hai-zookeeper
-    restart: unless-stopped
-    environment:
-      ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_PORT}
-      ZOOKEEPER_TICK_TIME: 2000
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 ${ZOOKEEPER_PORT}"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
-    networks:
-      - kafka-network
-
   kafka:
-    image: confluentinc/cp-kafka:7.6.1
+    # Redpanda implements Kafka's protocol without the separate ZooKeeper or
+    # Java broker footprint. Existing clients keep the kafka:9092 contract.
+    image: docker.redpanda.com/redpandadata/redpanda:v26.2.1@sha256:9a47c1f8d6736f98fa2616f0b715c051cb0bdac1a1176e38321bf45a5b572d
     container_name: 018-hai-kafka
     hostname: kafka
     restart: unless-stopped
-    depends_on:
-      zookeeper:
-        condition: service_healthy
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:${ZOOKEEPER_PORT}
-      KAFKA_LISTENERS: INTERNAL://:9092
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    mem_limit: ${KAFKA_MEMORY_LIMIT:-256m}
+    mem_reservation: ${KAFKA_MEMORY_RESERVATION:-64m}
+    cpus: ${KAFKA_CPU_LIMIT:-0.5}
+    pids_limit: ${KAFKA_PIDS_LIMIT:-96}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command:
+      - redpanda
+      - start
+      - --kafka-addr
+      - internal://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - internal://kafka:9092
+      - --rpc-addr
+      - 0.0.0.0:33145
+      - --advertise-rpc-addr
+      - kafka:33145
+      - --smp
+      - "1"
+      - --overprovisioned=true
+      - --unsafe-bypass-fsync=false
+      - --lock-memory=false
+      - --reserve-memory
+      - 0M
+      - --check=false
+      - --default-log-level
+      - warn
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1"]
-      interval: 10s
-      timeout: 10s
+      test: ["CMD", "rpk", "cluster", "info", "-X", "brokers=127.0.0.1:9092"]
+      interval: 30s
+      timeout: 5s
       retries: 18
-      start_period: 30s
+      start_period: 15s
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
     networks:
-      - kafka-network
       - service-hub
 
   generic-auto:
+    # Legacy compatibility service. It is not part of the operational HAI
+    # path, so keep it opt-in instead of spending local resources at startup.
+    profiles: ["compatibility"]
     build:
       context: ./generic-auto
       dockerfile: dockerfile
@@ -1471,9 +1484,6 @@ services:
 networks:
   idp-network:
     name: 018-hai-idp-network
-    driver: bridge
-  kafka-network:
-    name: 018-hai-kafka-network
     driver: bridge
   automation-hub-network:
     name: 018-hai-automation-hub-network
@@ -1547,3 +1557,5 @@ volumes:
     name: 018-hai-temporal-postgres-data
   runner-ollama-data:
     name: 018-hai-runner-ollama-data
+  redpanda-data:
+    name: 018-hai-redpanda-data

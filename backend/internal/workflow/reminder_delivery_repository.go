@@ -84,15 +84,15 @@ func (r *GormRepository) FindDueReminderDeliveryAuthorizations(owner string, now
 		AttemptCount int `gorm:"column:attempt_count"`
 	}
 	rows := []row{}
-	query := r.DB.Table("workflow_reminder_delivery_authorizations AS authorization").
-		Select("authorization.*, COUNT(attempt.id) AS attempt_count").
-		Joins("LEFT JOIN workflow_reminder_delivery_attempts AS attempt ON attempt.authorization_id = authorization.id").
-		Where("authorization.reminder_at <= ? AND authorization.expires_at >= ?", now, now).
-		Where("NOT EXISTS (SELECT 1 FROM workflow_reminder_delivery_attempts final_attempt WHERE final_attempt.authorization_id = authorization.id AND final_attempt.status IN ?)", []string{ReminderDeliveryStatusDelivered, ReminderDeliveryStatusSuppressed, ReminderDeliveryStatusDeadLettered}).
-		Group("authorization.id").Having("COUNT(attempt.id) < ?", maxAttempts).
-		Order("authorization.reminder_at ASC, authorization.id ASC").Limit(limit)
+	query := r.DB.Table("workflow_reminder_delivery_authorizations AS authz").
+		Select("authz.*, COUNT(attempt.id) AS attempt_count").
+		Joins("LEFT JOIN workflow_reminder_delivery_attempts AS attempt ON attempt.authorization_id = authz.id").
+		Where("authz.reminder_at <= ? AND authz.expires_at >= ?", now, now).
+		Where("NOT EXISTS (SELECT 1 FROM workflow_reminder_delivery_attempts final_attempt WHERE final_attempt.authorization_id = authz.id AND final_attempt.status IN ?)", []string{ReminderDeliveryStatusDelivered, ReminderDeliveryStatusSuppressed, ReminderDeliveryStatusDeadLettered}).
+		Group("authz.id").Having("COUNT(attempt.id) < ?", maxAttempts).
+		Order("authz.reminder_at ASC, authz.id ASC").Limit(limit)
 	if strings.TrimSpace(owner) != "" {
-		query = query.Where("authorization.owner_identity = ?", strings.TrimSpace(owner))
+		query = query.Where("authz.owner_identity = ?", strings.TrimSpace(owner))
 	}
 	if err := query.Scan(&rows).Error; err != nil {
 		return nil, err
