@@ -528,6 +528,14 @@ docker compose up --build -d
 docker compose ps
 ```
 
+### Windows 11 installer
+
+For a product-style local install, build the Inno Setup executable and use its
+Start menu shortcuts instead of manually running Compose. The installer keeps
+the actual source-built stack loopback-only, stores first-run secrets outside
+the application directory, and refuses to start a second competing HAI stack.
+See [Windows installer](docs/windows-installer.md).
+
 The Windows initializer prompts for the first-run owner credentials and writes
 an ignored `.env.local` with independent cryptographic secrets, separate random
 database-owner and runtime-role passwords, a loopback-only gateway, production

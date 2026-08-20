@@ -72,7 +72,11 @@ function Set-DotEnvValue {
     if (-not [Regex]::IsMatch($Content, $pattern)) {
         throw "The environment template does not define $Name."
     }
-    return [Regex]::Replace($Content, $pattern, "$Name=$Value", 1)
+    $replacement = [Text.RegularExpressions.MatchEvaluator]{
+        param($match)
+        return "$Name=$Value"
+    }
+    return [Regex]::Replace($Content, $pattern, $replacement)
 }
 
 $content = [IO.File]::ReadAllText($examplePath)

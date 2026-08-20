@@ -6,6 +6,29 @@ on:
   pull_request:
 
 jobs:
+  windows-installer:
+    name: Windows installer build
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Installer payload and safety contract
+        shell: pwsh
+        run: ./scripts/test-windows-installer-contract.ps1
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Build Windows installer
+        shell: pwsh
+        run: ./scripts/build-windows-installer.ps1 -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: hai-windows-installer
+          path: installer/release/HAI-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 14
+
   backend:
     name: Backend build and tests
     runs-on: ubuntu-latest
@@ -508,15 +531,34 @@ jobs:
           $ErrorActionPreference = "Stop"
           $null = [ScriptBlock]::Create((Get-Content scripts/backup-windows.ps1 -Raw))
           $null = [ScriptBlock]::Create((Get-Content scripts/test-restore-windows.ps1 -Raw))
+          & .\scripts\test-windows-recovery-contract.ps1
+          $spacedRecovery = Join-Path $env:RUNNER_TEMP "HAI recovery path with spaces"
+          try {
+            [IO.Directory]::CreateDirectory($spacedRecovery) | Out-Null
+            foreach ($name in @(
+              "test-windows-recovery-contract.ps1",
+              "windows-recovery-contract.ps1",
+              "test-restore-windows.ps1"
+            )) {
+              Copy-Item -LiteralPath (Join-Path "scripts" $name) -Destination $spacedRecovery
+            }
+            & (Join-Path $spacedRecovery "test-windows-recovery-contract.ps1")
+          } finally {
+            if ([IO.Directory]::Exists($spacedRecovery)) {
+              [IO.Directory]::Delete($spacedRecovery, $true)
+            }
+          }
       - name: Windows first-run environment contract
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $envPath = Join-Path $env:RUNNER_TEMP "hai-windows.env"
+          $dollar = [char]36
+          $ownerPassword = "CI${dollar}1Fresh${dollar}&Clone-123!"
           $output = & .\scripts\initialize-windows.ps1 `
             -EnvFile $envPath `
             -AdminEmail "owner@example.test" `
-            -AdminPasswordPlainText "CI-Fresh-Clone-123!" `
+            -AdminPasswordPlainText $ownerPassword `
             -GatewayPort 18080
           $content = Get-Content -LiteralPath $envPath -Raw
           if ($content -match "(?m)^[A-Z0-9_]+=(?:change-this-[^\r\n]*|ChangeMe123!)$") {
@@ -536,6 +578,7 @@ jobs:
             }
           }
           foreach ($expected in @(
+            "FIRST_RUN_ADMIN_PASSWORD='$ownerPassword'",
             "HAI_A2A_BRIDGE_ENABLED=true",
             "HAI_A2A_BRIDGE_OWNER_ID=owner@example.test",
             "HAI_A2A_BRIDGE_URL=http://127.0.0.1:18080/api/v1/a2a",
@@ -545,7 +588,7 @@ jobs:
               throw "Generated Windows environment is missing $expected"
             }
           }
-          if (($output | Out-String) -match "CI-Fresh-Clone-123!") {
+          if (($output | Out-String) -match [Regex]::Escape($ownerPassword)) {
             throw "Windows initializer printed the owner password"
           }
       - name: Git Bash syntax and space-containing path

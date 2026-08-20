@@ -1234,6 +1234,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "scripts/prepare-ngrok-windows.ps1",
             "scripts/backup-windows.ps1",
             "scripts/test-restore-windows.ps1",
+            "test-windows-recovery-contract.ps1",
             r".\scripts\initialize-windows.ps1",
             "Generated Windows environment still contains a shipped placeholder",
             "Insecure example environment unexpectedly passed ngrok preflight",
@@ -1249,6 +1250,10 @@ class CIWorkflowContractTest(unittest.TestCase):
             'pg_restore --list $temporaryFiles[0].Path',
             'pg_restore --list $temporaryFiles[1].Path',
             '[IO.Compression.ZipFile]::CreateFromDirectory',
+            'phase2-control-state.tar.gz',
+            '$controlStateVolume = "018-hai-phase2-control-state"',
+            '${controlStateVolume}:/source:ro',
+            'formatVersion = 2',
             'Get-FileHash -Algorithm SHA256',
             'Wait-ContainerHealthy "018-hai-idp"',
             'Wait-ContainerHealthy "018-hai-backend"',
@@ -1257,7 +1262,13 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertIn(contract, backup)
 
         restore = (ROOT / "scripts" / "test-restore-windows.ps1").read_text(encoding="utf-8")
+        recovery_contract = (ROOT / "scripts" / "windows-recovery-contract.ps1").read_text(encoding="utf-8")
+        restore_contract = restore + recovery_contract
         for contract in (
+            '@("automation.dump", "identity.dump", "media.zip", "phase2-control-state.tar.gz")',
+            '$Manifest.controlStateSource -ne "018-hai-phase2-control-state"',
+            '018-hai-phase2-restore-drill-',
+            'docker volume rm',
             'if ($scratchAutomation -eq $liveAutomation -or $scratchIdentity -eq $liveIdentity)',
             'pg_restore -U $dbUser --exit-on-error --no-owner --no-privileges',
             "automation restore contains no public tables",
@@ -1266,7 +1277,14 @@ class CIWorkflowContractTest(unittest.TestCase):
             'dropdb -U $dbUser --if-exists $scratchIdentity',
         ):
             with self.subTest(contract=contract):
-                self.assertIn(contract, restore.lower() if "restore contains" in contract else restore)
+                self.assertIn(
+                    contract,
+                    restore_contract.lower() if "restore contains" in contract else restore_contract,
+                )
+
+        documentation = (ROOT / "docs" / "backup-restore.md").read_text(encoding="utf-8")
+        self.assertIn("Emergency-stop and autonomy controls", documentation)
+        self.assertIn("phase2-control-state.tar.gz", documentation)
 
     def test_smoke_aggregator_rejects_zero_or_missing_assertions(self) -> None:
         aggregator = (ROOT / "scripts" / "smoke-all.sh").read_text(
@@ -1286,11 +1304,28 @@ class CIWorkflowContractTest(unittest.TestCase):
         )
 
     def test_ci_never_uploads_generated_runtime_or_secret_artifacts(self) -> None:
-        self.assertNotIn("actions/upload-artifact", WORKFLOW)
+        self.assertIn("actions/upload-artifact@v4", WORKFLOW)
+        self.assertIn("name: hai-windows-installer", WORKFLOW)
+        self.assertIn("path: installer/release/HAI-Setup-*.exe", WORKFLOW)
+        self.assertNotIn("installer/release/payload", WORKFLOW)
+        self.assertNotIn("payload-manifest.json", WORKFLOW)
         self.assertNotRegex(WORKFLOW, r"(?i)\bupload[\w -]*(?:log|env|secret)")
+
+    def test_windows_installer_ci_compiles_the_distributable(self) -> None:
+        installer = job_block("windows-installer")
+        for contract in (
+            "runs-on: windows-latest",
+            "choco install innosetup --yes --no-progress",
+            "build-windows-installer.ps1 -Version",
+            "actions/upload-artifact@v4",
+            "retention-days: 14",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, installer)
 
     def test_every_job_has_an_explicit_timeout(self) -> None:
         for job_id in (
+            "windows-installer",
             "backend",
             "idp",
             "nginx-config-manager",

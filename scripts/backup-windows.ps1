@@ -8,6 +8,9 @@ param(
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $compose = Join-Path $root "docker-compose.local.yml"
+$controlStateVolume = "018-hai-phase2-control-state"
+$archiveImage = "018-hai-backend:local"
+. (Join-Path $PSScriptRoot "windows-recovery-contract.ps1")
 
 function Resolve-RepoPath([string]$Path) {
     if ([IO.Path]::IsPathRooted($Path)) { return [IO.Path]::GetFullPath($Path) }
@@ -63,9 +66,13 @@ $null = Require-Setting $settings "DB_USER"
 
 & docker compose --env-file $envPath -f $compose config --quiet
 if ($LASTEXITCODE -ne 0) { throw "Docker Compose validation failed." }
+& docker volume inspect $controlStateVolume | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Safety control-state volume is unavailable: $controlStateVolume" }
+& docker image inspect $archiveImage | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Local backend image is unavailable: $archiveImage. Run docker compose up --build first." }
 
 if ($ValidateOnly) {
-    Write-Host "Backup preflight passed for both Postgres databases and local media."
+    Write-Host "Backup preflight passed for both Postgres databases, local media, and persisted safety controls."
     exit 0
 }
 
@@ -79,6 +86,7 @@ $bundle = Join-Path $outputPath "hai-backup-$stamp"
 $automationDump = Join-Path $bundle "automation.dump"
 $identityDump = Join-Path $bundle "identity.dump"
 $mediaArchive = Join-Path $bundle "media.zip"
+$controlStateArchive = Join-Path $bundle "phase2-control-state.tar.gz"
 $temporaryFiles = @(
     @{ Container = "018-hai-postgres-automation"; Path = "/tmp/hai-automation-$stamp.dump" },
     @{ Container = "018-hai-postgres-idp"; Path = "/tmp/hai-identity-$stamp.dump" }
@@ -112,19 +120,40 @@ try {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [IO.Compression.ZipFile]::CreateFromDirectory($mediaPath, $mediaArchive, [IO.Compression.CompressionLevel]::Optimal, $false)
 
+    $modeJson = Read-HaiDockerVolumeDocument $controlStateVolume "background_mode.json" $archiveImage
+    $emergencyJson = Read-HaiDockerVolumeDocument $controlStateVolume "emergency_stop.json" $archiveImage
+    Assert-HaiControlStateDocuments $modeJson $emergencyJson
+
+    & docker run --rm --network none --read-only --cap-drop ALL --user 10001:10001 `
+        -v "${controlStateVolume}:/source:ro" `
+        -v "${bundle}:/backup" `
+        --entrypoint /bin/tar `
+        $archiveImage `
+        -czf "/backup/$([IO.Path]::GetFileName($controlStateArchive))" -C /source .
+    if ($LASTEXITCODE -ne 0) { throw "Persisted safety control-state backup failed." }
+    $controlStateEntries = @(& docker run --rm --network none --read-only --cap-drop ALL `
+        -v "${bundle}:/backup:ro" `
+        --entrypoint /bin/tar `
+        $archiveImage `
+        -tzf /backup/phase2-control-state.tar.gz)
+    if ($LASTEXITCODE -ne 0) { throw "Persisted safety control-state archive is not readable." }
+    Assert-HaiArchiveEntries $controlStateEntries
+
     $commit = (& git -C $root rev-parse HEAD 2>$null | Out-String).Trim()
-    $files = @($automationDump, $identityDump, $mediaArchive) | ForEach-Object {
+    $files = @($automationDump, $identityDump, $mediaArchive, $controlStateArchive) | ForEach-Object {
         $item = Get-Item -LiteralPath $_
         [ordered]@{ name = $item.Name; bytes = $item.Length; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant() }
     }
     $manifest = [ordered]@{
-        formatVersion = 1
+        formatVersion = 2
         createdAt = (Get-Date).ToUniversalTime().ToString("o")
         gitCommit = $commit
         databases = @($automationDB, $identityDB)
         mediaSource = "images"
+        controlStateSource = $controlStateVolume
         files = $files
     }
+    Assert-HaiRecoveryManifest ([pscustomobject]$manifest) $bundle
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $bundle "manifest.json") -Encoding utf8
     Write-Host "Backup created: $bundle"
 } catch {
