@@ -36,6 +36,10 @@ for s in "${SUITES[@]}"; do
   else
     line="${reported_line:-==> Result: missing or invalid}"
     summary+=("FAIL  ${s}  (${line#*==> })")
+    # Successful suites stay compact. On failure, retain the actual checks and
+    # backend exit message so CI and local operators can recover without
+    # rerunning each suite blindly.
+    printf '%s\n' "${out}"
     overall=1
   fi
   echo
