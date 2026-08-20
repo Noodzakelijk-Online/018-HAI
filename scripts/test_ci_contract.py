@@ -30,6 +30,17 @@ def job_block(job_id: str) -> str:
 
 
 class CIWorkflowContractTest(unittest.TestCase):
+    def test_release_process_does_not_advertise_a_colliding_same_host_canary(self) -> None:
+        release_process = (ROOT / "docs" / "release-process.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("## Canary (single-host)", release_process)
+        self.assertIn("isolated Docker context or host", release_process)
+        self.assertNotIn("scripts/Stop-HAI.ps1", release_process)
+        self.assertNotIn("scripts/Start-HAI.ps1", release_process)
+        self.assertIn("docker compose --env-file", release_process)
+
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:
