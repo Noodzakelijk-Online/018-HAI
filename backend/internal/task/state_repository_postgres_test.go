@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -256,12 +258,14 @@ func TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability(t *testi
 
 	testPostgresTaskStateConcurrentTransitions(t, db, repo, owner)
 
-	if err := infra.RollbackMigration(
-		db,
-		migrations.Files,
-		"pre",
-		"pre/0006_durable_job_fencing",
-	); err != nil {
+	// Later migrations may depend on task-state tables. Roll them back in
+	// reverse order before testing the older migration's rollback contract.
+	for _, version := range taskStatePreMigrationVersionsAfter(t, "pre/0006_durable_job_fencing") {
+		if err := infra.RollbackMigration(db, migrations.Files, "pre", version); err != nil {
+			t.Fatalf("rollback later migration %s before task state: %v", version, err)
+		}
+	}
+	if err := infra.RollbackMigration(db, migrations.Files, "pre", "pre/0006_durable_job_fencing"); err != nil {
 		t.Fatalf("rollback durable-job fencing migration before task state: %v", err)
 	}
 	if err := infra.RollbackMigration(
@@ -310,9 +314,30 @@ func TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability(t *testi
 	if err != nil {
 		t.Fatalf("reapply task-state migration: %v", err)
 	}
-	if reapplied != 3 || !taskStateRelationExists(t, db, "task_review_items") {
+	if reapplied != len(taskStatePreMigrationVersionsAfter(t, "pre/0003_framework_registry")) || !taskStateRelationExists(t, db, "task_review_items") {
 		t.Fatalf("task-state migration reapply = %d, relation=%t", reapplied, taskStateRelationExists(t, db, "task_review_items"))
 	}
+}
+
+func taskStatePreMigrationVersionsAfter(t *testing.T, version string) []string {
+	t.Helper()
+	entries, err := fs.ReadDir(migrations.Files, "pre")
+	if err != nil {
+		t.Fatalf("read pre migrations: %v", err)
+	}
+	versions := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+		candidate := "pre/" + strings.TrimSuffix(name, ".up.sql")
+		if candidate > version {
+			versions = append(versions, candidate)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(versions)))
+	return versions
 }
 
 func openTaskStatePostgresTestDB(t *testing.T) *gorm.DB {

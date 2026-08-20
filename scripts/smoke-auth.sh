@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 
+#!/usr/bin/env bash
+
+# Every smoke suite starts the backend in production mode. This deterministic
+# ephemeral key satisfies the production proof-key guard without granting any
+# authority outside the throwaway smoke database and process.
+: "${HAI_APPROVAL_PROOF_SIGNING_KEY:=smoke-approval-proof-signing-key-0123456789}"
+export HAI_APPROVAL_PROOF_SIGNING_KEY
+
 hai_smoke_mint_jwt() { # role, secret, optional subject
   local role="$1"
   local secret="$2"
