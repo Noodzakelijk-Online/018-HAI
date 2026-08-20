@@ -35,6 +35,19 @@ readiness, and opens `http://127.0.0.1:8088`.
 Use the Start menu entries to open the dashboard, inspect HAI status, or stop
 the stack. Stop HAI preserves the Docker volumes and local settings.
 
+## Enable a local EUR 0 model
+
+The installed stack does not download a model until you choose to do so. Select
+**Enable local model** from the HAI Local Start menu group to download the
+reviewed small `qwen2.5:0.5b` model, configure HAI to use only the private
+`ollama-local` service, restart the backend, and wait for `/readyz`.
+
+The model download can take several minutes and consumes local disk space. It
+does not enable cloud providers, expose ngrok access, change HAI's paid budget,
+or send connected-source data to another service. Use **Stop HAI** afterwards
+when the local model is not needed; Docker retains the downloaded model volume
+until you explicitly remove it.
+
 ## One installation at a time
 
 HAI uses one canonical Compose project and named Docker volumes. If it detects

@@ -31,6 +31,7 @@ Source: "..\release\payload\*"; DestDir: "{app}\app"; Flags: ignoreversion recur
 
 [Icons]
 Name: "{autoprograms}\HAI Local\Start HAI"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\app\installer\windows\Start-HAI.ps1"""; WorkingDir: "{app}\app"
+Name: "{autoprograms}\HAI Local\Enable local model"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\app\installer\windows\Enable-LocalModel.ps1"""; WorkingDir: "{app}\app"
 Name: "{autoprograms}\HAI Local\Open local dashboard"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\app\installer\windows\Open-HAI.ps1"""; WorkingDir: "{app}\app"
 Name: "{autoprograms}\HAI Local\HAI status"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\app\installer\windows\HAI-Status.ps1"""; WorkingDir: "{app}\app"
 Name: "{autoprograms}\HAI Local\Stop HAI"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\app\installer\windows\Stop-HAI.ps1"""; WorkingDir: "{app}\app"
