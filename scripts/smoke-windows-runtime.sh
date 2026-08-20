@@ -146,13 +146,14 @@ start_backend; wait_live
 check "emergency stop still engaged after restart" 'true' \
   "$(curl -sS "${hdr[@]}" "${BASE}/background/status" | jq -r '.emergencyStop.engaged==true')"
 
-echo "==> Resume re-enables processing"
-curl -sS "${hdr[@]}" -X POST "${BASE}/background/resume" >/dev/null
-check "processing active after resume" 'true' \
-  "$(curl -sS "${hdr[@]}" "${BASE}/background/status" | jq -r '.backgroundProcessingActive==true')"
-run_resumed="$(curl -sS "${hdr[@]}" -X POST "${BASE}/background/run")"
-check "background run processes work after resume" 'true' \
-  "$(echo "${run_resumed}" | jq -r '.classified>=1')"
+echo "==> Resume remains approval-gated"
+check "resume without exact approval is refused" '403' \
+  "$(curl -sS -o /dev/null -w '%{http_code}' "${hdr[@]}" -X POST "${BASE}/background/resume" -d '{}')"
+check "processing remains inactive without approval" 'true' \
+  "$(curl -sS "${hdr[@]}" "${BASE}/background/status" | jq -r '.backgroundProcessingActive==false')"
+run_blocked="$(curl -sS "${hdr[@]}" -X POST "${BASE}/background/run")"
+check "background run remains halted without approval" 'true' \
+  "$(echo "${run_blocked}" | jq -r '(.classified==0) and (.autoExecuted==0)')"
 
 echo "==> Mode change is validated + effective"
 check "invalid mode rejected" '400' \
