@@ -467,6 +467,12 @@ func initializeRoutes(router *gin.Engine) error {
 		if err != nil {
 			return err
 		}
+		opsControlReviewResolver, err := executionapproval.NewOpsControlReviewResolver(
+			taskStateRepository,
+		)
+		if err != nil {
+			return err
+		}
 		workflowApprovalRepository, err := approvaladapter.New(workflowRepository)
 		if err != nil {
 			return err
@@ -492,6 +498,12 @@ func initializeRoutes(router *gin.Engine) error {
 			taskReviewApprovalResolver,
 			workflowApprovalResolver,
 			portfolioApprovalResolver,
+		)
+		if err != nil {
+			return err
+		}
+		approvalResolver, err = approvalResolver.WithOpsControlReviewResolver(
+			opsControlReviewResolver,
 		)
 		if err != nil {
 			return err
@@ -613,6 +625,7 @@ func initializeRoutes(router *gin.Engine) error {
 		opsControlService.WithExecutionAuthorizer(
 			executionAuthorizationService,
 		)
+		opsControlService.WithControlReviewRepository(taskStateRepository)
 		initializeExecutionAuthorizationRoutes(
 			v1,
 			executionauth.NewInspectionHandler(executionAuthorizationService),
@@ -1645,6 +1658,8 @@ func initializeOpsControlRoutes(apiVersion *gin.RouterGroup, handler *opscontrol
 		// the autonomy mode.
 		bg.POST("/pause", requirePermission(rbac.PermExecute), handler.Pause)
 		bg.POST("/resume", requirePermission(rbac.PermAdmin), handler.Resume)
+		bg.POST("/resume-approval", requirePermission(rbac.PermAdmin), handler.RequestResumeApproval)
+		bg.POST("/resume-approval/:id/approve-and-resume", requirePermission(rbac.PermAdmin), handler.ApproveAndResume)
 		bg.PATCH("/mode", requirePermission(rbac.PermAdmin), handler.SetMode)
 	}
 	wr := apiVersion.Group("/windows-runtime")

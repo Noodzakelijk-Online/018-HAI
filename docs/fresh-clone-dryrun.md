@@ -27,10 +27,10 @@ Copy-Item .env.example .env.local
 docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
 docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps
-curl.exe -i http://localhost/
-curl.exe -i http://localhost/healthz
-curl.exe -i http://localhost/readyz
-curl.exe -i http://localhost/api/v1/llm/policy
+curl.exe -i http://127.0.0.1:8088/
+curl.exe -i http://127.0.0.1:8088/healthz
+curl.exe -i http://127.0.0.1:8088/readyz
+curl.exe -i http://127.0.0.1:8088/api/v1/llm/policy
 ```
 
 Expected result:

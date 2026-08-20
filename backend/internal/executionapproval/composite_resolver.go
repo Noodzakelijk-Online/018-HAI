@@ -20,6 +20,20 @@ type CompositeResolver struct {
 	taskReview executionauth.ApprovalResolver
 	workflow   executionauth.ApprovalResolver
 	portfolio  executionauth.ApprovalResolver
+	opsControl executionauth.ApprovalResolver
+}
+
+// WithOpsControlReviewResolver adds the dedicated exact-effect resolver used
+// for safety-control changes. Existing approval sources retain their dispatch
+// behavior and never fall back to this resolver.
+func (r *CompositeResolver) WithOpsControlReviewResolver(
+	resolver executionauth.ApprovalResolver,
+) (*CompositeResolver, error) {
+	if r == nil || isNilApprovalResolver(resolver) {
+		return nil, fmt.Errorf("%w: ops-control review resolver is required", ErrInvalidRequest)
+	}
+	r.opsControl = resolver
+	return r, nil
 }
 
 var _ executionauth.ApprovalResolver = (*CompositeResolver)(nil)
@@ -67,6 +81,11 @@ func (r *CompositeResolver) Resolve(
 		return r.workflow.Resolve(ctx, ownerIdentity, sourceID, bindingDigest)
 	case strings.HasPrefix(sourceID, portfolioDecisionPrefix):
 		return r.portfolio.Resolve(ctx, ownerIdentity, sourceID, bindingDigest)
+	case strings.HasPrefix(sourceID, OpsControlReviewPrefix):
+		if isNilApprovalResolver(r.opsControl) {
+			return executionauth.ResolvedApproval{}, ErrUnsupportedApprovalReference
+		}
+		return r.opsControl.Resolve(ctx, ownerIdentity, sourceID, bindingDigest)
 	default:
 		return executionauth.ResolvedApproval{}, ErrUnsupportedApprovalReference
 	}

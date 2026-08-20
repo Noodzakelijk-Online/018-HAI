@@ -9,6 +9,7 @@ import {
 import {
   IBackgroundStatus,
   IReadiness,
+  IResumeApprovalRequest,
 } from '../../models/runtime-control.model.interface'
 import { AuthSessionService } from '../../services/auth-session.service'
 import { RuntimeControlService } from '../../services/runtime-control.service'
@@ -27,6 +28,7 @@ export class RuntimeControlComponent implements OnInit {
   busy = false
   sessionUnavailable = false
   runtimeLoadError = ''
+  resumeApproval?: IResumeApprovalRequest
 
   readonly modes = ['autonomous_safe', 'approval_required', 'draft_only', 'read_only', 'paused']
 
@@ -48,6 +50,7 @@ export class RuntimeControlComponent implements OnInit {
     this.authSession = undefined
     this.status = undefined
     this.readiness = undefined
+    this.resumeApproval = undefined
 
     this.authSessionService.session().pipe(
       catchError(() => {
@@ -109,15 +112,38 @@ export class RuntimeControlComponent implements OnInit {
       return
     }
     this.busy = true
-    this.service.resume().subscribe({
+    this.service.requestResumeApproval().subscribe({
+      next: (approval) => {
+        this.busy = false
+        this.resumeApproval = approval
+        this.notification.info('Resume review prepared', 'Confirm the exact current emergency-stop revision before processing resumes.')
+      },
+      error: (err) => {
+        this.busy = false
+        this.notification.error('Resume review unavailable', err?.error?.error ?? 'HAI could not prepare a durable resume review.')
+      },
+    })
+  }
+
+  approveAndResume(): void {
+    if (!this.resumeApproval || !this.requirePermission(
+      this.canAdministerRuntime,
+      'Resume',
+      this.ownerControlExplanation
+    )) {
+      return
+    }
+    this.busy = true
+    this.service.approveAndResume(this.resumeApproval.reviewItemId).subscribe({
       next: () => {
         this.busy = false
-        this.notification.success('Resumed', 'Background processing re-enabled.')
+        this.resumeApproval = undefined
+        this.notification.success('Resumed', 'The owner approval was consumed for the current emergency-stop revision.')
         this.refresh()
       },
-      error: () => {
+      error: (err) => {
         this.busy = false
-        this.notification.error('Error', 'Resume failed.')
+        this.notification.error('Resume blocked', err?.error?.error ?? 'The review could not be consumed. Prepare a new review if the stop changed.')
       },
     })
   }

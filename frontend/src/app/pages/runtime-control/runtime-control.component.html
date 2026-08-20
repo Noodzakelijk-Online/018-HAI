@@ -82,7 +82,17 @@
           [nzLoading]="busy"
           (click)="resume()"
         >
-          Resume
+          Prepare resume review
+        </button>
+        <button
+          nz-button
+          nzType="primary"
+          *ngIf="s.emergencyStop.engaged && resumeApproval"
+          [disabled]="!canAdministerRuntime"
+          [nzLoading]="busy"
+          (click)="approveAndResume()"
+        >
+          Confirm and resume
         </button>
         <button
           nz-button
@@ -103,6 +113,9 @@
           Run recovery
         </button>
       </div>
+      <p class="rc__permission-note" *ngIf="resumeApproval">
+        Review prepared for the current emergency stop. Confirming consumes this one-time owner approval; a changed stop revision requires a new review.
+      </p>
       <p
         id="runtime-owner-explanation"
         class="rc__permission-note"
