@@ -35,6 +35,21 @@ readiness, and opens `http://127.0.0.1:8088`.
 Use the Start menu entries to open the dashboard, inspect HAI status, or stop
 the stack. Stop HAI preserves the Docker volumes and local settings.
 
+### Enable the local safe worker
+
+The dashboard starts in read-only-safe mode. Before HAI can run its confined
+local safe-worker check, sign in as the local owner and open
+`http://127.0.0.1:8088/framework-registry`. Review the built-in Constitution,
+prepare a draft, and explicitly activate it with the required confirmation and
+approval note. Then use **Stop HAI** and **Start HAI** once so the backend
+rebuilds its execution authorization boundary from the durable owner-approved
+policy.
+
+This does not authorize email, financial, legal, public, destructive, or
+account actions. Those remain separately approval-gated. If the Constitution
+is not activated, HAI reports the local safe worker as blocked rather than
+silently executing it.
+
 ## Enable a local EUR 0 model
 
 The installed stack does not download a model until you choose to do so. Select

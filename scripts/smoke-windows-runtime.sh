@@ -106,6 +106,11 @@ echo "==> Authentication boundary"
 check "API key alone is rejected" '401' \
   "$(curl -sS -o /dev/null -w '%{http_code}' "${key_hdr[@]}" "${BASE}/windows-runtime/readiness")"
 
+echo "==> Owner activates the durable local execution baseline"
+hai_smoke_activate_baseline_constitution "${BASE}" "${API_KEY}" "${owner_jwt}"
+kill "${BACKEND_PID}" 2>/dev/null; wait "${BACKEND_PID}" 2>/dev/null || true
+start_backend; wait_live
+
 echo "==> Windows-runtime readiness is truthful"
 rd="$(curl -sS "${hdr[@]}" "${BASE}/windows-runtime/readiness")"
 check "windows version gate is pending off-Windows" 'pending' \
