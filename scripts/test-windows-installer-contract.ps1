@@ -4,39 +4,165 @@ param()
 $ErrorActionPreference = "Stop"
 
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
-$requiredFiles = @(
-    "scripts\\build-windows-installer.ps1",
-    "scripts\\initialize-windows.ps1",
-    "installer\\windows\\HAI.iss",
-    "installer\\windows\\Hai-InstallerSupport.ps1",
-    "installer\\windows\\Start-HAI.ps1",
-    "installer\\windows\\Stop-HAI.ps1",
-    "installer\\windows\\Open-HAI.ps1",
-    "installer\\windows\\HAI-Status.ps1",
-    "docs\\windows-installer.md"
-)
+$buildScript = Join-Path $PSScriptRoot "build-windows-installer.ps1"
+$installerScript = Join-Path $repositoryRoot "installer\windows\HAI.iss"
+$supportScript = Join-Path $repositoryRoot "installer\windows\Hai-InstallerSupport.ps1"
+$initializerScript = Join-Path $PSScriptRoot "initialize-windows.ps1"
+$documentation = Join-Path $repositoryRoot "docs\windows-installer.md"
 
-foreach ($relativePath in $requiredFiles) {
-    if (-not (Test-Path -LiteralPath (Join-Path $repositoryRoot $relativePath) -PathType Leaf)) {
-        throw "Windows installer contract is missing: $relativePath"
+foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $initializerScript, $documentation)) {
+    if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
+        throw "Windows installer contract is missing: $requiredFile"
     }
 }
 
-$build = [IO.File]::ReadAllText((Join-Path $repositoryRoot "scripts\\build-windows-installer.ps1"))
-$support = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\\windows\\Hai-InstallerSupport.ps1"))
-$initializer = [IO.File]::ReadAllText((Join-Path $repositoryRoot "scripts\\initialize-windows.ps1"))
-$installer = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\\windows\\HAI.iss"))
+$build = [IO.File]::ReadAllText($buildScript)
+$installer = [IO.File]::ReadAllText($installerScript)
+$support = [IO.File]::ReadAllText($supportScript)
+$initializer = [IO.File]::ReadAllText($initializerScript)
+$docs = [IO.File]::ReadAllText($documentation)
+$gitignore = [IO.File]::ReadAllText((Join-Path $repositoryRoot ".gitignore"))
 
-foreach ($required in @("Docker Desktop", "docker compose", "127.0.0.1", "Wait-HaiReady", "Uninstall")) {
-    if (($build + $support + $initializer + $installer) -notmatch [Regex]::Escape($required)) {
-        throw "Windows installer contract is missing '$required'."
+if ($gitignore -notmatch [Regex]::Escape("/installer/release/")) {
+    throw "Generated installer release artifacts must be ignored by Git."
+}
+
+foreach ($script in @(
+    $buildScript,
+    $supportScript,
+    (Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"),
+    (Join-Path $repositoryRoot "installer\windows\Stop-HAI.ps1"),
+    (Join-Path $repositoryRoot "installer\windows\HAI-Status.ps1"),
+    (Join-Path $repositoryRoot "installer\windows\Open-HAI.ps1")
+)) {
+    $tokens = $null
+    $errors = $null
+    [Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors) | Out-Null
+    if ($errors.Count -gt 0) {
+        throw "PowerShell syntax error in ${script}: $($errors[0].Message)"
     }
 }
 
-foreach ($forbidden in @(".env.local", "db_data_automation", "db_data_idp", "GATEWAY_HOST_BIND=0.0.0.0")) {
+foreach ($required in @(
+    "-ExcludeRelativePath"
+)) {
+    if ($build -notmatch [Regex]::Escape($required)) {
+        throw "Installer build contract is missing '$required'."
+    }
+}
+
+if ($build -match [Regex]::Escape('ls-files --cached --others --exclude-standard)')) {
+    throw "Installer staging must not package arbitrary nonignored files from a developer checkout."
+}
+foreach ($required in @(
+    "installer/windows",
+    "scripts/build-windows-installer.ps1",
+    "docs/windows-installer.md"
+)) {
+    if ($build -notmatch [Regex]::Escape($required)) {
+        throw "Installer staging allowlist is missing '$required'."
+    }
+}
+
+foreach ($required in @(
+    "initialize-windows.ps1",
+    "docker compose",
+    "Docker Desktop",
+    "com.docker.compose.project=018-hai",
+    "HAI environment initialization failed"
+)) {
+    if ($support -notmatch [Regex]::Escape($required)) {
+        throw "Installer runtime contract is missing '$required'."
+    }
+}
+
+if ($initializer -notmatch [Regex]::Escape('GATEWAY_HOST_BIND') -or
+    $initializer -notmatch [Regex]::Escape('"127.0.0.1"')) {
+    throw "The first-run initializer does not enforce a loopback gateway."
+}
+
+foreach ($forbidden in @(
+    "Copy-Item -Path (Join-Path $repositoryRoot '.env.local')",
+    "GATEWAY_HOST_BIND=0.0.0.0",
+    "LOCAL_LOGIN_BYPASS_ENABLED=true",
+    "-match '(^|/)\\.env($|\\.)'"
+)) {
+    if ($build -match [Regex]::Escape($forbidden)) {
+        throw "Installer build script contains unsafe value '$forbidden'."
+    }
+}
+
+foreach ($required in @(
+    "[Setup]",
+    "[Files]",
+    "[Icons]",
+    "[Run]",
+    "HAI Local",
+    "Start-HAI.ps1",
+    "Stop-HAI.ps1",
+    "Open local dashboard"
+)) {
+    if ($installer -notmatch [Regex]::Escape($required)) {
+        throw "Inno Setup contract is missing '$required'."
+    }
+}
+
+if ($build -notmatch [Regex]::Escape('HAI_INSTALLER_OUTPUT_DIR') -or
+    $installer -notmatch [Regex]::Escape('HAI_INSTALLER_OUTPUT_DIR')) {
+    throw "Installer output-directory configuration is not wired through the build and Inno Setup scripts."
+}
+
+foreach ($forbidden in @(
+    ".env.local",
+    "db_data_automation",
+    "db_data_idp",
+    "connected-sources\\*"
+)) {
     if ($installer -match [Regex]::Escape($forbidden)) {
-        throw "Installer must not package local data or expose the gateway: $forbidden"
+        throw "Inno Setup script must not directly package local data: '$forbidden'."
     }
 }
 
-Write-Host "Windows installer behavioral contract passed."
+foreach ($required in @(
+    "Docker Desktop",
+    "127.0.0.1",
+    "%LOCALAPPDATA%\HAI",
+    "Uninstall",
+    "does not delete"
+)) {
+    if ($docs -notmatch [Regex]::Escape($required)) {
+        throw "Installer documentation is missing '$required'."
+    }
+}
+
+& $buildScript -SkipCompile
+if ($LASTEXITCODE -ne 0) {
+    throw "Installer payload preparation failed."
+}
+$payloadRoot = Join-Path $repositoryRoot "installer\release\payload"
+foreach ($forbiddenPayloadPath in @(
+    ".env.local",
+    ".env-backend",
+    ".env-gateway",
+    ".env-idp",
+    "connected-sources\private.txt"
+)) {
+    if (Test-Path -LiteralPath (Join-Path $payloadRoot $forbiddenPayloadPath)) {
+        throw "Installer payload contains excluded local data: $forbiddenPayloadPath"
+    }
+}
+if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot ".env.example") -PathType Leaf)) {
+    throw "Installer payload is missing the safe environment template."
+}
+foreach ($requiredPayloadPath in @(
+    "docker-compose.local.yml",
+    "installer\windows\Start-HAI.ps1",
+    "installer\windows\Stop-HAI.ps1",
+    "installer\windows\HAI-Status.ps1"
+)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot $requiredPayloadPath) -PathType Leaf)) {
+        throw "Installer payload is missing required product file: $requiredPayloadPath"
+    }
+}
+
+Write-Host "Windows installer behavioral contracts passed."

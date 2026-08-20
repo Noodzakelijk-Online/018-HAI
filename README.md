@@ -514,6 +514,14 @@ docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps
 ```
 
+### Windows 11 installer
+
+For a product-style local installation, build the Inno Setup executable and
+use its Start menu shortcuts rather than manually operating Compose. The
+installer keeps the source-built stack loopback-only, stores first-run secrets
+outside the application directory, and refuses to start a competing HAI stack.
+See [Windows installer](docs/windows-installer.md).
+
 Open [http://localhost](http://localhost).
 
 For a single-user local preview, set `LOCAL_LOGIN_BYPASS_ENABLED=true` and keep
