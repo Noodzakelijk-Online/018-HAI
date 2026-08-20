@@ -319,6 +319,9 @@ jobs:
           # Empty CI database: let the schema materialise on boot.
           DB_AUTOMIGRATE: "true"
           JWT_SECRET: devsecret
+          # Production-mode startup requires a non-placeholder approval proof
+          # key. This test-only value never ships in an installer payload.
+          HAI_APPROVAL_PROOF_SIGNING_KEY: ci-approval-proof-signing-key-0123456789
           SERVER_PORT: "8080"
           REDIS_ADDR: localhost:6379
           # Keep the acceptance run deterministic: no background schedulers.
