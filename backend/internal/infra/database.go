@@ -127,7 +127,9 @@ func RunMigrations(db *gorm.DB) error {
 			&models.PursuitLink{},
 			&models.PursuitActivity{},
 			&models.PursuitTaskAttempt{},
-			&models.PursuitPortfolioWorkflowSettlementProof{},
+			// pursuit_portfolio_workflow_settlement_proofs is an immutable,
+			// migration-owned proof ledger. GORM must not reconcile its named
+			// uniqueness constraints or append-only triggers.
 			&models.AmbientNeed{},
 			&models.AmbientNeedOverride{},
 			&models.AmbientOpportunity{},
