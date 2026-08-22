@@ -56,6 +56,21 @@ class CIWorkflowContractTest(unittest.TestCase):
             with self.subTest(path=relative_path):
                 self.assertTrue((ROOT / relative_path).is_file())
 
+    def test_running_stack_isolation_acceptance_covers_source_to_governed_work_routing(
+        self,
+    ) -> None:
+        script = (ROOT / "scripts" / "two-account-isolation-test.sh").read_text(
+            encoding="utf-8"
+        )
+        for contract in (
+            'source_sync=',
+            '"source sync persisted an extraction"',
+            '"source sync creates a governed pursuit/workflow outcome"',
+            'pursuitOutcomes',
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, script)
+
     def test_execution_boundary_race_tests_are_not_served_from_test_cache(
         self,
     ) -> None:
