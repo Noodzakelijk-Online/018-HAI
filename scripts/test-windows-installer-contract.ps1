@@ -148,6 +148,8 @@ foreach ($required in @(
     'stop zookeeper kafka nginxconfigmanager',
     'Set-HaiEventBusEnabled',
     'Set-HaiEventBusDisabled',
+    'Get-HaiEventBusEnabled',
+    'Set-HaiEventBusState -Enabled $eventBusWasEnabled',
     'IDP_KAFKA_ENABLED',
     'KAFKA_BROKERS',
     'BROKERS_ADDR'
@@ -288,6 +290,10 @@ try {
     }
     Assert-HaiLocalEnvironment
 
+    if (Get-HaiEventBusEnabled) {
+        throw "A newly initialized local environment must begin with the optional event bus disabled."
+    }
+
     Set-HaiEventBusEnabled
     $enabledEnvironment = [IO.File]::ReadAllText((Get-HaiEnvironmentFile))
     foreach ($required in @('IDP_KAFKA_ENABLED=true', 'KAFKA_BROKERS=kafka:9092', 'BROKERS_ADDR=kafka:9092')) {
@@ -296,12 +302,19 @@ try {
         }
     }
 
+    if (-not (Get-HaiEventBusEnabled)) {
+        throw "The event-bus state reader must report the enabled persisted configuration."
+    }
+
     Set-HaiEventBusDisabled
     $disabledEnvironment = [IO.File]::ReadAllText((Get-HaiEnvironmentFile))
     foreach ($required in @('IDP_KAFKA_ENABLED=false', 'KAFKA_BROKERS=', 'BROKERS_ADDR=')) {
         if ($disabledEnvironment -notmatch [Regex]::Escape($required)) {
             throw "Disabling the event bus must persist $required."
         }
+    }
+    if (Get-HaiEventBusEnabled) {
+        throw "The event-bus state reader must report the disabled persisted configuration."
     }
 } finally {
     $env:LOCALAPPDATA = $previousLocalAppData

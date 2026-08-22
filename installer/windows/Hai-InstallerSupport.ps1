@@ -217,6 +217,17 @@ function Set-HaiEventBusState {
     [IO.File]::WriteAllText($environmentFile, $content, $utf8WithoutBom)
 }
 
+function Get-HaiEventBusEnabled {
+    $environmentFile = Get-HaiEnvironmentFile
+    if (-not (Test-Path -LiteralPath $environmentFile -PathType Leaf)) {
+        throw "HAI local environment is missing. Start HAI once to create it before checking the event-bus setting."
+    }
+
+    return (Get-HaiEnvironmentValue `
+        -Content ([IO.File]::ReadAllText($environmentFile)) `
+        -Name "IDP_KAFKA_ENABLED").ToLowerInvariant() -eq "true"
+}
+
 function Set-HaiEventBusEnabled {
     Set-HaiEventBusState -Enabled $true
 }

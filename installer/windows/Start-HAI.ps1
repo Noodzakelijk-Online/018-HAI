@@ -15,6 +15,7 @@ Assert-HaiDockerReady
 Assert-HaiSingleInstallation
 Initialize-HaiLocalEnvironment -GatewayPort $GatewayPort
 Assert-HaiLocalEnvironment
+$eventBusWasEnabled = Get-HaiEventBusEnabled
 if ($EnableEventBus) {
     Set-HaiEventBusEnabled
 } else {
@@ -34,9 +35,19 @@ if ($EnableEventBus) {
     }
 }
 Write-Host "Starting the local HAI stack. The first run downloads and builds its containers." -ForegroundColor Cyan
-& docker @composeArguments @profileArguments up -d --build
-if ($LASTEXITCODE -ne 0) {
-    throw "HAI startup failed. Open Docker Desktop and inspect the 018-hai container logs."
+try {
+    & docker @composeArguments @profileArguments up -d --build
+    if ($LASTEXITCODE -ne 0) {
+        throw "HAI startup failed. Open Docker Desktop and inspect the 018-hai container logs."
+    }
+} catch {
+    $startupFailure = $_
+    try {
+        Set-HaiEventBusState -Enabled $eventBusWasEnabled
+    } catch {
+        throw "$($startupFailure.Exception.Message) HAI could not restore the previous optional event-bus setting: $($_.Exception.Message)"
+    }
+    throw $startupFailure
 }
 
 Wait-HaiReady -TimeoutSeconds $HealthTimeoutSeconds
