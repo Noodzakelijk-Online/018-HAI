@@ -982,12 +982,16 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   connectWhatsAppSource(): void {
+	if (this.connecting) {
+		return;
+	}
     const connector = this.connectors.find((item) => item.connectorKey === 'whatsapp-export');
     if (!connector?.enabled) {
       this.notification.warning('WhatsApp connector unavailable', 'Refresh connectors and verify the backend exposes whatsapp-export as enabled.');
       return;
     }
-    this.sourceService
+	this.connecting = true;
+	this.sourceService
       .createSource({
         connectorKey: 'whatsapp-export',
         name: this.whatsappForm.value.name || 'WhatsApp exported chats',
@@ -1000,7 +1004,7 @@ export class ConnectedSourcesComponent implements OnInit {
         permissions: ['metadata:read', 'chat:read', 'selected-chat-export-read'],
         excludePatterns: ['media omitted', 'omitted', 'spam'],
       })
-      .pipe(timeout(this.operationTimeoutMs))
+	  .pipe(timeout(this.operationTimeoutMs), finalize(() => (this.connecting = false)))
       .subscribe({
         next: (source) => {
           this.whatsappForm.patchValue({ sourceId: source.id });
@@ -1012,12 +1016,16 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   connectOdooSource(): void {
+	if (this.connecting) {
+		return;
+	}
     const connector = this.connectors.find((item) => item.connectorKey === 'odoo-herp');
     if (!connector?.enabled) {
       this.notification.warning('Odoo connector unavailable', 'Refresh connectors and verify the backend exposes odoo-herp as enabled.');
       return;
     }
-    this.sourceService
+	this.connecting = true;
+	this.sourceService
       .createSource({
         connectorKey: 'odoo-herp',
         name: this.odooForm.value.name || 'Odoo / HERP workspace',
@@ -1030,7 +1038,7 @@ export class ConnectedSourcesComponent implements OnInit {
         permissions: ['metadata:read', 'herp:read', 'odoo:read'],
         excludePatterns: ['password', 'secret', 'token', 'private'],
       })
-      .pipe(timeout(this.operationTimeoutMs))
+	  .pipe(timeout(this.operationTimeoutMs), finalize(() => (this.connecting = false)))
       .subscribe({
         next: (source) => {
           this.odooForm.patchValue({ sourceId: source.id });

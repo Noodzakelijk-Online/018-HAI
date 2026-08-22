@@ -322,7 +322,7 @@
                 <textarea nz-input rows="8" formControlName="pastedExport"></textarea>
               </label>
               <div class="form-footer">
-                <button type="button" nz-button nzType="default" (click)="connectWhatsAppSource()">Connect source</button>
+				<button type="button" nz-button nzType="default" (click)="connectWhatsAppSource()" [nzLoading]="connecting" [disabled]="connecting">Connect source</button>
                 <button type="button" nz-button nzType="default" (click)="syncWhatsAppFolder()" [nzLoading]="syncing">Scan folder</button>
                 <button type="button" nz-button nzType="primary" (click)="importWhatsAppPaste()" [nzLoading]="syncing">Import paste</button>
               </div>
@@ -373,7 +373,7 @@
               </div>
               <div class="form-footer">
                 <span>Write-back stays disabled; risky Odoo actions are approval-gated.</span>
-                <button type="button" nz-button nzType="default" (click)="connectOdooSource()">Connect source</button>
+				<button type="button" nz-button nzType="default" (click)="connectOdooSource()" [nzLoading]="connecting" [disabled]="connecting">Connect source</button>
                 <button type="button" nz-button nzType="primary" (click)="syncOdooApps()" [nzLoading]="syncing">Model apps</button>
               </div>
             </form>
