@@ -287,7 +287,7 @@ jobs:
         image: postgres:17-alpine
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ci-isolation-postgres-password
           POSTGRES_DB: automation_hub
         ports:
           - 5432:5432
@@ -320,7 +320,7 @@ jobs:
           DB_HOST: localhost
           DB_PORT: "5432"
           DB_USER: postgres
-          DB_PASSWORD: postgres
+          DB_PASSWORD: ci-isolation-postgres-password
           DB_NAME: automation_hub
           # Real-stack acceptance verifies the versioned schema exactly as an
           # installed deployment uses it. AutoMigrate is development-only and

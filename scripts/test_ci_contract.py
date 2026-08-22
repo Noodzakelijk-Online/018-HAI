@@ -82,6 +82,16 @@ class CIWorkflowContractTest(unittest.TestCase):
             backend,
         )
 
+    def test_production_isolation_fixture_never_uses_the_shipped_database_password(
+        self,
+    ) -> None:
+        isolation = job_block("isolation-acceptance")
+        fixture_password = "ci-isolation-postgres-password"
+
+        self.assertNotRegex(isolation, r"(?m)^\s+(?:POSTGRES_PASSWORD|DB_PASSWORD): postgres$")
+        self.assertEqual(isolation.count(f"POSTGRES_PASSWORD: {fixture_password}"), 1)
+        self.assertEqual(isolation.count(f"DB_PASSWORD: {fixture_password}"), 1)
+
     def test_backend_vulnerability_scan_is_pinned_and_blocking(self) -> None:
         backend = job_block("backend")
         self.assertIn(
