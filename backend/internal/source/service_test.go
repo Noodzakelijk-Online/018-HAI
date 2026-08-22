@@ -746,6 +746,39 @@ func TestRunDueScheduledSyncsSkipsManualAndNotDueSources(t *testing.T) {
 	}
 }
 
+func TestRunDueScheduledSyncsSkipsTrelloWhenCredentialsAreNoLongerConfigured(t *testing.T) {
+	t.Setenv(trelloAPIKeyEnv, "")
+	t.Setenv(trelloReadTokenEnv, "")
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:                sourceID,
+		ConnectorKey:      trelloConnectorKey,
+		Name:              "Robert's board",
+		Category:          "project_board",
+		Enabled:           true,
+		Status:            "active",
+		SyncFrequency:     "1h",
+		SyncTarget:        "board-id",
+		DefaultProjectKey: "018-HAI",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	run, err := service.RunDueScheduledSyncs(time.Now().UTC())
+	if err != nil {
+		t.Fatalf("RunDueScheduledSyncs: %v", err)
+	}
+	if run.Checked != 1 || run.Due != 0 || run.Completed != 0 || run.Failed != 0 || run.Skipped != 1 {
+		t.Fatalf("run = %#v, want unconfigured Trello source skipped without work", run)
+	}
+	if len(repo.jobs) != 0 {
+		t.Fatalf("sync jobs = %#v, want none for unavailable connector", repo.jobs)
+	}
+	if len(run.Messages) != 1 || !strings.Contains(run.Messages[0], "configuration is required") {
+		t.Fatalf("messages = %#v, want actionable configuration skip", run.Messages)
+	}
+}
+
 func TestRunDueScheduledSyncsDoesNotPersistConnectorFailureSecrets(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{

@@ -2774,6 +2774,9 @@ func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, str
 	if source.ConnectorKey == "whisper-audio" {
 		return false, "whisper-audio transcription is operator-triggered only"
 	}
+	if ready, reason := scheduledConnectorReady(source.ConnectorKey); !ready {
+		return false, reason
+	}
 	if !sourceHasNativeAdapter(source.ConnectorKey) {
 		return false, "scheduled adapter is not implemented for connector " + source.ConnectorKey
 	}
@@ -2788,6 +2791,45 @@ func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, str
 		return true, ""
 	}
 	return false, "not due yet"
+}
+
+// scheduledConnectorReady prevents a source that was connected before a
+// credential/configuration change from repeatedly creating failed scheduled
+// jobs. It deliberately checks only configuration that is global to the
+// connector; per-source authorization and target errors still surface through
+// the normal sync path when an actual scheduled run is possible.
+func scheduledConnectorReady(connectorKey string) (bool, string) {
+	switch strings.TrimSpace(connectorKey) {
+	case trelloConnectorKey:
+		if !trelloConfigured() {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	case gmailConnectorKey, driveConnectorKey, contactsConnectorKey, calendarConnectorKey:
+		if !googleOAuthReady() {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	case odooJSON2ConnectorKey:
+		if _, err := odooJSON2ConfigFromEnv(); err != nil {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	case shareTConnectorKey:
+		if _, err := shareTConfigFromEnv(); err != nil {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	case cloudQuerySummaryConnectorKey:
+		if _, err := cloudQuerySummaryConfigFromEnv(); err != nil {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	case airbyteInventoryConnectorKey:
+		if _, err := airbyteInventoryConfigFromEnv(); err != nil {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	case laroConnectorKey:
+		if _, err := laroConfigFromEnv(); err != nil {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	}
+	return true, ""
 }
 
 type jsonFeedEnvelope struct {
