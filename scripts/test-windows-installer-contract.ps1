@@ -165,7 +165,9 @@ foreach ($name in $initializerSettingNames) {
 $initializerTestRoot = Join-Path ([IO.Path]::GetTempPath()) ("hai-initializer-contract-" + [Guid]::NewGuid().ToString("N"))
 try {
     $initializerEnvironment = Join-Path $initializerTestRoot "hai.env"
-    & $initializerScript -EnvFile $initializerEnvironment -AdminEmail "operator@example.com" -AdminPasswordPlainText "installer-contract-password" -GatewayPort 8088
+    # Exercise the documented default. A fresh local install must use the
+    # same loopback port as the environment template and installer shortcuts.
+    & $initializerScript -EnvFile $initializerEnvironment -AdminEmail "operator@example.com" -AdminPasswordPlainText "installer-contract-password"
     if (-not (Test-Path -LiteralPath $initializerEnvironment -PathType Leaf)) {
         throw "The first-run initializer did not create a local environment file."
     }
