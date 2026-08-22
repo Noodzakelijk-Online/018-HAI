@@ -8,11 +8,12 @@ import { ConnectedSourcesComponent } from './connected-sources.component';
 describe('ConnectedSourcesComponent pursuit handoff', () => {
   function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router> } {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['error']);
     return {
       component: new ConnectedSourcesComponent(
         new FormBuilder(),
         {} as any,
-        {} as NzNotificationService,
+        notification,
         router,
         { mode: () => 'light' } as any,
       ),
@@ -224,6 +225,23 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 
     expect(sourceService.connectors).toHaveBeenCalledTimes(2);
     expect(sourceService.sources).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a visible recovery state when the source registry cannot load', () => {
+    const { component } = createComponent();
+    const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
+      'connectors', 'sources', 'connectionHealthSummary',
+    ]);
+    sourceService.connectors.and.returnValue(of([{ connectorKey: 'local-folder', enabled: true }]));
+    sourceService.sources.and.returnValue(throwError(() => new Error('gateway unavailable')));
+    sourceService.connectionHealthSummary.and.returnValue(of([]));
+    (component as any).sourceService = sourceService;
+
+    component.refresh();
+
+    expect(component.overviewLoadError).toContain('connected sources');
+    expect(component.connectors.length).toBe(1);
+    expect(component.sources).toEqual([]);
   });
 
   it('initializes the live Trello connector as a non-local, scheduled board source', () => {

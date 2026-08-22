@@ -70,6 +70,7 @@ export class ConnectedSourcesComponent implements OnInit {
   includeDisabled = true;
   includeArchived = false;
   loading = false;
+  overviewLoadError = '';
   private refreshQueued = false;
   connecting = false;
   syncing = false;
@@ -160,10 +161,13 @@ export class ConnectedSourcesComponent implements OnInit {
       return;
     }
     this.loading = true;
+    this.overviewLoadError = '';
+    const failedLoads: string[] = [];
     forkJoin({
       connectors: this.sourceService.connectors().pipe(
         timeout(this.loadTimeoutMs),
         catchError(() => {
+          failedLoads.push('connector status');
           this.notification.error('Connectors unavailable', 'Connector status did not load in time.');
           return of([] as ISourceConnector[]);
         })
@@ -171,6 +175,7 @@ export class ConnectedSourcesComponent implements OnInit {
       sources: this.sourceService.sources(this.includeDisabled).pipe(
         timeout(this.loadTimeoutMs),
         catchError(() => {
+          failedLoads.push('connected sources');
           this.notification.error('Sources unavailable', 'Connected sources did not load in time.');
           return of([] as IConnectedSource[]);
         })
@@ -184,6 +189,9 @@ export class ConnectedSourcesComponent implements OnInit {
         }
       }))
       .subscribe(({ connectors, sources }) => {
+        if (failedLoads.length) {
+          this.overviewLoadError = `Could not load ${failedLoads.join(' or ')}. Existing results may be incomplete.`;
+        }
         this.connectors = connectors;
         this.sources = sources;
         this.applySourceDefaults(sources);
