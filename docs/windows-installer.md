@@ -59,6 +59,11 @@ keeps the Windows footprint lower while preserving login, source intake,
 approvals, workflows, and audit records. IDP logs remain available through
 Docker Desktop, while non-critical account-notification events are skipped.
 
+The obsolete `generic-auto` compatibility server is also disabled by default.
+It is not part of HAI's governed execution engine. A legacy installation that
+still requires its `/generic-auto/` route may explicitly add the
+`legacy-compatibility` Compose profile after reviewing that dependency.
+
 For a deployment that explicitly needs the event bus, run this from the
 installed HAI program folder in PowerShell:
 

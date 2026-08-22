@@ -1026,7 +1026,7 @@ docs/                    Architecture, runbooks, evidence, audits, and roadmap
 .github/workflows/       CI pipeline
 docker-compose.local.yml Windows/local-first Compose topology
 .env.example             Environment template; copy to untracked .env.local
-generic-auto/            Legacy service, not the canonical HAI engine
+generic-auto/            Legacy compatibility server; disabled by default
 gate/                    Legacy gateway/config area; local Compose uses nginx-config/
 ```
 

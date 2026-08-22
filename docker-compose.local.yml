@@ -1550,6 +1550,10 @@ services:
       - service-hub
 
   generic-auto:
+    # Legacy compatibility server retained only for old route consumers. It is
+    # not part of the HAI engine and must not consume resources on a normal
+    # Windows installation.
+    profiles: ["legacy-compatibility"]
     build:
       context: ./generic-auto
       dockerfile: dockerfile

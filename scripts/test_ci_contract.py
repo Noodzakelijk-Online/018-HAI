@@ -216,6 +216,15 @@ class CIWorkflowContractTest(unittest.TestCase):
             with self.subTest(entrypoint_required=required):
                 self.assertIn(required, entrypoint)
 
+    def test_legacy_generic_auto_is_not_part_of_the_default_local_stack(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        start = compose.index("  generic-auto:\n")
+        end = compose.index("\nnetworks:\n", start)
+        service = compose[start:end]
+
+        self.assertIn('profiles: ["legacy-compatibility"]', service)
+        self.assertIn("Legacy compatibility server", service)
+
     def test_trello_read_only_connector_is_wired_to_the_runtime(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         backend_start = compose.index("  backend:\n")
