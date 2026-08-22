@@ -328,9 +328,9 @@ export class ConnectedSourcesComponent implements OnInit {
           this.notifySyncResult('Item sync', result);
           this.refresh();
         },
-        error: () => {
+        error: (error) => {
           this.syncing = false;
-          this.notification.error('Error', 'Sync failed.');
+          this.notification.error('Item sync failed', this.describeSourceError(error, 'The item could not be synced.'));
         },
       });
   }
@@ -897,7 +897,7 @@ export class ConnectedSourcesComponent implements OnInit {
         },
         error: (error) => {
           this.syncing = false;
-          this.notification.error('Source sync failed', error?.error?.error || 'The connector could not retrieve records.');
+          this.notification.error('Source sync failed', this.describeSourceError(error, 'The connector could not retrieve records.'));
         },
       });
   }
@@ -917,7 +917,7 @@ export class ConnectedSourcesComponent implements OnInit {
           this.syncing = false;
           this.notification.error(
             'Local transcription failed',
-            error?.error?.error || 'Check the local runner, reviewed GGML model, and selected audio folder.'
+            this.describeSourceError(error, 'Check the local runner, reviewed GGML model, and selected audio folder.')
           );
         },
       });
@@ -938,8 +938,10 @@ export class ConnectedSourcesComponent implements OnInit {
           this.syncing = false;
           this.notification.error(
             'Local document extraction failed',
-            error?.error?.error ||
+            this.describeSourceError(
+              error,
               'Check the local Docling runner, selected document folder, and pre-provisioned artifacts.'
+            )
           );
         },
       });
@@ -994,9 +996,9 @@ export class ConnectedSourcesComponent implements OnInit {
           this.notifySyncResult('Folder sync', result);
           this.refresh();
         },
-        error: () => {
+        error: (error) => {
           this.syncing = false;
-          this.notification.error('Error', 'Folder sync failed.');
+          this.notification.error('Folder sync failed', this.describeSourceError(error, 'The selected folder could not be scanned.'));
         },
       });
   }
@@ -1014,9 +1016,9 @@ export class ConnectedSourcesComponent implements OnInit {
         }
         this.refresh();
       },
-      error: () => {
+      error: (error) => {
         this.syncing = false;
-        this.notification.error('Error', 'Scheduled sync check failed.');
+        this.notification.error('Scheduled sync check failed', this.describeSourceError(error, 'The scheduled sources could not be checked.'));
       },
     });
   }
@@ -1103,7 +1105,7 @@ export class ConnectedSourcesComponent implements OnInit {
           this.authorizeGoogleSource(source);
           this.refresh();
         },
-        error: (error) => this.notification.error('Error', error?.error?.error || `Failed to create ${label} source.`),
+        error: (error) => this.notification.error('Source connection failed', this.describeSourceError(error, `Failed to create ${label} source.`)),
       });
   }
 
@@ -1133,7 +1135,7 @@ export class ConnectedSourcesComponent implements OnInit {
           this.notification.success('WhatsApp source ready', 'Exported chats can now be parsed locally and review-gated.');
           this.refresh();
         },
-        error: (error) => this.notification.error('Error', error?.error?.error || 'Failed to connect WhatsApp source.'),
+        error: (error) => this.notification.error('WhatsApp connection failed', this.describeSourceError(error, 'Failed to connect WhatsApp source.')),
       });
   }
 
@@ -1163,7 +1165,7 @@ export class ConnectedSourcesComponent implements OnInit {
           this.notification.success('Odoo / HERP source ready', 'Odoo app domains can now be modeled into governed HAI workflows.');
           this.refresh();
         },
-        error: (error) => this.notification.error('Error', error?.error?.error || 'Failed to connect Odoo / HERP source.'),
+        error: (error) => this.notification.error('Odoo / HERP connection failed', this.describeSourceError(error, 'Failed to connect Odoo / HERP source.')),
       });
   }
 
@@ -1190,7 +1192,7 @@ export class ConnectedSourcesComponent implements OnInit {
         },
         error: (error) => {
           this.syncing = false;
-          this.notification.error('Odoo modeling failed', error?.error?.error || 'The Odoo app domains could not be modeled.');
+          this.notification.error('Odoo modeling failed', this.describeSourceError(error, 'The Odoo app domains could not be modeled.'));
         },
       });
   }
@@ -1229,7 +1231,7 @@ export class ConnectedSourcesComponent implements OnInit {
         },
         error: (error) => {
           this.syncing = false;
-          this.notification.error('WhatsApp import failed', error?.error?.error || 'The pasted export could not be parsed.');
+          this.notification.error('WhatsApp import failed', this.describeSourceError(error, 'The pasted export could not be parsed.'));
         },
       });
   }
@@ -1259,7 +1261,7 @@ export class ConnectedSourcesComponent implements OnInit {
         },
         error: (error) => {
           this.syncing = false;
-          this.notification.error('WhatsApp scan failed', error?.error?.error || 'The export folder could not be scanned.');
+          this.notification.error('WhatsApp scan failed', this.describeSourceError(error, 'The export folder could not be scanned.'));
         },
       });
   }
@@ -1422,6 +1424,18 @@ export class ConnectedSourcesComponent implements OnInit {
   knowledgeGraphSourceLabel(refs: IKnowledgeGraphSourceRef[]): string {
     const ref = refs?.[0];
     return ref?.sourceLabel || ref?.sourceUri || 'source linked';
+  }
+
+  private describeSourceError(error: unknown, fallback: string): string {
+    const response = error as { error?: unknown } | undefined;
+    const payload = response?.error;
+    const detail = typeof payload === 'string'
+      ? payload
+      : payload && typeof payload === 'object' && typeof (payload as { error?: unknown }).error === 'string'
+        ? (payload as { error: string }).error
+        : '';
+    const message = detail.trim();
+    return message && message.length <= 500 ? message : fallback;
   }
 
   private loadExtractions(): void {

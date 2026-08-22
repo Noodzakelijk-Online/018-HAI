@@ -1,6 +1,6 @@
 import { FormBuilder } from '@angular/forms';
 import { Router } from '@angular/router';
-import { of, Subject } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { IConnectedSource, ISourcePursuitRoutingOutcome } from '../../models/connected-source.model.interface';
 import { ConnectedSourcesComponent } from './connected-sources.component';
@@ -154,6 +154,28 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 
     expect(sourceService.sync).not.toHaveBeenCalled();
     expect(notification.warning).toHaveBeenCalledWith('Connector setup required', jasmine.any(String));
+  });
+
+  it('shows the backend recovery reason when an item sync is rejected', () => {
+    const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
+    const sourceService = jasmine.createSpyObj('ConnectedSourceService', ['sync']);
+    sourceService.sync.and.returnValue(throwError(() => ({
+      error: { error: 'Source sync is already in progress. Wait for the current run to finish.' },
+    })));
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['error']);
+    const component = new ConnectedSourcesComponent(
+      new FormBuilder(), sourceService as any, notification, router, { mode: () => 'light' } as any,
+    );
+    component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only' } as any];
+    component.sources = [{ id: 'source-1', connectorKey: 'local-folder', enabled: true, status: 'active' } as IConnectedSource];
+    component.importForm.patchValue({ sourceId: 'source-1' });
+
+    component.sync();
+
+    expect(notification.error).toHaveBeenCalledWith(
+      'Item sync failed',
+      'Source sync is already in progress. Wait for the current run to finish.'
+    );
   });
 
   it('prevents duplicate generic source creation while the request is running', () => {
