@@ -7,9 +7,17 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+)
+
+var (
+	defaultDBMu          sync.Mutex
+	defaultDB            *gorm.DB
+	openConfiguredDB     = OpenDefaultDB
+	runDefaultMigrations = RunMigrations
 )
 
 func NewPostgresDatabase(user, password, dbName, dbHost string, dbPort int) (*gorm.DB, error) {
@@ -32,16 +40,31 @@ func OpenDefaultDB() (*gorm.DB, error) {
 }
 
 func GetDefaultDB() (*gorm.DB, error) {
-	db, err := OpenDefaultDB()
+	defaultDBMu.Lock()
+	defer defaultDBMu.Unlock()
+	if defaultDB != nil {
+		return defaultDB, nil
+	}
+
+	db, err := openConfiguredDB()
 	if err != nil {
 		return nil, err
 	}
 
-	if err := RunMigrations(db); err != nil {
+	if err := runDefaultMigrations(db); err != nil {
 		return nil, err
 	}
 
+	defaultDB = db
 	return db, nil
+}
+
+// resetDefaultDBForTest clears the package connection cache. It is deliberately
+// unexported: production uses one migrated pool for its process lifetime.
+func resetDefaultDBForTest() {
+	defaultDBMu.Lock()
+	defer defaultDBMu.Unlock()
+	defaultDB = nil
 }
 
 // autoMigrateEnabled reports whether Gorm AutoMigrate should run for table
