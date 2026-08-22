@@ -199,6 +199,33 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.connecting).toBeFalse();
   });
 
+  it('coalesces repeated overview refreshes while the current request is in flight', () => {
+    const { component } = createComponent();
+    const connectors = new Subject<any[]>();
+    const sources = new Subject<IConnectedSource[]>();
+    const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
+      'connectors', 'sources', 'connectionHealthSummary',
+    ]);
+    sourceService.connectors.and.returnValue(connectors.asObservable());
+    sourceService.sources.and.returnValue(sources.asObservable());
+    sourceService.connectionHealthSummary.and.returnValue(of([]));
+    (component as any).sourceService = sourceService;
+
+    component.refresh();
+    component.refresh();
+
+    expect(sourceService.connectors).toHaveBeenCalledTimes(1);
+    expect(sourceService.sources).toHaveBeenCalledTimes(1);
+
+    connectors.next([]);
+    connectors.complete();
+    sources.next([]);
+    sources.complete();
+
+    expect(sourceService.connectors).toHaveBeenCalledTimes(2);
+    expect(sourceService.sources).toHaveBeenCalledTimes(2);
+  });
+
   it('initializes the live Trello connector as a non-local, scheduled board source', () => {
     const { component } = createComponent();
     component.sourceForm.patchValue({

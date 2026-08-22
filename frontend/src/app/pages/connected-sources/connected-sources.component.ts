@@ -70,6 +70,7 @@ export class ConnectedSourcesComponent implements OnInit {
   includeDisabled = true;
   includeArchived = false;
   loading = false;
+  private refreshQueued = false;
   connecting = false;
   syncing = false;
   selectedAction: SourceAction = 'connect';
@@ -154,6 +155,10 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   refresh(): void {
+    if (this.loading) {
+      this.refreshQueued = true;
+      return;
+    }
     this.loading = true;
     forkJoin({
       connectors: this.sourceService.connectors().pipe(
@@ -171,7 +176,13 @@ export class ConnectedSourcesComponent implements OnInit {
         })
       ),
     })
-      .pipe(finalize(() => (this.loading = false)))
+      .pipe(finalize(() => {
+        this.loading = false;
+        if (this.refreshQueued) {
+          this.refreshQueued = false;
+          this.refresh();
+        }
+      }))
       .subscribe(({ connectors, sources }) => {
         this.connectors = connectors;
         this.sources = sources;
