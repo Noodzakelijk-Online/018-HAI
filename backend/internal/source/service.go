@@ -2670,7 +2670,7 @@ func fetchJSONFeedContext(ctx context.Context, source *models.ConnectedSource) (
 	if target.Scheme != "http" && target.Scheme != "https" {
 		return nil, "", fmt.Errorf("json-feed sync target must use HTTP or HTTPS")
 	}
-	if target.User != nil {
+	if sourceHTTPURLHasCredentials(target) {
 		return nil, "", fmt.Errorf("json-feed credentials must not be embedded in syncTarget")
 	}
 	if !sourceHTTPHostAllowed(target.Hostname()) {
@@ -2747,6 +2747,9 @@ func fetchGitHubSourceContext(ctx context.Context, source *models.ConnectedSourc
 	parsedBase, err := url.Parse(base)
 	if err != nil || (parsedBase.Scheme != "http" && parsedBase.Scheme != "https") || parsedBase.Hostname() == "" {
 		return nil, "", fmt.Errorf("GITHUB_SOURCE_API_BASE_URL must be an absolute HTTP(S) URL")
+	}
+	if sourceHTTPURLHasCredentials(parsedBase) {
+		return nil, "", fmt.Errorf("GITHUB_SOURCE_API_BASE_URL must not contain credentials")
 	}
 	if !sourceHTTPHostAllowed(parsedBase.Hostname()) || sourceHTTPAddressBlocked(parsedBase.Hostname()) {
 		return nil, "", fmt.Errorf("github API host %s is not allowlisted", parsedBase.Hostname())
@@ -2925,6 +2928,22 @@ func sourceHTTPHostAllowed(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	for _, allowed := range strings.Split(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS"), defaultHTTPFeedAllowedHosts), ",") {
 		if host == strings.ToLower(strings.TrimSpace(allowed)) {
+			return true
+		}
+	}
+	return false
+}
+
+func sourceHTTPURLHasCredentials(target *url.URL) bool {
+	if target == nil || target.User != nil {
+		return true
+	}
+	for key := range target.Query() {
+		clean := strings.ToLower(strings.TrimSpace(key))
+		if clean == "key" || clean == "apikey" || strings.Contains(clean, "api_key") ||
+			strings.Contains(clean, "password") || strings.Contains(clean, "passwd") ||
+			strings.Contains(clean, "secret") || strings.Contains(clean, "token") ||
+			strings.Contains(clean, "authorization") {
 			return true
 		}
 	}

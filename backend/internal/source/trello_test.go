@@ -268,3 +268,10 @@ func TestTrelloBoardID(t *testing.T) {
 		}
 	}
 }
+
+func TestTrelloBaseURLRejectsEmbeddedCredentials(t *testing.T) {
+	t.Setenv(trelloBaseURLEnv, "https://operator:secret@api.trello.com")
+	if _, err := trelloBaseURL(); err == nil || !strings.Contains(err.Error(), "credentials") {
+		t.Fatalf("trelloBaseURL error=%v, want credential rejection", err)
+	}
+}

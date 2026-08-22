@@ -127,6 +127,23 @@ func TestFetchJSONFeedContextStopsBeforeOpeningRemoteRequestWhenCancelled(t *tes
 	}
 }
 
+func TestFetchJSONFeedContextRejectsCredentialLikeURLParameters(t *testing.T) {
+	_, _, err := fetchJSONFeedContext(context.Background(), &models.ConnectedSource{
+		SyncTarget: "http://127.0.0.1/feed?token=do-not-store-this",
+	})
+	if err == nil || !strings.Contains(err.Error(), "credentials") {
+		t.Fatalf("fetchJSONFeedContext error=%v, want credential rejection", err)
+	}
+}
+
+func TestFetchGitHubSourceRejectsCredentialedBaseURL(t *testing.T) {
+	t.Setenv("GITHUB_SOURCE_API_BASE_URL", "https://operator:secret@api.github.com")
+	_, _, err := fetchGitHubSourceContext(context.Background(), &models.ConnectedSource{SyncTarget: "owner/repo"})
+	if err == nil || !strings.Contains(err.Error(), "credentials") {
+		t.Fatalf("fetchGitHubSourceContext error=%v, want credential rejection", err)
+	}
+}
+
 func TestFetchCloudQuerySummaryContextStopsBeforeOpeningFileWhenCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

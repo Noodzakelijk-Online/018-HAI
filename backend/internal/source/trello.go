@@ -393,6 +393,9 @@ func trelloBaseURL() (*url.URL, error) {
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
 		return nil, fmt.Errorf("%s must be an absolute HTTP(S) URL", trelloBaseURLEnv)
 	}
+	if sourceHTTPURLHasCredentials(parsed) {
+		return nil, fmt.Errorf("%s must not contain credentials", trelloBaseURLEnv)
+	}
 	if !sourceHTTPHostAllowed(parsed.Hostname()) || sourceHTTPAddressBlocked(parsed.Hostname()) {
 		return nil, fmt.Errorf("trello API host %s is not allowlisted; add api.trello.com to CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", parsed.Hostname())
 	}
