@@ -933,7 +933,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		s.audit(sourceID, "source.sharet_read", fmt.Sprintf("read %d bounded ShareT link record(s) through a read-only connector credential", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == cloudQuerySummaryConnectorKey {
-		items, adapterCursor, err = fetchCloudQuerySummary(source)
+		items, adapterCursor, err = fetchCloudQuerySummaryContext(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"

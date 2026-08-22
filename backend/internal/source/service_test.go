@@ -109,6 +109,16 @@ func TestFetchJSONFeedContextStopsBeforeOpeningRemoteRequestWhenCancelled(t *tes
 	}
 }
 
+func TestFetchCloudQuerySummaryContextStopsBeforeOpeningFileWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := fetchCloudQuerySummaryContext(ctx, &models.ConnectedSource{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("fetchCloudQuerySummaryContext error = %v, want context.Canceled", err)
+	}
+}
+
 func TestIndexExtractionContextStopsBeforePersistingWhenCallerIsCancelled(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo()
