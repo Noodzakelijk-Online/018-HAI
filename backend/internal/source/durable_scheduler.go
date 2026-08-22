@@ -102,12 +102,18 @@ func RegisterDurableScheduling(runner *durablejob.Runner, service Service, inter
 // scan cannot corrupt state.
 func scanWork(runner *durablejob.Runner, service Service) func(context.Context) error {
 	return func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		now := time.Now().UTC()
 		due, err := service.DueSources(now)
 		if err != nil {
 			return fmt.Errorf("list due sources: %w", err)
 		}
 		for _, item := range due {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			payload, errMarshal := json.Marshal(syncJobPayload{SourceID: item.ID.String(), Name: item.Name})
 			if errMarshal != nil {
 				return fmt.Errorf("encode sync payload for %s: %w", item.Name, errMarshal)
