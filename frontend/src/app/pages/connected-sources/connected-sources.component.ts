@@ -298,6 +298,15 @@ export class ConnectedSourcesComponent implements OnInit {
     if (this.importForm.invalid) {
       return;
     }
+    const source = this.sources.find((item) => item.id === this.importForm.value.sourceId);
+    if (!source || !this.syncButtonVisible(source)) {
+      const connector = this.connectorFor(source);
+      this.notification.warning(
+        'Connector setup required',
+        connector?.statusReason || 'Refresh connectors and complete the required connector setup before importing records.'
+      );
+      return;
+    }
     this.syncing = true;
     this.sourceService
       .sync(this.importForm.value.sourceId, {

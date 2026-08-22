@@ -135,6 +135,27 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     } as IConnectedSource)).toBeFalse();
   });
 
+  it('does not submit a manual import through an unavailable legacy connector', () => {
+    const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
+    const sourceService = jasmine.createSpyObj('ConnectedSourceService', ['sync']);
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['warning']);
+    const component = new ConnectedSourcesComponent(
+      new FormBuilder(),
+      sourceService as any,
+      notification,
+      router,
+      { mode: () => 'light' } as any,
+    );
+    component.connectors = [{ connectorKey: 'trello', enabled: true, adapterStatus: 'configuration_required' } as any];
+    component.sources = [{ id: 'source-1', connectorKey: 'trello', enabled: true, status: 'active' } as IConnectedSource];
+    component.importForm.patchValue({ sourceId: 'source-1' });
+
+    component.sync();
+
+    expect(sourceService.sync).not.toHaveBeenCalled();
+    expect(notification.warning).toHaveBeenCalledWith('Connector setup required', jasmine.any(String));
+  });
+
   it('prevents duplicate generic source creation while the request is running', () => {
     const { component } = createComponent();
     const pending = new Subject<IConnectedSource>();
