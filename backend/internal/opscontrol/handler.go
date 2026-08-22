@@ -2,6 +2,7 @@ package opscontrol
 
 import (
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -37,7 +38,10 @@ type pauseRequest struct {
 // Pause engages the emergency stop (halts background processing).
 func (h *Handler) Pause(c *gin.Context) {
 	var req pauseRequest
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pause request must be valid JSON"})
+		return
+	}
 	actor, _ := h.actor(c)
 	state, err := h.svc.EngageEmergencyStop(req.Reason, actor)
 	if err != nil {
