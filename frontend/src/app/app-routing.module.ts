@@ -215,7 +215,7 @@ const authenticatedRoutes: Routes = [
   },
 ]
 
-const routes: Routes = [
+export const APP_ROUTES: Routes = [
   {
     path: "login",
     loadChildren: () =>
@@ -233,6 +233,7 @@ const routes: Routes = [
   {
     path: '',
     component: AppShellComponent,
+    canActivateChild: [authGuard],
     children: [
       ...authenticatedRoutes,
       { path: "", redirectTo: "control-center", pathMatch: "full" },
@@ -242,7 +243,7 @@ const routes: Routes = [
 ];
 
 @NgModule({
-  imports: [RouterModule.forRoot(routes)],
+  imports: [RouterModule.forRoot(APP_ROUTES)],
   exports: [RouterModule],
 })
 export class AppRoutingModule {}

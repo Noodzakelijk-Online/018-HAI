@@ -77,6 +77,16 @@ class GatewayAuthContractTest(unittest.TestCase):
                     block,
                 )
 
+    def test_automation_uploads_match_the_documented_backend_image_limit(self) -> None:
+        block = location_block("location ^~ /api/v1/automation/")
+        self.assertIn("client_max_body_size 6m;", block)
+        self.assertIn("auth_request /auth-verify;", block)
+        self.assertIn("proxy_pass http://$backend_upstream;", block)
+        self.assertIn(
+            'proxy_set_header Authorization "Bearer $hai_verified_access_token";',
+            block,
+        )
+
     def test_auth_subrequest_is_internal_and_marks_itself(self) -> None:
         block = location_block("location /auth-verify")
         self.assertIn("internal;", block)

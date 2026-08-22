@@ -71,6 +71,22 @@ http {
             proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
         }
 
+        # Automation image uploads may use the documented 5 MiB image limit.
+        # Keep the gateway ceiling to the backend's image allowance plus one
+        # MiB of multipart metadata, rather than relaxing the generic API.
+        location ^~ /api/v1/automation/ {
+            client_max_body_size 6m;
+            auth_request /auth-verify;
+            auth_request_set $hai_refreshed_access_cookie $upstream_http_set_cookie;
+            auth_request_set $hai_verified_access_token $upstream_http_x_hai_verified_access_token;
+            add_header Set-Cookie $hai_refreshed_access_cookie always;
+            proxy_pass http://$backend_upstream;
+            proxy_set_header X-Original-URI $request_uri;
+            proxy_set_header Authorization "Bearer $hai_verified_access_token";
+            proxy_set_header Cookie $http_cookie;
+            proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
+        }
+
         # Authentication and account-management endpoints belong to the IDP.
         # Keep these explicit so every other product API can use the scalable
         # authenticated backend catch-all below without a route allowlist that
