@@ -2,6 +2,7 @@ package phase2
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"automation-hub-backend/internal/autonomypolicy"
+	"automation-hub-backend/internal/background"
 	"automation-hub-backend/internal/operations"
 
 	"github.com/gin-gonic/gin"
@@ -270,6 +272,27 @@ func TestBackgroundRunRejectsMissingOrBlankAuthenticatedOwner(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBackgroundRunReturnsBusyWhileAnotherPassOwnsTheModule(t *testing.T) {
+	m := newTestModule(t)
+	m.runMu.Lock()
+	defer m.runMu.Unlock()
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := m.RunBackgroundForOwner(t.Context(), "local-operator")
+		result <- err
+	}()
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, background.ErrBusy) {
+			t.Fatalf("RunBackgroundForOwner error = %v, want background.ErrBusy", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("RunBackgroundForOwner blocked while another pass was active")
 	}
 }
 
