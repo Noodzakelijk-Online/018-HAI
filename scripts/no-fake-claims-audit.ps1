@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$Library
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -30,6 +32,12 @@ function Get-TrackedFiles {
     return $files
 }
 
+function Test-Phase2SensitiveAddedFile {
+    param([string]$Path)
+
+    return $Path -match "(^|/)\.env($|\.)|(^|/)(secrets?|credentials?)(/|\.|$)|\.(db|sqlite|sqlite3|gguf|onnx|safetensors)$|(^|/)[^/]*(token|credential)[^/]*\.(json|ya?ml|toml|ini|txt)$"
+}
+
 function Test-RequiredText {
     param(
         [string]$Path,
@@ -48,6 +56,10 @@ function Test-RequiredText {
     } else {
         Write-Fail $FailMessage
     }
+}
+
+if ($Library) {
+    return
 }
 
 Push-Location $repositoryRoot
@@ -131,7 +143,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to inspect files added by this Git branch."
     }
-    $sensitiveAddedFiles = @($addedFiles | Where-Object { $_ -match "\.env|(^|/)secret|\.db$|\.sqlite|\.gguf|\.onnx|\.safetensors|token|credential" })
+    $sensitiveAddedFiles = @($addedFiles | Where-Object { Test-Phase2SensitiveAddedFile $_ })
     if ($sensitiveAddedFiles.Count -eq 0) {
         Write-Pass "Phase 2 branch added no env/secret/db/weight files"
     } else {

@@ -10,6 +10,30 @@ if (-not (Test-Path -LiteralPath $auditScript -PathType Leaf)) {
     throw "Windows no-fake-claims audit is missing: $auditScript"
 }
 
+. $auditScript -Library
+
+foreach ($path in @(
+    "idp/internal/app/repositories/reset_token_security_test.go",
+    "backend/internal/example/tokenizer.go",
+    "docs/credential-model.md"
+)) {
+    if (Test-Phase2SensitiveAddedFile $path) {
+        throw "Audit must not classify ordinary source or documentation as a sensitive artifact: $path"
+    }
+}
+
+foreach ($path in @(
+    ".env.local",
+    "runtime/credentials.json",
+    "secrets/provider.yaml",
+    "state/access-token.json",
+    "models/local.gguf"
+)) {
+    if (-not (Test-Phase2SensitiveAddedFile $path)) {
+        throw "Audit must classify sensitive artifact paths as blocked: $path"
+    }
+}
+
 $tokens = $null
 $errors = $null
 [Management.Automation.Language.Parser]::ParseFile($auditScript, [ref]$tokens, [ref]$errors) | Out-Null
