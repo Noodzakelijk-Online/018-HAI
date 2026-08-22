@@ -40,6 +40,12 @@ const (
 	ModeIncrementalSync    = "incremental_sync"
 )
 
+var sharedSourceHTTPTransport struct {
+	sync.Mutex
+	key       string
+	transport *http.Transport
+}
+
 type CreateSourceRequest struct {
 	OwnerIdentity     string   `json:"-"`
 	ConnectorKey      string   `json:"connectorKey"`
@@ -2921,9 +2927,30 @@ func sourceHTTPAddressBlocked(host string) bool {
 }
 
 func sourceHTTPTransport() *http.Transport {
-	dialer := &net.Dialer{Timeout: sourceHTTPTimeout()}
-	return &http.Transport{
-		Proxy: nil,
+	key := strings.Join([]string{
+		strings.TrimSpace(os.Getenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS")),
+		strings.TrimSpace(os.Getenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL")),
+		sourceHTTPTimeout().String(),
+	}, "|")
+
+	sharedSourceHTTPTransport.Lock()
+	defer sharedSourceHTTPTransport.Unlock()
+	if sharedSourceHTTPTransport.transport != nil && sharedSourceHTTPTransport.key == key {
+		return sharedSourceHTTPTransport.transport
+	}
+	if sharedSourceHTTPTransport.transport != nil {
+		// Do not retain connections created under a previous network policy.
+		sharedSourceHTTPTransport.transport.CloseIdleConnections()
+	}
+
+	transport := &http.Transport{
+		Proxy:                 nil,
+		MaxIdleConns:          16,
+		MaxIdleConnsPerHost:   4,
+		MaxConnsPerHost:       8,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: sourceHTTPTimeout(),
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(address)
 			if err != nil {
@@ -2941,9 +2968,13 @@ func sourceHTTPTransport() *http.Transport {
 			if len(resolved) == 0 {
 				return nil, fmt.Errorf("json-feed host resolved to no addresses")
 			}
+			dialer := &net.Dialer{Timeout: sourceHTTPTimeout()}
 			return dialer.DialContext(ctx, network, net.JoinHostPort(resolved[0].IP.String(), port))
 		},
 	}
+	sharedSourceHTTPTransport.key = key
+	sharedSourceHTTPTransport.transport = transport
+	return transport
 }
 
 func sourceHTTPTimeout() time.Duration {

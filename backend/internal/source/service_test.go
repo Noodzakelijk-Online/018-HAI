@@ -691,6 +691,21 @@ func TestSyncGitHubImportsReadOnlyRepositoryRecords(t *testing.T) {
 	}
 }
 
+func TestSourceHTTPTransportReusesConnectionsOnlyWithinTheSamePolicy(t *testing.T) {
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+	t.Setenv("CONNECTED_SOURCE_HTTP_TIMEOUT_SECONDS", "20")
+	first := sourceHTTPTransport()
+	if next := sourceHTTPTransport(); next != first {
+		t.Fatal("expected the source HTTP transport to be reused for the same policy")
+	}
+
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "api.github.com")
+	if next := sourceHTTPTransport(); next == first {
+		t.Fatal("expected a new transport when the source network policy changes")
+	}
+}
+
 func TestCreateSourceAllowsOperationalLocalFolder(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	source, err := service.CreateSource(CreateSourceRequest{
