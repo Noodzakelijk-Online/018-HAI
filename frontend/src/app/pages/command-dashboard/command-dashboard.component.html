@@ -693,6 +693,15 @@
         <span *ngFor="let warning of view.warnings">{{ warning }}</span>
       </div>
 
+      <hai-progressive-section
+        #commandHistorySection
+        moduleId="command-dashboard"
+        sectionId="assistant-command-history"
+        title="Assistant command history"
+        summary="Load recorded command outcomes only when you need to inspect them."
+        [advancedOnly]="false"
+        (openChange)="onCommandHistoryOpen($event)"
+      >
       <nz-card nzTitle="Assistant Command History" class="full-band">
         <nz-table [nzData]="commandLogs" nzSize="small" [nzPageSize]="8">
           <thead>
@@ -720,6 +729,7 @@
         </nz-table>
         <nz-empty *ngIf="!commandLogs.length" nzNotFoundContent="No assistant commands yet."></nz-empty>
       </nz-card>
+      </hai-progressive-section>
     </nz-content>
   </nz-layout>
 </section>

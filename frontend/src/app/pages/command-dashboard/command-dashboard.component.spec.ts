@@ -136,15 +136,17 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
     expect(notification.success).toHaveBeenCalledWith('Pursuit completed', 'Verified completion and the Robert decision were recorded in the audit trail.');
   });
 
-  it('loads pursuit data once when the dashboard starts', () => {
+  it('loads core dashboard data once without fetching command history on startup', () => {
     const pursuits = jasmine.createSpyObj('PursuitService', ['dashboard', 'brief']);
     pursuits.dashboard.and.returnValue(of({}));
     pursuits.brief.and.returnValue(of({}));
+    const assistantCommands = jasmine.createSpyObj('AssistantCommandService', ['logs']);
+    assistantCommands.logs.and.returnValue(of([]));
     const component = new CommandDashboardComponent(
       new FormBuilder(),
       { dashboard: jasmine.createSpy('dashboard').and.returnValue(of({})) } as any,
       { overview: jasmine.createSpy('overview').and.returnValue(of({ runtimes: [], health: [] })) } as any,
-      { logs: jasmine.createSpy('logs').and.returnValue(of([])) } as any,
+      assistantCommands,
       pursuits,
       {} as any,
       jasmine.createSpyObj('NzNotificationService', ['success', 'error']) as NzNotificationService,
@@ -155,5 +157,10 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
 
     expect(pursuits.dashboard).toHaveBeenCalledTimes(1);
     expect(pursuits.brief).toHaveBeenCalledTimes(1);
+    expect(assistantCommands.logs).not.toHaveBeenCalled();
+
+    component.onCommandHistoryOpen(true);
+
+    expect(assistantCommands.logs).toHaveBeenCalledTimes(1);
   });
 });
