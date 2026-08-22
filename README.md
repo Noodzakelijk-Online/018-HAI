@@ -38,6 +38,9 @@ The canonical product stack is **Angular + Go + Postgres + Docker Compose**.
 is reference material, not a second product. Build from source, copy
 `.env.example` to an untracked `.env.local`, keep secrets outside Git, and use
 the checks in [Developer Checks](#developer-checks) before publishing a change.
+The root `docker-compose.yml` is a compatibility entry point to
+`docker-compose.local.yml`; both start the same source-built stack when given
+the same environment file.
 
 ### What HAI is and is not
 

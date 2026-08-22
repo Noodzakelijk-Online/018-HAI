@@ -246,6 +246,13 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertRegex(match.group(1), r"(?m)^    mem_limit: \S+")
                 self.assertRegex(match.group(1), r"(?m)^    cpus: \S+")
 
+    def test_default_compose_entrypoint_uses_the_canonical_source_stack(self) -> None:
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("include:", compose)
+        self.assertIn("./docker-compose.local.yml", compose)
+        self.assertNotIn("jacksonbarreto/", compose)
+        self.assertNotIn(":latest", compose)
+
     def test_trello_read_only_connector_is_wired_to_the_runtime(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         backend_start = compose.index("  backend:\n")
