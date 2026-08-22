@@ -234,6 +234,26 @@ class CIWorkflowContractTest(unittest.TestCase):
             env_template,
         )
 
+    def test_durable_scheduler_controls_reach_the_backend_runtime(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        backend_start = compose.index("  backend:\n")
+        backend_end = compose.index("\n  frontend:\n", backend_start)
+        backend = compose[backend_start:backend_end]
+        env_template = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+        for name, default in (
+            ("SOURCE_SCHEDULER_DURABLE", "true"),
+            ("SOURCE_WORKER_POLL_SECONDS", "15"),
+            ("WORKFLOW_SCHEDULER_DURABLE", "true"),
+            ("WORKFLOW_WORKER_POLL_SECONDS", "15"),
+            ("WORKFLOW_REMINDER_DELIVERY_ENABLED", "true"),
+            ("AMBIENT_SCHEDULER_DURABLE", "true"),
+            ("AMBIENT_WORKER_POLL_SECONDS", "15"),
+        ):
+            with self.subTest(name=name):
+                self.assertIn(f"{name}={default}", env_template)
+                self.assertIn(f"{name}: ${{{name}:-{default}}}", backend)
+
     def test_idp_toolchain_matches_ci_and_container(self) -> None:
         go_mod = (ROOT / "idp" / "go.mod").read_text(encoding="utf-8")
         dockerfile = (ROOT / "idp" / "Dockerfile").read_text(encoding="utf-8")
