@@ -2,6 +2,7 @@ import { HttpErrorResponse } from '@angular/common/http'
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { forkJoin } from 'rxjs'
+import { finalize, timeout } from 'rxjs/operators'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import {
   IAccountFeed,
@@ -34,6 +35,9 @@ export class BackgroundOperationsComponent implements OnInit {
   selectedEvents: IOperationEvent[] = []
   detailVisible = false
 
+	private readonly loadTimeoutMs = 6000
+	private readonly operationTimeoutMs = 30000
+
   readonly statusFilters = [
     { value: '', label: 'All' },
     { value: 'awaiting_approval', label: 'Needs Robert' },
@@ -58,15 +62,16 @@ export class BackgroundOperationsComponent implements OnInit {
       dashboard: this.service.dashboard(),
       operations: this.service.list(this.statusFilter ? { status: this.statusFilter } : undefined),
       feeds: this.service.feeds(),
-    }).subscribe({
+	}).pipe(
+	  timeout(this.loadTimeoutMs),
+	  finalize(() => (this.loading = false))
+	).subscribe({
       next: ({ dashboard, operations, feeds }) => {
         this.dashboard = dashboard
         this.operations = operations.operations ?? []
         this.feeds = feeds.feeds ?? []
-        this.loading = false
       },
       error: () => {
-        this.loading = false
         this.notification.error('Error', 'Failed to load background operations.')
       },
     })
@@ -86,10 +91,12 @@ export class BackgroundOperationsComponent implements OnInit {
     this.running = true
     this.lastRunError = ''
     this.lastRunNotice = ''
-    this.service.runBackground().subscribe({
+	this.service.runBackground().pipe(
+	  timeout(this.operationTimeoutMs),
+	  finalize(() => (this.running = false))
+	).subscribe({
       next: (report) => {
         this.lastReport = report
-        this.running = false
         this.notification.success(
           'Background pass complete',
           `${report.operationsCreated} new, ${report.verified} verified, ${report.awaitingApproval} awaiting approval.`
@@ -97,7 +104,6 @@ export class BackgroundOperationsComponent implements OnInit {
         this.refresh()
       },
       error: (err) => {
-        this.running = false
         this.lastRunError = this.backgroundRunError(err)
         this.notification.error('Background pass could not start', this.lastRunError)
       },
@@ -140,7 +146,7 @@ export class BackgroundOperationsComponent implements OnInit {
     this.selected = op
     this.selectedEvents = []
     this.detailVisible = true
-    this.service.events(op.id).subscribe({
+	this.service.events(op.id).pipe(timeout(this.loadTimeoutMs)).subscribe({
       next: (res) => (this.selectedEvents = res.events ?? []),
       error: () => this.notification.error('Error', 'Failed to load the audit trail.'),
     })
@@ -152,7 +158,7 @@ export class BackgroundOperationsComponent implements OnInit {
   }
 
   approve(op: IOperation): void {
-    this.service.approve(op.id).subscribe({
+	this.service.approve(op.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: () => {
         this.notification.success('Approved', `${op.title} approved.`)
         this.refresh()
@@ -162,7 +168,7 @@ export class BackgroundOperationsComponent implements OnInit {
   }
 
   run(op: IOperation): void {
-    this.service.run(op.id).subscribe({
+	this.service.run(op.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (res) => {
         if (res.verified) {
           this.notification.success('Verified', `${op.title} executed and verified.`)
