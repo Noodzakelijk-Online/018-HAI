@@ -244,6 +244,26 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.sources).toEqual([]);
   });
 
+  it('keeps prior source history visible when a history lane cannot load', () => {
+    const { component } = createComponent();
+    const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
+      'pageExtractions', 'pageAuditLogs', 'pageSyncJobs',
+    ]);
+    const existingExtraction = { id: 'extraction-1', text: 'Previously loaded evidence' } as any;
+    component.extractions = [existingExtraction];
+    component.recordHistoryLoaded = true;
+    sourceService.pageExtractions.and.returnValue(throwError(() => new Error('gateway unavailable')));
+    sourceService.pageAuditLogs.and.returnValue(of({ items: [], total: 0, hasMore: false }));
+    sourceService.pageSyncJobs.and.returnValue(of({ items: [], total: 0, hasMore: false }));
+    (component as any).sourceService = sourceService;
+
+    component.loadRecordHistory(true);
+
+    expect(component.extractions).toEqual([existingExtraction]);
+    expect(component.recordHistoryLoadError).toContain('extracted context');
+    expect(component.recordHistoryLoaded).toBeTrue();
+  });
+
   it('initializes the live Trello connector as a non-local, scheduled board source', () => {
     const { component } = createComponent();
     component.sourceForm.patchValue({

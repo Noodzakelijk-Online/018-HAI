@@ -10,7 +10,6 @@ import {
   ISourceConnector,
   ISourceConnectionHealth,
   ISourceExtraction,
-	ISourceHistoryPage,
   IKnowledgeGraphResult,
   IKnowledgeGraphSourceRef,
   ISourcePursuitRoutingOutcome,
@@ -56,6 +55,7 @@ export class ConnectedSourcesComponent implements OnInit {
   syncJobs: ISourceSyncJob[] = [];
   recordHistoryLoaded = false;
   recordHistoryLoading = false;
+	recordHistoryLoadError = '';
 	private readonly sourceHistoryPageSize = 100;
 	private extractionHistoryTotal = 0;
 	private extractionHistoryHasMore = false;
@@ -226,6 +226,8 @@ export class ConnectedSourcesComponent implements OnInit {
 
   private loadRecordHistoryPage(append: boolean): void {
     this.recordHistoryLoading = true;
+    this.recordHistoryLoadError = '';
+    const failedLoads: string[] = [];
     forkJoin({
       extractions: this.sourceService.pageExtractions(
         this.searchForm.value.projectKey,
@@ -234,33 +236,51 @@ export class ConnectedSourcesComponent implements OnInit {
         append ? this.extractions.length : 0
       ).pipe(
         timeout(this.loadTimeoutMs),
-        catchError(() => of(this.emptyHistoryPage<ISourceExtraction>()))
+        catchError(() => {
+          failedLoads.push('extracted context');
+          return of(undefined);
+        })
       ),
       auditLogs: this.sourceService.pageAuditLogs(
         this.sourceHistoryPageSize,
         append ? this.auditLogs.length : 0
       ).pipe(
         timeout(this.loadTimeoutMs),
-        catchError(() => of(this.emptyHistoryPage<ISourceAuditLog>()))
+        catchError(() => {
+          failedLoads.push('audit history');
+          return of(undefined);
+        })
       ),
       syncJobs: this.sourceService.pageSyncJobs(
         this.sourceHistoryPageSize,
         append ? this.syncJobs.length : 0
       ).pipe(
         timeout(this.loadTimeoutMs),
-        catchError(() => of(this.emptyHistoryPage<ISourceSyncJob>()))
+        catchError(() => {
+          failedLoads.push('sync jobs');
+          return of(undefined);
+        })
       ),
     })
       .pipe(finalize(() => (this.recordHistoryLoading = false)))
       .subscribe(({ extractions, auditLogs, syncJobs }) => {
-        this.extractions = append ? [...this.extractions, ...extractions.items] : extractions.items;
-        this.auditLogs = append ? [...this.auditLogs, ...auditLogs.items] : auditLogs.items;
-        this.syncJobs = append ? [...this.syncJobs, ...syncJobs.items] : syncJobs.items;
-		this.extractionHistoryTotal = extractions.total;
-		this.extractionHistoryHasMore = extractions.hasMore;
-		this.auditHistoryHasMore = auditLogs.hasMore;
-		this.syncJobHistoryHasMore = syncJobs.hasMore;
-        this.recordHistoryLoaded = true;
+        if (extractions) {
+          this.extractions = append ? [...this.extractions, ...extractions.items] : extractions.items;
+		  this.extractionHistoryTotal = extractions.total;
+		  this.extractionHistoryHasMore = extractions.hasMore;
+        }
+        if (auditLogs) {
+          this.auditLogs = append ? [...this.auditLogs, ...auditLogs.items] : auditLogs.items;
+		  this.auditHistoryHasMore = auditLogs.hasMore;
+        }
+        if (syncJobs) {
+          this.syncJobs = append ? [...this.syncJobs, ...syncJobs.items] : syncJobs.items;
+		  this.syncJobHistoryHasMore = syncJobs.hasMore;
+        }
+        if (failedLoads.length) {
+          this.recordHistoryLoadError = `Could not load ${failedLoads.join(' or ')}. Existing history is retained and may be incomplete.`;
+        }
+        this.recordHistoryLoaded = this.recordHistoryLoaded || !!extractions || !!auditLogs || !!syncJobs;
         this.updateSourceActions();
       });
   }
@@ -540,10 +560,6 @@ export class ConnectedSourcesComponent implements OnInit {
 
   failedJobMetric(): string {
     return this.recordHistoryLoaded ? String(this.failedJobCount()) : 'not loaded';
-  }
-
-  private emptyHistoryPage<T>(): ISourceHistoryPage<T> {
-    return { items: [], total: 0, limit: this.sourceHistoryPageSize, offset: 0, hasMore: false };
   }
 
   recentExtractions(): ISourceExtraction[] {
