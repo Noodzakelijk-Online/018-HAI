@@ -1,21 +1,24 @@
 import { FormBuilder } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
+import { Subject } from 'rxjs';
 import { IConnectedSource, ISourcePursuitRoutingOutcome } from '../../models/connected-source.model.interface';
 import { ConnectedSourcesComponent } from './connected-sources.component';
 
 describe('ConnectedSourcesComponent pursuit handoff', () => {
-  function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router> } {
+  function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router>; sourceService: jasmine.SpyObj<any> } {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
+	const sourceService = jasmine.createSpyObj('ConnectedSourceService', ['createSource']);
     return {
       component: new ConnectedSourcesComponent(
         new FormBuilder(),
-        {} as any,
+		sourceService,
         {} as NzNotificationService,
-        router,
+		router,
         { mode: () => 'light' } as any,
       ),
       router,
+	  sourceService,
     };
   }
 
@@ -101,7 +104,7 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.googleConnectorMetric()).toBe('4 ready');
   });
 
-	it('does not offer connector creation before required setup is complete', () => {
+  it('does not offer connector creation before required setup is complete', () => {
 		const { component } = createComponent();
 		expect(component.connectorCanConnect({ enabled: true, adapterStatus: 'configuration_required' } as any)).toBeFalse();
 		expect(component.connectorCanConnect({ enabled: true, adapterStatus: 'not_implemented' } as any)).toBeFalse();
@@ -123,4 +126,17 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     }));
     expect(component.syncTargetPlaceholder()).toContain('Trello board URL or ID');
   });
+
+	it('marks generic source creation as in progress until the request completes', () => {
+		const { component, sourceService } = createComponent();
+		component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only', category: 'local_folder' } as any];
+		component.sourceForm.patchValue({ connectorKey: 'local-folder' });
+		const pending = new Subject<any>();
+		sourceService.createSource.and.returnValue(pending.asObservable());
+		component.connectSource();
+		expect(sourceService.createSource).toHaveBeenCalled();
+		expect(component.connecting).toBeTrue();
+		pending.complete();
+		expect(component.connecting).toBeFalse();
+	});
 });

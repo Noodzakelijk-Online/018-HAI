@@ -206,6 +206,7 @@ export class ConnectedSourcesComponent implements OnInit {
 		);
 		return;
 	}
+	this.connecting = true;
     this.sourceService
       .createSource({
         connectorKey: this.sourceForm.value.connectorKey,
@@ -226,7 +227,10 @@ export class ConnectedSourcesComponent implements OnInit {
           .map((item) => item.trim())
           .filter(Boolean),
       })
-      .pipe(timeout(this.operationTimeoutMs))
+		.pipe(
+		  timeout(this.operationTimeoutMs),
+		  finalize(() => (this.connecting = false))
+		)
       .subscribe({
         next: () => {
           this.notification.success('Source connected', 'The source is ready for controlled sync.');
