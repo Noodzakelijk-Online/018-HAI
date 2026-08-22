@@ -9,6 +9,7 @@ $installerScript = Join-Path $repositoryRoot "installer\windows\HAI.iss"
 $supportScript = Join-Path $repositoryRoot "installer\windows\Hai-InstallerSupport.ps1"
 $startScript = Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"
 $cloudAccessScript = Join-Path $repositoryRoot "installer\windows\Start-HAI-Cloud.ps1"
+$connectorCheckScript = Join-Path $repositoryRoot "installer\windows\Test-HAI-LocalConnector.ps1"
 $localModelScript = Join-Path $repositoryRoot "installer\windows\Enable-LocalModel.ps1"
 $trelloAcceptanceScript = Join-Path $PSScriptRoot "test-live-trello.ps1"
 $noFakeClaimsAudit = Join-Path $PSScriptRoot "no-fake-claims-audit.ps1"
@@ -17,7 +18,7 @@ $documentation = Join-Path $repositoryRoot "docs\windows-installer.md"
 $composePath = Join-Path $repositoryRoot "docker-compose.local.yml"
 $environmentTemplatePath = Join-Path $repositoryRoot ".env.example"
 
-foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $localModelScript, $cloudAccessScript, $trelloAcceptanceScript, $noFakeClaimsAudit, $initializerScript, $documentation)) {
+foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $localModelScript, $cloudAccessScript, $connectorCheckScript, $trelloAcceptanceScript, $noFakeClaimsAudit, $initializerScript, $documentation)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Windows installer contract is missing: $requiredFile"
     }
@@ -45,6 +46,7 @@ foreach ($script in @(
     $noFakeClaimsAudit,
     (Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"),
     $cloudAccessScript,
+    $connectorCheckScript,
     (Join-Path $repositoryRoot "installer\windows\Stop-HAI.ps1"),
     (Join-Path $repositoryRoot "installer\windows\HAI-Status.ps1"),
     (Join-Path $repositoryRoot "installer\windows\Open-HAI.ps1")
@@ -142,6 +144,21 @@ foreach ($required in @(
 )) {
     if (($start + $support) -notmatch [Regex]::Escape($required)) {
         throw "Windows startup must expose the optional Kafka event-bus profile: $required"
+    }
+}
+
+$connectorCheck = [IO.File]::ReadAllText($connectorCheckScript)
+foreach ($required in @(
+    "Get-HaiEnvironmentFile",
+    "Get-HaiUrl",
+    "HAI_A2A_BRIDGE_TOKEN",
+    "/.well-known/agent-card.json",
+    "/api/v1/a2a",
+    "SendMessage",
+    "non-executable planning"
+)) {
+    if ($connectorCheck -notmatch [Regex]::Escape($required)) {
+        throw "Installed local-connector check is missing '$required'."
     }
 }
 
@@ -332,6 +349,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot ".env.example") -PathTy
 foreach ($requiredPayloadPath in @(
     "docker-compose.local.yml",
     "installer\windows\Start-HAI.ps1",
+    "installer\windows\Test-HAI-LocalConnector.ps1",
     "installer\windows\Enable-LocalModel.ps1",
     "scripts\test-live-trello.ps1",
     "scripts\no-fake-claims-audit.ps1",
@@ -345,6 +363,10 @@ foreach ($requiredPayloadPath in @(
 if ($installer -notmatch [Regex]::Escape("Start governed cloud access") -or
     $installer -notmatch [Regex]::Escape("Start-HAI-Cloud.ps1")) {
     throw "Inno Setup must expose the governed cloud-access shortcut."
+}
+if ($installer -notmatch [Regex]::Escape("Check local HAI connector") -or
+    $installer -notmatch [Regex]::Escape("Test-HAI-LocalConnector.ps1")) {
+    throw "Inno Setup must expose the local HAI connector check."
 }
 
 & $noFakeClaimsAudit

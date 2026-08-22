@@ -35,6 +35,12 @@ readiness, and opens `http://127.0.0.1:8088`.
 Use the Start menu entries to open the dashboard, inspect HAI status, or stop
 the stack. Stop HAI preserves the Docker volumes and local settings.
 
+Use **Check local HAI connector** after the stack is ready to verify the
+installed, token-protected A2A planning connector from end to end. The check
+reads only the local environment, requests the local Agent Card, and creates
+one non-executable planning draft. It does not expose the token, connect an
+external agent, modify HAI records, run a tool, or send anything.
+
 ### Optional governed cloud access
 
 After configuring a reserved HTTPS ngrok endpoint and its restricted agent
