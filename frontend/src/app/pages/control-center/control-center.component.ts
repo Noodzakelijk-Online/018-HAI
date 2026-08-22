@@ -349,6 +349,9 @@ export class ControlCenterComponent implements OnInit {
   }
 
   resolveApproval(item: IWorkflowItem, approved: boolean): void {
+    if (this.resolvingId) {
+      return
+    }
     this.resolvingId = item.id
     this.workflowService
       .resolveApproval(item.id, {
@@ -358,6 +361,7 @@ export class ControlCenterComponent implements OnInit {
           : 'Rejected from the household operations dashboard.',
         actor: 'operator',
       })
+      .pipe(timeout(this.operationTimeoutMs))
       .subscribe({
         next: () => {
           this.resolvingId = ''
@@ -380,6 +384,9 @@ export class ControlCenterComponent implements OnInit {
   }
 
   snooze(item: IWorkflowItem): void {
+    if (this.resolvingId) {
+      return
+    }
     this.resolvingId = item.id
     this.workflowService
       .transition(item.id, {
@@ -387,6 +394,7 @@ export class ControlCenterComponent implements OnInit {
         message: 'Snoozed from the household operations dashboard.',
         actor: 'operator',
       })
+      .pipe(timeout(this.operationTimeoutMs))
       .subscribe({
         next: () => {
           this.resolvingId = ''
@@ -408,8 +416,9 @@ export class ControlCenterComponent implements OnInit {
 
   archiveMemory(memory: IContextMemory): void {
     if (!memory.id) return
+    if (this.archivingMemoryId) return
     this.archivingMemoryId = memory.id
-    this.memoryService.archive(memory.id).subscribe({
+    this.memoryService.archive(memory.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: () => {
         this.archivingMemoryId = ''
         this.memories = this.memories.filter((item) => item.id !== memory.id)
@@ -1072,8 +1081,9 @@ export class ControlCenterComponent implements OnInit {
   runHealthCheck(automation: IAutomationModel): void {
     if (!automation.id) return
     const id = automation.id
+    if (this.checkingIds.has(id)) return
     this.checkingIds.add(id)
-    this.automationsService.runHealthCheck(id).subscribe({
+    this.automationsService.runHealthCheck(id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (result) => {
         this.checkingIds.delete(id)
         automation.status = result.status
@@ -1109,8 +1119,9 @@ export class ControlCenterComponent implements OnInit {
   launch(automation: IAutomationModel): void {
     if (!automation.id) return
     const id = automation.id
+    if (this.launchingIds.has(id)) return
     this.launchingIds.add(id)
-    this.automationsService.launchAutomation(id).subscribe({
+    this.automationsService.launchAutomation(id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (result) => {
         this.launchingIds.delete(id)
         automation.lastLaunchAt = result.launchedAt
@@ -1146,7 +1157,7 @@ export class ControlCenterComponent implements OnInit {
     this.diagnosticsLoading = true
     this.diagnostics = undefined
     this.diagnosticsName = automation.name
-    this.automationsService.getDiagnostics(automation.id).subscribe({
+    this.automationsService.getDiagnostics(automation.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (diagnostics) => {
         this.diagnostics = diagnostics
         this.diagnosticsLoading = false

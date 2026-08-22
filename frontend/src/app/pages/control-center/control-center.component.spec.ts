@@ -3,7 +3,10 @@ import { Subject } from 'rxjs'
 import { ControlCenterComponent } from './control-center.component'
 
 describe('ControlCenterComponent', () => {
-  function createComponent(agentCycle: { run: jasmine.Spy }) {
+  function createComponent(
+    agentCycle: { run: jasmine.Spy },
+    automations: Record<string, jasmine.Spy> = {}
+  ) {
     const notifications = {
       error: jasmine.createSpy('error'),
       success: jasmine.createSpy('success'),
@@ -11,7 +14,7 @@ describe('ControlCenterComponent', () => {
     }
 
     const component = new ControlCenterComponent(
-      {} as any,
+      automations as any,
       {} as any,
       {} as any,
       agentCycle as any,
@@ -56,4 +59,23 @@ describe('ControlCenterComponent', () => {
       'The operational cycle could not complete.'
     )
   }))
+
+  it('does not duplicate an automation health check while the first request is pending', () => {
+    const run = jasmine.createSpy('run')
+    run.and.returnValue(new Subject<any>().asObservable())
+    const healthCheck = jasmine.createSpy('runHealthCheck')
+    const response = new Subject<any>()
+    healthCheck.and.returnValue(response.asObservable())
+    const { component } = createComponent({ run }, { runHealthCheck: healthCheck })
+    const automation = { id: 'automation-1', name: 'Daily check' } as any
+
+    component.runHealthCheck(automation)
+    component.runHealthCheck(automation)
+
+    expect(healthCheck).toHaveBeenCalledTimes(1)
+    expect(component.isChecking(automation)).toBeTrue()
+
+    response.error({ error: 'timeout' })
+    expect(component.isChecking(automation)).toBeFalse()
+  })
 })
