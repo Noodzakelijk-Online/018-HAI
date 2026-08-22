@@ -130,6 +130,9 @@ jobs:
       - name: Gateway authentication contract
         run: python3 nginx-config/test_gateway_contract.py
       - run: docker compose --env-file .env.example -f docker-compose.local.yml config
+      - name: Docling runner boundary tests
+        working-directory: services/docling-runner
+        run: python3 -m unittest test_app.py
       - name: Nginx syntax
         run: |
           python3 - "$RUNNER_TEMP/hai-nginx.conf" <<'PY'

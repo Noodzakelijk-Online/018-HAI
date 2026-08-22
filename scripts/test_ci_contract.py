@@ -444,6 +444,12 @@ class CIWorkflowContractTest(unittest.TestCase):
             smoke,
         )
 
+    def test_docling_runner_boundary_tests_run_in_compose_ci(self) -> None:
+        compose = job_block("compose")
+        self.assertIn("Docling runner boundary tests", compose)
+        self.assertIn("working-directory: services/docling-runner", compose)
+        self.assertIn("python3 -m unittest test_app.py", compose)
+
     def test_postgres_jobs_cannot_silently_skip_or_match_no_tests(self) -> None:
         migrations = job_block("migrations-integration")
         for contract in (
