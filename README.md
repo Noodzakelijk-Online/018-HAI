@@ -542,9 +542,10 @@ Sarama/Kafka where applicable. The frontend uses Angular 22.1.1,
 ng-zorro-antd 22.0.1, TypeScript 6.0.3, and the supported esbuild/Vite
 application builder.
 Versioned SQL migrations are the schema source of truth and `DB_AUTOMIGRATE`
-defaults to `false`. Startup applies pre-phase migrations, optionally runs
-development-only AutoMigrate when explicitly enabled, then applies
-post-phase migrations. See
+defaults to `false`. Docker Compose runs them through a short-lived
+owner-credentialed migration job before the backend starts; the long-running
+backend uses a separate DML-only runtime role. Development can retain direct
+migration startup unless `DB_MIGRATIONS_ENABLED=false` is set. See
 [migration safety](docs/migrations.md).
 
 ## Quick Start

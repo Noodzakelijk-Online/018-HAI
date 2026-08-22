@@ -325,6 +325,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "^--- PASS: TestRollbackMigrationReversesPostMigration",
             "^--- PASS: TestConcurrentMigrationRunnersSerializeAndRecheck",
             "^--- PASS: TestLegacyBaselineRejectsDifferentExistingPrimaryKey",
+            "^--- PASS: TestRuntimeRoleCanUseDataButCannotAlterSchema",
             "^--- PASS: TestFrameworkRegistryPostgresIntegrationRequiredEnvironment",
             "^--- PASS: TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun",
             "^--- PASS: TestFrameworkRegistryPostgresConstraintsAndImmutability",

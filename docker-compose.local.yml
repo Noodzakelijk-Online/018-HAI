@@ -70,6 +70,40 @@ services:
       - service-hub
       - idp-network
 
+  # Applies schema changes with the database owner, then exits. The long-lived
+  # backend uses DB_RUNTIME_* and cannot create or alter the schema.
+  backend-migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: 018-hai-backend-migrate
+    command: ["/root/app", "migrate", "up"]
+    restart: "no"
+    depends_on:
+      postgres-automation:
+        condition: service_healthy
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${AUTOMATION_DB_NAME}
+      DB_HOST: ${AUTOMATION_DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_RUNTIME_USER: ${DB_RUNTIME_USER}
+      DB_RUNTIME_PASSWORD: ${DB_RUNTIME_PASSWORD}
+      DB_MIGRATIONS_ENABLED: "true"
+      DB_AUTOMIGRATE: "false"
+      HAI_SEMANTIC_RETRIEVAL_ENABLED: ${HAI_SEMANTIC_RETRIEVAL_ENABLED}
+      IMAGE_SAVE_DIR: /tmp/images
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - automation-hub-network
+
   backend:
     build:
       context: ./backend
@@ -78,8 +112,8 @@ services:
     hostname: backend
     restart: unless-stopped
     depends_on:
-      postgres-automation:
-        condition: service_healthy
+      backend-migrate:
+        condition: service_completed_successfully
       idp:
         condition: service_started
     environment:
@@ -89,11 +123,12 @@ services:
       BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
       HAI_MEMORY_ENCRYPTION_KEY: ${HAI_MEMORY_ENCRYPTION_KEY}
       HAI_APPROVAL_PROOF_SIGNING_KEY: ${HAI_APPROVAL_PROOF_SIGNING_KEY}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_USER: ${DB_RUNTIME_USER}
+      DB_PASSWORD: ${DB_RUNTIME_PASSWORD}
       DB_NAME: ${AUTOMATION_DB_NAME}
       DB_HOST: ${AUTOMATION_DB_HOST}
       DB_PORT: ${DB_PORT}
+      DB_MIGRATIONS_ENABLED: "false"
       IMAGE_MAX_SIZE_IN_MB: ${IMAGE_MAX_SIZE_IN_MB}
       IMAGE_EXTENSIONS: ${IMAGE_EXTENSIONS}
       IMAGE_SAVE_DIR: ${IMAGE_SAVE_DIR}

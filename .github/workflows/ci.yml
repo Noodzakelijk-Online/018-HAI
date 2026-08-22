@@ -247,12 +247,13 @@ jobs:
           task_dsn="host=localhost user=postgres password=postgres dbname=hai_task_state_test port=5432 sslmode=disable TimeZone=UTC"
           agent_registry_dsn="host=localhost user=postgres password=postgres dbname=hai_agent_registry_test port=5432 sslmode=disable TimeZone=UTC"
           HAI_TEST_DATABASE_DSN="$migration_dsn" go test -count=1 -tags integration \
-            -run '^(TestConcurrentMigrationRunnersSerializeAndRecheck|TestLegacyBaselineRejectsDifferentExistingPrimaryKey|TestRunMigrationsAppliesAndIsIdempotent|TestRollbackMigrationReversesPostMigration)$' \
+            -run '^(TestConcurrentMigrationRunnersSerializeAndRecheck|TestLegacyBaselineRejectsDifferentExistingPrimaryKey|TestRunMigrationsAppliesAndIsIdempotent|TestRollbackMigrationReversesPostMigration|TestRuntimeRoleCanUseDataButCannotAlterSchema)$' \
             ./internal/infra/ -v | tee "$infra_log"
           grep -q -- '^--- PASS: TestConcurrentMigrationRunnersSerializeAndRecheck' "$infra_log"
           grep -q -- '^--- PASS: TestLegacyBaselineRejectsDifferentExistingPrimaryKey' "$infra_log"
           grep -q -- '^--- PASS: TestRunMigrationsAppliesAndIsIdempotent' "$infra_log"
           grep -q -- '^--- PASS: TestRollbackMigrationReversesPostMigration' "$infra_log"
+          grep -q -- '^--- PASS: TestRuntimeRoleCanUseDataButCannotAlterSchema' "$infra_log"
           HAI_TEST_DATABASE_DSN="$registry_dsn" go test -count=1 -tags integration \
             ./internal/frameworkregistry/ -v | tee "$registry_log"
           grep -q -- '^--- PASS: TestFrameworkRegistryPostgresIntegrationRequiredEnvironment' "$registry_log"
