@@ -100,6 +100,7 @@ export class ControlCenterComponent implements OnInit {
   lastAgentCycle?: IAgentCycleRunResult
 
   loading = false
+  overviewLoadError = ''
   scanning = false
   memoryLoading = false
   memoriesLoaded = false
@@ -194,28 +195,49 @@ export class ControlCenterComponent implements OnInit {
       return
     }
     this.loading = true
+    this.overviewLoadError = ''
+    const failedLoads: string[] = []
     forkJoin({
       workflow: this.workflowService.dashboard().pipe(
         timeout(2500),
-        catchError(() => of(undefined))
+        catchError(() => {
+          failedLoads.push('workflow')
+          return of(undefined)
+        })
       ),
       ambient: this.ambientService.overview().pipe(
         timeout(2500),
-        catchError(() => of(undefined))
+        catchError(() => {
+          failedLoads.push('ambient priorities')
+          return of(undefined)
+        })
       ),
       pursuits: this.pursuitService.dashboard().pipe(
         timeout(1800),
-        catchError(() => of(undefined))
+        catchError(() => {
+          failedLoads.push('pursuits')
+          return of(undefined)
+        })
       ),
     }).subscribe({
       next: ({ workflow, ambient, pursuits }) => {
-        this.workflowDashboard = workflow
-        this.ambientOverview = ambient
-        this.pursuitDashboard = pursuits
+        if (workflow !== undefined) {
+          this.workflowDashboard = workflow
+        }
+        if (ambient !== undefined) {
+          this.ambientOverview = ambient
+        }
+        if (pursuits !== undefined) {
+          this.pursuitDashboard = pursuits
+        }
+        if (failedLoads.length) {
+          this.overviewLoadError = `Unable to refresh ${failedLoads.join(', ')}. Some information may be unavailable; retry when the service is ready.`
+        }
         this.rebuildViewModel()
         this.loading = false
       },
       error: () => {
+        this.overviewLoadError = 'The command center could not be refreshed. Check system status, then try again.'
         this.loading = false
       },
     })

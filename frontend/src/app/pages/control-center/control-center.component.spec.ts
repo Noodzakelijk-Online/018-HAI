@@ -53,4 +53,23 @@ describe('ControlCenterComponent dashboard refresh', () => {
     expect(component.loading).toBeFalse()
     expect(rebuild).toHaveBeenCalledTimes(1)
   })
+
+  it('keeps prior dashboard state and exposes a partial refresh failure', () => {
+    const { component, workflow, ambient, pursuits, rebuild } = createComponent()
+    const priorWorkflow = { attention: [{ id: 'existing-item' }] }
+    component.workflowDashboard = priorWorkflow as any
+
+    component.refresh()
+
+    workflow.error(new Error('workflow unavailable'))
+    ambient.next({ needs: [] })
+    ambient.complete()
+    pursuits.error(new Error('pursuits unavailable'))
+
+    expect(component.workflowDashboard).toBe(priorWorkflow as any)
+    expect(component.overviewLoadError).toContain('workflow')
+    expect(component.overviewLoadError).toContain('pursuits')
+    expect(component.loading).toBeFalse()
+    expect(rebuild).toHaveBeenCalledTimes(1)
+  })
 })

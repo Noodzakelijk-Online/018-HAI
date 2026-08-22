@@ -136,6 +136,15 @@
         </button>
       </div>
 
+      <nz-alert
+        *ngIf="overviewLoadError"
+        nzType="warning"
+        nzShowIcon
+        nzMessage="Some command-center data is unavailable"
+        [nzDescription]="overviewLoadError"
+        class="command-center-load-alert"
+      ></nz-alert>
+
       <section class="command-board" aria-label="Primary actions">
         <button
           type="button"
