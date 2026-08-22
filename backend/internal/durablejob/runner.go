@@ -296,6 +296,12 @@ func (r *Runner) Start(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
+	// Claim already-due persisted work immediately after startup. Waiting for
+	// the first ticker interval delays recovery and newly queued work without
+	// reducing idle polling; subsequent passes stay bounded by interval.
+	if ctx.Err() == nil {
+		_, _ = r.RunOnce(ctx)
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

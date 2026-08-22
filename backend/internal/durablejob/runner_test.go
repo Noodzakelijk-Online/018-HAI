@@ -242,6 +242,31 @@ func TestRunnerExecutesJobAndMarksSucceeded(t *testing.T) {
 	}
 }
 
+func TestRunnerStartClaimsExistingDueJobWithoutWaitingForPollInterval(t *testing.T) {
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	repo := newFakeRepo()
+	runner := NewRunner(repo, Options{WorkerID: "w1", Now: fixedClock(&now)})
+
+	ran := make(chan struct{}, 1)
+	runner.Register("startup", func(context.Context, models.DurableJob) error {
+		ran <- struct{}{}
+		return nil
+	})
+	if _, err := runner.Enqueue("startup", "{}", now, 1); err != nil {
+		t.Fatalf("enqueue startup job: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go runner.Start(ctx, 5*time.Second)
+
+	select {
+	case <-ran:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("runner waited for its poll interval before claiming an already due job")
+	}
+}
+
 func TestRunnerRetriesWithBackoffAndSurvivesRestart(t *testing.T) {
 	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 	repo := newFakeRepo()
