@@ -106,6 +106,7 @@ export class ControlCenterComponent implements OnInit {
   memoriesLoaded = false
   diagnosticsListLoading = false
   diagnosticsLoaded = false
+  diagnosticsLoadError = ''
   resolvingId = ''
   archivingMemoryId = ''
   diagnosticsExpanded = false
@@ -276,26 +277,44 @@ export class ControlCenterComponent implements OnInit {
       return
     }
     this.diagnosticsListLoading = true
+    this.diagnosticsLoadError = ''
+    const failedLoads: string[] = []
     forkJoin({
       automations: this.automationsService.getAutomations().pipe(
-        catchError(() => of([] as IAutomationModel[]))
+        catchError(() => {
+          failedLoads.push('automations')
+          return of(undefined)
+        })
       ),
       summary: this.automationsService.getHealthSummary().pipe(
-        catchError(() => of(undefined))
+        catchError(() => {
+          failedLoads.push('automation health')
+          return of(undefined)
+        })
       ),
       runtimes: this.agentRuntimeService.overview().pipe(
         timeout(2500),
-        catchError(() => of({ runtimes: [] as IAgentRuntimeInfo[], health: [] as IAgentRuntimeHealth[] }))
+        catchError(() => {
+          failedLoads.push('runtime health')
+          return of(undefined)
+        })
       ),
     }).subscribe({
       next: (result) => {
-        this.automations = result.automations.sort(
-          (a, b) => a.position - b.position
-        )
-        this.summary = result.summary
-        this.runtimes = result.runtimes.runtimes
-        this.runtimeHealth = result.runtimes.health
-        this.diagnosticsLoaded = true
+        if (result.automations) {
+          this.automations = result.automations.sort(
+            (a, b) => a.position - b.position
+          )
+        }
+        if (result.summary) this.summary = result.summary
+        if (result.runtimes) {
+          this.runtimes = result.runtimes.runtimes
+          this.runtimeHealth = result.runtimes.health
+        }
+        if (failedLoads.length) {
+          this.diagnosticsLoadError = `Could not load ${failedLoads.join(' or ')}. Existing diagnostic data is retained and may be incomplete.`
+        }
+        this.diagnosticsLoaded = this.diagnosticsLoaded || !!result.automations || !!result.summary || !!result.runtimes
         this.diagnosticsListLoading = false
         this.rebuildViewModel()
       },
