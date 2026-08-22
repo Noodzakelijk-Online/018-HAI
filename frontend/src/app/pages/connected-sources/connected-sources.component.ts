@@ -649,7 +649,8 @@ export class ConnectedSourcesComponent implements OnInit {
     if (!connector?.enabled) {
       return false;
     }
-    return ['operational', 'local_only', 'modeled'].includes((connector.adapterStatus || '').toLowerCase());
+    const status = (connector.adapterStatus || 'operational').toLowerCase();
+    return ['operational', 'local_only', 'modeled'].includes(status);
   }
 
   connectorChanged(connectorKey: string): void {

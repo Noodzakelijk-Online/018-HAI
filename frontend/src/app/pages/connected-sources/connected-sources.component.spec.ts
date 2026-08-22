@@ -114,6 +114,12 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.connectorCanCreateSource(connector)).toBeFalse();
   });
 
+  it('keeps enabled legacy connectors usable when the backend omits adapter status', () => {
+    const { component } = createComponent();
+
+    expect(component.connectorCanCreateSource({ connectorKey: 'local-folder', enabled: true } as any)).toBeTrue();
+  });
+
   it('prevents duplicate generic source creation while the request is running', () => {
     const { component } = createComponent();
     const pending = new Subject<IConnectedSource>();
