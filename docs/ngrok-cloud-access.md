@@ -72,7 +72,11 @@ script reconciles and health-checks the IDP, backend, frontend, and gateway with
 the hardened environment before it creates the public endpoint. This prevents
 an IDP that was previously started with insecure cookie settings from being
 exposed merely because the file was edited afterward. A healthy container and
-reachable login page prove only transport and authentication routing. Each
+reachable login page prove only transport and authentication routing. After the
+tunnel reports healthy, the launcher also requires the configured public
+`/readyz` route to return HTTP 200 without redirecting. If that public check
+does not become ready, it stops the ngrok service instead of claiming cloud
+access. Each
 external connector, model, or runtime still requires its own bounded
 authorization and acceptance evidence.
 

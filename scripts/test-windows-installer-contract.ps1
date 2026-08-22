@@ -444,6 +444,9 @@ foreach ($required in @(
 if ($docs -notmatch [Regex]::Escape("Every installed HAI command checks this ownership")) {
     throw "Installer documentation must explain the one-installation ownership check."
 }
+if ($docs -notmatch [Regex]::Escape('public `/readyz` route')) {
+    throw "Installer documentation must explain the public tunnel readiness verification."
+}
 
 & $buildScript -SkipCompile
 if ($LASTEXITCODE -ne 0) {

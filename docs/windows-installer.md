@@ -54,7 +54,9 @@ token in `%LOCALAPPDATA%\HAI\hai.env`, use **Start governed cloud access** in
 the HAI Local Start menu group. It passes the installed environment and Compose
 file to the governed ngrok preflight; it will refuse placeholder credentials,
 an insecure login configuration, a non-loopback gateway, or OAuth redirects
-that do not match the configured public origin. Use the same shortcut's
+that do not match the configured public origin. After the tunnel container is
+healthy, the launcher verifies the configured public `/readyz` route before it
+reports cloud access; a failed public check stops the tunnel. Use the same shortcut's
 PowerShell script with `-ValidateOnly` to inspect configuration without opening
 a tunnel, or `-Stop` to close the tunnel while leaving the local HAI stack
 running.
