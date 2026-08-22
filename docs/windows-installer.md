@@ -35,6 +35,27 @@ readiness, and opens `http://127.0.0.1:8088`.
 Use the Start menu entries to open the dashboard, inspect HAI status, or stop
 the stack. Stop HAI preserves the Docker volumes and local settings.
 
+### Optional Kafka event bus
+
+The ordinary local installation does **not** start Kafka or ZooKeeper. This
+keeps the Windows footprint lower while preserving login, source intake,
+approvals, workflows, and audit records. IDP logs remain available through
+Docker Desktop, while non-critical account-notification events are skipped.
+
+For a deployment that explicitly needs the event bus, run this from the
+installed HAI program folder in PowerShell:
+
+```powershell
+.\installer\windows\Start-HAI.ps1 -EnableEventBus
+```
+
+This starts the `event-bus` Compose profile, including Kafka, ZooKeeper, and
+the Kafka-driven nginx configuration manager. It also enables the three
+event-bus settings in `%LOCALAPPDATA%\HAI\hai.env`, so the IDP and backend use
+the broker rather than merely starting it. The next normal Start HAI run
+automatically restores the smaller local stack and clears those local broker
+settings.
+
 ### Enable the local safe worker
 
 The dashboard starts in read-only-safe mode. Before HAI can run its confined

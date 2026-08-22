@@ -23,6 +23,18 @@ func TestKafkaConfigTrimsRequiredValues(t *testing.T) {
 	}
 }
 
+func TestKafkaConfigIsOmittedWhenEventBusIsDisabled(t *testing.T) {
+	t.Setenv(kafkaEnabled, "false")
+
+	cfg, err := newOptionalKafkaConfig()
+	if err != nil {
+		t.Fatalf("newOptionalKafkaConfig() error = %v", err)
+	}
+	if cfg != nil {
+		t.Fatalf("newOptionalKafkaConfig() = %#v, want nil when disabled", cfg)
+	}
+}
+
 func TestKafkaConfigRejectsMissingRequiredValues(t *testing.T) {
 	for _, test := range []struct {
 		name string

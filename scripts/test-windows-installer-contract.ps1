@@ -7,9 +7,12 @@ $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Pat
 $buildScript = Join-Path $PSScriptRoot "build-windows-installer.ps1"
 $installerScript = Join-Path $repositoryRoot "installer\windows\HAI.iss"
 $supportScript = Join-Path $repositoryRoot "installer\windows\Hai-InstallerSupport.ps1"
+$startScript = Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"
 $localModelScript = Join-Path $repositoryRoot "installer\windows\Enable-LocalModel.ps1"
 $initializerScript = Join-Path $PSScriptRoot "initialize-windows.ps1"
 $documentation = Join-Path $repositoryRoot "docs\windows-installer.md"
+$composePath = Join-Path $repositoryRoot "docker-compose.local.yml"
+$environmentTemplatePath = Join-Path $repositoryRoot ".env.example"
 
 foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $localModelScript, $initializerScript, $documentation)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
@@ -20,8 +23,11 @@ foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $loc
 $build = [IO.File]::ReadAllText($buildScript)
 $installer = [IO.File]::ReadAllText($installerScript)
 $support = [IO.File]::ReadAllText($supportScript)
+$start = [IO.File]::ReadAllText($startScript)
 $initializer = [IO.File]::ReadAllText($initializerScript)
 $docs = [IO.File]::ReadAllText($documentation)
+$compose = [IO.File]::ReadAllText($composePath)
+$environmentTemplate = [IO.File]::ReadAllText($environmentTemplatePath)
 $gitignore = [IO.File]::ReadAllText((Join-Path $repositoryRoot ".gitignore"))
 
 if ($gitignore -notmatch [Regex]::Escape("/installer/release/")) {
@@ -116,6 +122,68 @@ foreach ($required in @(
 if ($initializer -notmatch [Regex]::Escape('GATEWAY_HOST_BIND') -or
     $initializer -notmatch [Regex]::Escape('"127.0.0.1"')) {
     throw "The first-run initializer does not enforce a loopback gateway."
+}
+
+foreach ($required in @(
+    '[switch]$EnableEventBus',
+    '"--profile", "event-bus"',
+    'Set-HaiEventBusEnabled',
+    'Set-HaiEventBusDisabled',
+    'IDP_KAFKA_ENABLED',
+    'KAFKA_BROKERS',
+    'BROKERS_ADDR'
+)) {
+    if (($start + $support) -notmatch [Regex]::Escape($required)) {
+        throw "Windows startup must expose the optional Kafka event-bus profile: $required"
+    }
+}
+
+foreach ($required in @(
+    'IDP_KAFKA_ENABLED=false',
+    'KAFKA_BROKERS=',
+    'BROKERS_ADDR='
+)) {
+    if ($environmentTemplate -notmatch [Regex]::Escape($required)) {
+        throw "The local environment template must disable Kafka by default: $required"
+    }
+}
+
+foreach ($service in @('zookeeper', 'kafka', 'nginxconfigmanager')) {
+    $servicePattern = '(?ms)^  {0}:.*?^    profiles: \["event-bus"\]' -f [Regex]::Escape($service)
+    if ($compose -notmatch $servicePattern) {
+        throw "The $service service must be opt-in through the event-bus profile."
+    }
+}
+
+$previousLocalAppData = $env:LOCALAPPDATA
+$eventBusTestRoot = Join-Path ([IO.Path]::GetTempPath()) ("hai-event-bus-contract-" + [Guid]::NewGuid().ToString("N"))
+try {
+    $env:LOCALAPPDATA = $eventBusTestRoot
+    $testDataRoot = Join-Path $eventBusTestRoot "HAI"
+    New-Item -ItemType Directory -Path $testDataRoot -Force | Out-Null
+    Copy-Item -LiteralPath $environmentTemplatePath -Destination (Join-Path $testDataRoot "hai.env")
+
+    . $supportScript
+    Set-HaiEventBusEnabled
+    $enabledEnvironment = [IO.File]::ReadAllText((Get-HaiEnvironmentFile))
+    foreach ($required in @('IDP_KAFKA_ENABLED=true', 'KAFKA_BROKERS=kafka:9092', 'BROKERS_ADDR=kafka:9092')) {
+        if ($enabledEnvironment -notmatch [Regex]::Escape($required)) {
+            throw "Enabling the event bus must persist $required."
+        }
+    }
+
+    Set-HaiEventBusDisabled
+    $disabledEnvironment = [IO.File]::ReadAllText((Get-HaiEnvironmentFile))
+    foreach ($required in @('IDP_KAFKA_ENABLED=false', 'KAFKA_BROKERS=', 'BROKERS_ADDR=')) {
+        if ($disabledEnvironment -notmatch [Regex]::Escape($required)) {
+            throw "Disabling the event bus must persist $required."
+        }
+    }
+} finally {
+    $env:LOCALAPPDATA = $previousLocalAppData
+    if (Test-Path -LiteralPath $eventBusTestRoot -PathType Container) {
+        Remove-Item -LiteralPath $eventBusTestRoot -Recurse -Force
+    }
 }
 
 foreach ($forbidden in @(

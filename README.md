@@ -532,7 +532,7 @@ Go API and operating engines
   |-- local-first LLM router and provider probes
   |-- ambient planning and controlled runtime registry
         |
-Postgres + Redis + Kafka
+Postgres + Redis (+ optional Kafka event bus)
 ```
 
 The local deployment targets Windows 11 with Docker Desktop. The control-plane
@@ -567,6 +567,23 @@ Copy-Item .env.example .env.local
 docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
 docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps
+```
+
+Kafka, ZooKeeper, and the Kafka-driven nginx configuration manager are not
+started by default. The local backend and IDP degrade safely without the event
+bus, which avoids allocating those services on an ordinary Windows machine.
+Before using the explicit `event-bus` profile, set these values in `.env.local`:
+
+```text
+IDP_KAFKA_ENABLED=true
+KAFKA_BROKERS=kafka:9092
+BROKERS_ADDR=kafka:9092
+```
+
+Then start the profile only when an installation requires it:
+
+```powershell
+docker compose --env-file .env.local -f docker-compose.local.yml --profile event-bus up --build -d
 ```
 
 ### Windows 11 installer

@@ -62,16 +62,16 @@ func NewService(userService users.UserService, hasher utils.PasswordHasher, send
 }
 
 func GetDefaultAuthService() (IService, error) {
-	logger, err := services.NewKafkaLogger(config.KafkaConfig.BrokersAddr, config.KafkaConfig.LoggerTopic)
+	logger, err := services.NewDefaultLogger()
 	if err != nil {
 		return nil, err
 	}
-	userService, err := users.GetDefaultUserService()
+	userService, err := users.GetDefaultUserService(logger)
 	if err != nil {
 		return nil, err
 	}
 	hasher := config.AuthenticationConfig.PasswordHasher
-	sender, err := services.NewKafkaMessageSender()
+	sender, err := services.NewDefaultMessageSender()
 	if err != nil {
 		return nil, err
 	}

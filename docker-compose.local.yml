@@ -11,8 +11,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
     environment:
       BLOCKING_TIME_EXPONENTIATION_BASIS: ${BLOCKING_TIME_EXPONENTIATION_BASIS}
       MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK: ${MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK}
@@ -58,6 +56,10 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_REQUIRE_STARTTLS: ${SMTP_REQUIRE_STARTTLS:-true}
+      # Kafka is optional for the local control plane. With
+      # IDP_KAFKA_ENABLED=false the IDP logs locally and account events are
+      # deliberately non-durable best-effort notifications.
+      IDP_KAFKA_ENABLED: ${IDP_KAFKA_ENABLED:-false}
     healthcheck:
       test: ["CMD-SHELL", "bash -ec '</dev/tcp/127.0.0.1/${WEB_SERVER_PORT}'"]
       interval: 10s
@@ -77,8 +79,6 @@ services:
     restart: unless-stopped
     depends_on:
       postgres-automation:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
       idp:
         condition: service_started
@@ -901,6 +901,7 @@ services:
       context: ./nginx-config-manager
       dockerfile: Dockerfile
     container_name: 018-hai-nginx-config-manager
+    profiles: ["event-bus"]
     restart: unless-stopped
     environment:
       BROKERS_ADDR: ${BROKERS_ADDR}
@@ -1457,6 +1458,7 @@ services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
     container_name: 018-hai-zookeeper
+    profiles: ["event-bus"]
     restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_PORT}
@@ -1474,6 +1476,7 @@ services:
     image: confluentinc/cp-kafka:7.6.1
     container_name: 018-hai-kafka
     hostname: kafka
+    profiles: ["event-bus"]
     restart: unless-stopped
     depends_on:
       zookeeper:

@@ -32,10 +32,16 @@ func NewUserService(repo irepository.UserRepository, logger iservice.Logger, has
 	}
 }
 
-func GetDefaultUserService() (UserService, error) {
-	logger, err := services.NewKafkaLogger(config.KafkaConfig.BrokersAddr, config.KafkaConfig.LoggerTopic)
-	if err != nil {
-		return nil, err
+func GetDefaultUserService(existingLogger ...iservice.Logger) (UserService, error) {
+	var logger iservice.Logger
+	if len(existingLogger) > 0 && existingLogger[0] != nil {
+		logger = existingLogger[0]
+	} else {
+		var err error
+		logger, err = services.NewDefaultLogger()
+		if err != nil {
+			return nil, err
+		}
 	}
 	database, err := infra.GetDefaultDB()
 	if err != nil {

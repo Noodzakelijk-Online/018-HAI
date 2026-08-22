@@ -4,6 +4,7 @@ param(
     [int]$GatewayPort = 8088,
     [ValidateRange(30, 900)]
     [int]$HealthTimeoutSeconds = 600,
+    [switch]$EnableEventBus,
     [switch]$NoBrowser
 )
 
@@ -13,10 +14,19 @@ $ErrorActionPreference = "Stop"
 Assert-HaiDockerReady
 Assert-HaiSingleInstallation
 Initialize-HaiLocalEnvironment -GatewayPort $GatewayPort
+if ($EnableEventBus) {
+    Set-HaiEventBusEnabled
+} else {
+    Set-HaiEventBusDisabled
+}
 
 $composeArguments = Get-HaiComposeArguments
+$profileArguments = @()
+if ($EnableEventBus) {
+    $profileArguments = @("--profile", "event-bus")
+}
 Write-Host "Starting the local HAI stack. The first run downloads and builds its containers." -ForegroundColor Cyan
-& docker @composeArguments up -d --build
+& docker @composeArguments @profileArguments up -d --build
 if ($LASTEXITCODE -ne 0) {
     throw "HAI startup failed. Open Docker Desktop and inspect the 018-hai container logs."
 }

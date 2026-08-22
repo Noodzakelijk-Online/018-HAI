@@ -124,6 +124,53 @@ function Initialize-HaiLocalEnvironment {
     }
 }
 
+function Set-HaiEventBusState {
+    param([bool]$Enabled)
+
+    $environmentFile = Get-HaiEnvironmentFile
+    if (-not (Test-Path -LiteralPath $environmentFile -PathType Leaf)) {
+        throw "HAI local environment is missing. Start HAI once without -EnableEventBus to create it."
+    }
+
+    $content = [IO.File]::ReadAllText($environmentFile)
+    $settings = if ($Enabled) {
+        @{
+            IDP_KAFKA_ENABLED = "true"
+            KAFKA_BROKERS = "kafka:9092"
+            BROKERS_ADDR = "kafka:9092"
+        }
+    } else {
+        @{
+            IDP_KAFKA_ENABLED = "false"
+            KAFKA_BROKERS = ""
+            BROKERS_ADDR = ""
+        }
+    }
+
+    foreach ($setting in $settings.GetEnumerator()) {
+        $pattern = "(?m)^" + [Regex]::Escape($setting.Key) + "=.*$"
+        if (-not [Regex]::IsMatch($content, $pattern)) {
+            throw "HAI local environment does not define $($setting.Key). Reinstall or recreate the local environment before changing the event-bus setting."
+        }
+        $replacement = [Text.RegularExpressions.MatchEvaluator]{
+            param($match)
+            return "$($setting.Key)=$($setting.Value)"
+        }
+        $content = [Regex]::Replace($content, $pattern, $replacement)
+    }
+
+    $utf8WithoutBom = New-Object Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($environmentFile, $content, $utf8WithoutBom)
+}
+
+function Set-HaiEventBusEnabled {
+    Set-HaiEventBusState -Enabled $true
+}
+
+function Set-HaiEventBusDisabled {
+    Set-HaiEventBusState -Enabled $false
+}
+
 function Wait-HaiReady {
     param([ValidateRange(30, 900)][int]$TimeoutSeconds = 600)
 
