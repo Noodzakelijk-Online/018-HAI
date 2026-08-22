@@ -35,9 +35,10 @@ appearing in the UI.
 
 The canonical product stack is **Angular + Go + Postgres + Docker Compose**.
 `main` is the product branch. The older Manus React/tRPC/MySQL implementation
-is reference material, not a second product. Build from source, copy
-`.env.example` to an untracked `.env.local`, keep secrets outside Git, and use
-the checks in [Developer Checks](#developer-checks) before publishing a change.
+is reference material, not a second product. Build from source, create an
+untracked `.env.local` with `scripts\initialize-windows.ps1` rather than
+starting directly from `.env.example`, keep secrets outside Git, and use the
+checks in [Developer Checks](#developer-checks) before publishing a change.
 The root `docker-compose.yml` is a compatibility entry point to
 `docker-compose.local.yml`; both start the same source-built stack when given
 the same environment file.
@@ -1035,7 +1036,7 @@ scripts/                 Smoke and operational verification scripts
 docs/                    Architecture, runbooks, evidence, audits, and roadmap
 .github/workflows/       CI pipeline
 docker-compose.local.yml Windows/local-first Compose topology
-.env.example             Environment template; copy to untracked .env.local
+.env.example             Environment template; initialize an untracked .env.local from it
 generic-auto/            Legacy compatibility server; disabled by default
 gate/                    Legacy gateway/config area; its Compose file delegates to the local source-built stack
 ```

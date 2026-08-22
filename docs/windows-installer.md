@@ -32,6 +32,12 @@ asks for the local owner email and password, creates independent secrets in
 `%LOCALAPPDATA%\HAI\hai.env`, builds the real local containers, waits for
 readiness, and opens `http://127.0.0.1:8088`.
 
+The shipped environment template intentionally cannot seed an owner account:
+it contains a marked sample password and the IDP refuses it. This prevents a
+direct Compose run from silently creating a predictable administrator. Use the
+installer or `scripts\initialize-windows.ps1` to create a unique, ignored local
+environment file.
+
 Use the Start menu entries to open the dashboard, inspect HAI status, or stop
 the stack. Stop HAI preserves the Docker volumes and local settings.
 
