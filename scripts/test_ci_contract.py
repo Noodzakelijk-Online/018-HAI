@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import re
 import unittest
@@ -37,6 +38,17 @@ def compose_service_block(compose: str, service: str) -> str:
 
 
 class CIWorkflowContractTest(unittest.TestCase):
+    def test_frontend_uses_one_direct_angular_cdk_dependency(self) -> None:
+        frontend = ROOT / "frontend"
+        package = json.loads((frontend / "package.json").read_text(encoding="utf-8"))
+        package_lock = (frontend / "package-lock.json").read_text(encoding="utf-8")
+        pnpm_lock = (frontend / "pnpm-lock.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("@angular/cdk", package["dependencies"])
+        self.assertNotIn("angular-mixed-cdk-drag-drop", package["dependencies"])
+        self.assertNotIn("angular-mixed-cdk-drag-drop", package_lock)
+        self.assertNotIn("angular-mixed-cdk-drag-drop", pnpm_lock)
+
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:

@@ -11,6 +11,9 @@ importers:
       '@angular/animations':
         specifier: ^16.1.0
         version: 16.2.12(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))
+      '@angular/cdk':
+        specifier: ^16.1.0
+        version: 16.2.14(@angular/common@16.2.12(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       '@angular/common':
         specifier: ^16.1.0
         version: 16.2.12(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
@@ -35,9 +38,6 @@ importers:
       '@types/jsonwebtoken':
         specifier: ^9.0.2
         version: 9.0.10
-      angular-mixed-cdk-drag-drop:
-        specifier: ^2.1.0
-        version: 2.4.0(@angular/cdk@16.2.14(@angular/common@16.2.12(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/common@16.2.12(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
       ng-zorro-antd:
         specifier: ^16.1.0
         version: 16.2.2(41ecd4927ab0fbbc617ec39916580731)
@@ -1368,14 +1368,6 @@ packages:
 
   ajv@8.20.0:
     resolution: {integrity: sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==}
-
-  angular-mixed-cdk-drag-drop@2.4.0:
-    resolution: {integrity: sha512-hOfuENB+krOd2kUexBDhoEcqORjiu4xm42vXqWS00f6XhKKEgOKKXDWisGOpVuIxEb7Uk/sI3RE62/gvHN0V5w==}
-    peerDependencies:
-      '@angular/cdk': ^19.2.14
-      '@angular/common': ^19.2.9
-      '@angular/core': ^19.2.9
-      rxjs: ^7.8.1
 
   ansi-colors@4.1.3:
     resolution: {integrity: sha512-/6w/C21Pm1A7aZitlI5Ni/2J6FFQN8i1Cvz3kHABAAbw93v/NlvKdVOqz7CCWz/3iv/JplRSEEZ83XION15ovw==}
@@ -5698,14 +5690,6 @@ snapshots:
       fast-uri: 3.1.5
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
-
-  angular-mixed-cdk-drag-drop@2.4.0(@angular/cdk@16.2.14(@angular/common@16.2.12(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/common@16.2.12(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2):
-    dependencies:
-      '@angular/cdk': 16.2.14(@angular/common@16.2.12(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2))(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
-      '@angular/common': 16.2.12(@angular/core@16.2.12(rxjs@7.8.2)(zone.js@0.13.3))(rxjs@7.8.2)
-      '@angular/core': 16.2.12(rxjs@7.8.2)(zone.js@0.13.3)
-      rxjs: 7.8.2
-      tslib: 2.8.1
 
   ansi-colors@4.1.3: {}
 
