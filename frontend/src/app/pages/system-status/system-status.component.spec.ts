@@ -54,6 +54,7 @@ describe('SystemStatusComponent', () => {
   }));
 
   it('waits one minute between visible readiness refreshes', fakeAsync(() => {
+    spyOnProperty(document, 'hidden', 'get').and.returnValue(false);
     const refresh = spyOn(component, 'refresh');
 
     component.ngOnInit();
