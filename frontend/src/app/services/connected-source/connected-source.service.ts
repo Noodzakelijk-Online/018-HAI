@@ -40,6 +40,10 @@ export class ConnectedSourceService implements IConnectedSourceService {
     return this.http.get<ISourceConnectionHealth>(`${this.apiUrl}/${sourceId}/health`);
   }
 
+  connectionHealthSummary(): Observable<ISourceConnectionHealth[]> {
+    return this.http.get<ISourceConnectionHealth[]>(`${this.apiUrl}/health`);
+  }
+
   syncJobs(sourceId?: string): Observable<ISourceSyncJob[]> {
     let params = new HttpParams();
     if (sourceId) {

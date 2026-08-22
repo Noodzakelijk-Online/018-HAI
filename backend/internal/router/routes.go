@@ -1248,6 +1248,7 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 		// separate in-process scheduler is the only global source worker.
 		sourceRoutes.POST("/sync-due", requirePermission(rbac.PermWrite), sourceHandler.RunDueScheduledSyncs)
 		sourceRoutes.GET("/sync-jobs", requirePermission(rbac.PermRead), sourceHandler.SyncJobs)
+		sourceRoutes.GET("/health", requirePermission(rbac.PermRead), sourceHandler.ConnectionHealthSummary)
 		sourceRoutes.GET("/extractions", requirePermission(rbac.PermRead), sourceHandler.Extractions)
 		sourceRoutes.GET("/audit-logs", requirePermission(rbac.PermRead), sourceHandler.AuditLogs)
 		sourceRoutes.GET("/:id/health", requirePermission(rbac.PermRead), sourceHandler.ConnectionHealth)

@@ -68,6 +68,32 @@ func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 	}
 }
 
+func TestHandlerReturnsOwnerScopedConnectionHealthSummary(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	handler := NewHandler(NewService(newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", ConnectorKey: "local-folder", Name: "Bob source", Enabled: true, Status: "active"},
+	), nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/health", handler.ConnectionHealthSummary)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/health", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("health summary status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var health []ConnectionHealth
+	if err := json.Unmarshal(response.Body.Bytes(), &health); err != nil {
+		t.Fatalf("decode health summary: %v", err)
+	}
+	if len(health) != 1 || health[0].SourceID != aliceID {
+		t.Fatalf("health summary = %#v, want only Alice source", health)
+	}
+}
+
 func TestGoogleOAuthStartRejectsForeignSourceBeforeConfigurationLookup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	foreignID := uuid.New()

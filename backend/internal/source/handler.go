@@ -153,6 +153,39 @@ func (h *Handler) ConnectionHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, health)
 }
 
+// ConnectionHealthSummary returns connection state for every source visible to
+// the current owner. It avoids the client issuing one health request per source
+// on every page load while preserving the same per-source authorization checks.
+func (h *Handler) ConnectionHealthSummary(c *gin.Context) {
+	healthService, ok := h.service.(ConnectionHealthService)
+	if !ok {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "connection health is not available"})
+		return
+	}
+	sources, err := h.service.Sources(true)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "connected sources are temporarily unavailable"})
+		return
+	}
+	visible := filterVisibleSources(sources, sourceOwner(c))
+	result := make([]ConnectionHealth, 0, len(visible))
+	for _, source := range visible {
+		health, healthErr := healthService.ConnectionHealth(source.ID)
+		if healthErr != nil {
+			// A single malformed legacy record must not make every other
+			// connection disappear from the dashboard. Do not disclose the raw
+			// error because it may contain provider-specific context.
+			result = append(result, ConnectionHealth{
+				SourceID: source.ID, ConnectorKey: source.ConnectorKey,
+				Status: "error", Reason: "connection status could not be determined",
+			})
+			continue
+		}
+		result = append(result, *health)
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *Handler) UpdateSource(c *gin.Context) {
 	id, ok := parseUUID(c)
 	if !ok {

@@ -1286,11 +1286,7 @@ export class ConnectedSourcesComponent implements OnInit {
       this.connectionHealth = {};
       return;
     }
-    forkJoin(
-      sources.map((source) =>
-        this.sourceService.connectionHealth(source.id).pipe(catchError(() => of(undefined)))
-      )
-    ).subscribe((results) => {
+    this.sourceService.connectionHealthSummary().pipe(catchError(() => of([]))).subscribe((results) => {
       this.connectionHealth = results.reduce<Record<string, ISourceConnectionHealth>>((health, item) => {
         if (item) {
           health[item.sourceId] = item;
