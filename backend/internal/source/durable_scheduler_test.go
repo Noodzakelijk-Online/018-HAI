@@ -192,6 +192,49 @@ func TestDurableScanEnqueuesOneSyncPerDueSourceAndReschedulesItself(t *testing.T
 	}
 }
 
+func (f *fakeJobRepo) EnqueueIfNoActiveByPayload(job *models.DurableJob) (bool, error) {
+	if job.Queue == "" {
+		job.Queue = "default"
+	}
+	for _, existing := range f.jobs {
+		if existing.Queue == job.Queue && existing.Kind == job.Kind && existing.Payload == job.Payload &&
+			(existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
+			return false, nil
+		}
+	}
+	_, err := f.Enqueue(job)
+	return err == nil, err
+}
+
+func TestDurableScanDoesNotDuplicateAnActiveSyncForTheSameSource(t *testing.T) {
+	source, _ := localFolderSource(t, "alice")
+	repo := newFakeSourceRepo(source)
+	service := NewService(repo, &fakeSourceMemoryService{})
+	jobs := newFakeJobRepo()
+	runner := durablejob.NewRunner(jobs, durablejob.Options{WorkerID: "w1"})
+
+	if err := RegisterDurableScheduling(runner, service, time.Minute); err != nil {
+		t.Fatalf("RegisterDurableScheduling: %v", err)
+	}
+	if err := scanWork(runner, service)(context.Background()); err != nil {
+		t.Fatalf("run first scan: %v", err)
+	}
+	if got := len(jobs.byKind(JobKindSync)); got != 1 {
+		t.Fatalf("sync jobs after first scan = %d, want 1", got)
+	}
+
+	// A source remains due until a successful sync updates LastSyncedAt. Its
+	// display name can change in that window, but that must not change the
+	// payload-based identity or create a second retry chain.
+	repo.sources[source.ID].Name = "Alice renamed source"
+	if err := scanWork(runner, service)(context.Background()); err != nil {
+		t.Fatalf("run second scan: %v", err)
+	}
+	if got := len(jobs.byKind(JobKindSync)); got != 1 {
+		t.Fatalf("duplicate active sync jobs = %d, want 1", got)
+	}
+}
+
 func TestDurableSyncJobActuallySyncsTheSource(t *testing.T) {
 	source, _ := localFolderSource(t, "alice")
 	repo := newFakeSourceRepo(source)

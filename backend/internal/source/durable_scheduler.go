@@ -44,7 +44,6 @@ const (
 // syncJobPayload identifies which source a sync job refers to.
 type syncJobPayload struct {
 	SourceID string `json:"sourceId"`
-	Name     string `json:"name,omitempty"`
 }
 
 // startDurableScheduler builds the durable runner over the default queue,
@@ -107,17 +106,26 @@ func scanWork(runner *durablejob.Runner, service Service) func(context.Context) 
 		if err != nil {
 			return fmt.Errorf("list due sources: %w", err)
 		}
+		enqueued := 0
 		for _, item := range due {
-			payload, errMarshal := json.Marshal(syncJobPayload{SourceID: item.ID.String(), Name: item.Name})
+			// Keep the payload limited to the immutable source identifier. A
+			// mutable display name would change the deduplication key and could
+			// create a second active retry chain after a rename.
+			payload, errMarshal := json.Marshal(syncJobPayload{SourceID: item.ID.String()})
 			if errMarshal != nil {
 				return fmt.Errorf("encode sync payload for %s: %w", item.Name, errMarshal)
 			}
-			if _, errEnqueue := runner.Enqueue(JobKindSync, string(payload), now, syncMaxAttempts); errEnqueue != nil {
+			created, errEnqueue := runner.EnsureScheduledForPayload(JobKindSync, string(payload), now, syncMaxAttempts)
+			if errEnqueue != nil {
 				return fmt.Errorf("enqueue sync for %s: %w", item.Name, errEnqueue)
 			}
+			if !created {
+				continue
+			}
+			enqueued++
 		}
-		if len(due) > 0 {
-			log.Printf("source scheduler: enqueued %d durable sync job(s)", len(due))
+		if enqueued > 0 {
+			log.Printf("source scheduler: enqueued %d durable sync job(s)", enqueued)
 		}
 		return nil
 	}
@@ -148,7 +156,7 @@ func syncHandler(service Service) durablejob.Handler {
 		}
 		if result != nil && result.Job.Status != "completed" {
 			// Partial failures keep the cursor; retrying is the correct response.
-			return fmt.Errorf("sync %s finished with status %s: %s", payload.Name, result.Job.Status, result.Job.Message)
+			return fmt.Errorf("sync source %s finished with status %s: %s", sourceID, result.Job.Status, result.Job.Message)
 		}
 		return nil
 	}
