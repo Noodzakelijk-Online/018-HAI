@@ -155,6 +155,28 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertIn(f"{setting}=", defaults)
                 self.assertIn(f"{setting}: ${{{setting}:-}}", compose)
 
+    def test_documented_provider_and_local_observability_settings_reach_backend(self) -> None:
+        defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        backend = compose_service_block(compose, "backend")
+
+        for setting in (
+            "NOUS_PORTAL_BASE_URL",
+            "NOUS_PORTAL_API_KEY",
+            "MIXTURE_OF_AGENTS_BASE_URL",
+            "MIXTURE_OF_AGENTS_API_KEY",
+            "OPENAI_CODEX_BASE_URL",
+            "OPENAI_CODEX_API_KEY",
+            "HAI_LANGFUSE_ENABLED",
+            "HAI_LANGFUSE_BASE_URL",
+            "HAI_LANGFUSE_PUBLIC_KEY",
+            "HAI_LANGFUSE_SECRET_KEY",
+            "HAI_LANGFUSE_TIMEOUT_SECONDS",
+        ):
+            with self.subTest(setting=setting):
+                self.assertIn(f"{setting}=", defaults)
+                self.assertIn(f"{setting}: ${{{setting}", backend)
+
     def test_quick_start_and_google_local_callback_match_gateway_port(self) -> None:
         defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
