@@ -164,6 +164,17 @@ func TestCancelledContextStopsLocalSourceReadersBeforeDiskAccess(t *testing.T) {
 	}
 }
 
+func TestSearchContextStopsBeforeRetrievalWhenCallerIsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	service := &service{repo: newFakeSourceRepo(), semanticService: &fakeSemanticService{}}
+
+	_, err := service.SearchContext(ctx, SearchRequest{OwnerIdentity: "robert", Query: "legal deadline"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SearchContext error = %v, want context.Canceled", err)
+	}
+}
+
 func TestSyncWhisperAudioRequiresControlledTranscriptionRoute(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{

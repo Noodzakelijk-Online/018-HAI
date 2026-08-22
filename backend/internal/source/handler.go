@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/whispercpp"
+	"context"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -397,12 +398,23 @@ func (h *Handler) Search(c *gin.Context) {
 		return
 	}
 	request.OwnerIdentity = sourceOwner(c)
-	result, err := h.service.Search(request)
+	result, err := h.search(c.Request.Context(), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+// search keeps cancellation available to the concrete source service without
+// forcing older service stubs or external integrations to change immediately.
+func (h *Handler) search(ctx context.Context, request SearchRequest) (*SearchResult, error) {
+	if contextual, ok := h.service.(interface {
+		SearchContext(context.Context, SearchRequest) (*SearchResult, error)
+	}); ok {
+		return contextual.SearchContext(ctx, request)
+	}
+	return h.service.Search(request)
 }
 
 func (h *Handler) Extractions(c *gin.Context) {

@@ -1362,6 +1362,18 @@ func (s *service) RevokeAuthorized(
 }
 
 func (s *service) Search(request SearchRequest) (*SearchResult, error) {
+	return s.SearchContext(context.Background(), request)
+}
+
+// SearchContext keeps optional semantic retrieval tied to the requesting
+// browser/API operation. Keyword search remains the bounded local fallback.
+func (s *service) SearchContext(ctx context.Context, request SearchRequest) (*SearchResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	limit := request.Limit
 	if limit <= 0 || limit > 20 {
 		limit = 8
@@ -1371,7 +1383,7 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 		return nil, err
 	}
 	if len(request.ExcludeConnectorKeys) == 0 && s.semanticService != nil && s.semanticService.Enabled() {
-		matches, semanticErr := s.semanticService.Search(context.Background(), semantic.SearchRequest{
+		matches, semanticErr := s.semanticService.Search(ctx, semantic.SearchRequest{
 			OwnerIdentity: request.OwnerIdentity, Query: request.Query, ProjectKey: request.ProjectKey,
 			Limit: limit, IncludeSensitive: request.IncludeSensitive,
 		})
@@ -1403,6 +1415,9 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 	}
 	ranked := []RankedExtraction{}
 	for _, extraction := range extractions {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !visibleSourceIDs[extraction.SourceID] {
 			continue
 		}
