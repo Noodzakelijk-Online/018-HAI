@@ -267,6 +267,35 @@ func TestRunnerStartClaimsExistingDueJobWithoutWaitingForPollInterval(t *testing
 	}
 }
 
+func TestRunnerStartDrainsImmediateChildJobsBeforeSleeping(t *testing.T) {
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	repo := newFakeRepo()
+	runner := NewRunner(repo, Options{WorkerID: "w1", Now: fixedClock(&now)})
+
+	childRan := make(chan struct{}, 1)
+	runner.Register("parent", func(context.Context, models.DurableJob) error {
+		_, err := runner.Enqueue("child", "{}", now, 1)
+		return err
+	})
+	runner.Register("child", func(context.Context, models.DurableJob) error {
+		childRan <- struct{}{}
+		return nil
+	})
+	if _, err := runner.Enqueue("parent", "{}", now, 1); err != nil {
+		t.Fatalf("enqueue parent job: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go runner.Start(ctx, 5*time.Second)
+
+	select {
+	case <-childRan:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("runner waited for its poll interval before processing an immediate child job")
+	}
+}
+
 func TestRunnerRetriesWithBackoffAndSurvivesRestart(t *testing.T) {
 	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 	repo := newFakeRepo()
