@@ -4,6 +4,16 @@ events {
 http {
     resolver 127.0.0.11 valid=10s;
     resolver_timeout 5s;
+
+    # The A2A peer bridge is local-only. ngrok supplies X-Forwarded-For for
+    # tunneled requests, while a direct loopback peer has no forwarded chain.
+    # Keep this boundary in the gateway so a valid local bridge token cannot
+    # turn the cloud tunnel into a remote agent endpoint.
+    map $http_x_forwarded_for $hai_a2a_ngrok_request {
+        default 1;
+        ""      0;
+    }
+
     server {
         listen 80;
 
@@ -22,6 +32,26 @@ http {
 
         location = /readyz {
             proxy_pass http://$backend_upstream;
+        }
+
+        # A local A2A peer uses its own bearer token. It must not pass through
+        # browser-session authentication, which would replace that token before
+        # the controlled planning bridge can validate it.
+        location = /api/v1/a2a {
+            if ($hai_a2a_ngrok_request) { return 404; }
+            proxy_pass http://$backend_upstream;
+            proxy_set_header X-Original-URI $request_uri;
+            proxy_set_header Authorization $http_authorization;
+            proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
+        }
+
+        # The local peer needs the matching Agent Card, but it is not public
+        # discovery metadata when cloud access is enabled.
+        location = /.well-known/agent-card.json {
+            if ($hai_a2a_ngrok_request) { return 404; }
+            proxy_pass http://$backend_upstream;
+            proxy_set_header X-Original-URI $request_uri;
+            proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
         }
 
         location = /api/v1/agent-runtimes/openclaw/ecosystem/upload {

@@ -81,6 +81,9 @@ if ((Get-Setting $settings 'IDP_COOKIE_SECURE' 'false').ToLowerInvariant() -ne '
 if ((Get-Setting $settings 'GATEWAY_HOST_BIND' '127.0.0.1') -ne '127.0.0.1') {
     throw 'GATEWAY_HOST_BIND must remain 127.0.0.1; ngrok reaches nginx on the private Docker network.'
 }
+if ((Get-Setting $settings 'HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED' 'false').ToLowerInvariant() -ne 'false') {
+    throw 'HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED must remain false; the controlled A2A planning bridge is local-only.'
+}
 
 Require-Secret $settings 'NGROK_AUTHTOKEN' 20
 Require-Secret $settings 'JWT_SECRET' 32

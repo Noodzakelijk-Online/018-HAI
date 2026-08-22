@@ -23,6 +23,27 @@ def location_block(marker: str) -> str:
 
 
 class GatewayAuthContractTest(unittest.TestCase):
+    def test_local_a2a_peer_route_preserves_its_token_and_rejects_tunnel_traffic(self) -> None:
+        for marker in (
+            "location = /api/v1/a2a",
+            "location = /.well-known/agent-card.json",
+        ):
+            with self.subTest(marker=marker):
+                block = location_block(marker)
+                self.assertNotIn("auth_request /auth-verify;", block)
+                self.assertIn("proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};", block)
+                self.assertIn("if ($hai_a2a_ngrok_request) { return 404; }", block)
+
+        a2a = location_block("location = /api/v1/a2a")
+        self.assertIn("proxy_set_header Authorization $http_authorization;", a2a)
+
+        self.assertIn(
+            'map $http_x_forwarded_for $hai_a2a_ngrok_request',
+            NGINX_TEMPLATE,
+        )
+        self.assertIn('default 1;', NGINX_TEMPLATE)
+        self.assertIn('""      0;', NGINX_TEMPLATE)
+
     def test_backend_routes_use_authenticated_catch_all(self) -> None:
         backend = location_block("location /api/v1 {")
         self.assertIn("auth_request /auth-verify;", backend)

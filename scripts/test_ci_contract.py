@@ -187,6 +187,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "LOCAL_LOGIN_BYPASS_ENABLED",
             "IDP_COOKIE_SECURE",
             "GATEWAY_HOST_BIND",
+            "HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED",
             "NGROK_AUTHTOKEN",
             "HAI_NGROK_URL",
             "GOOGLE_LOGIN_REDIRECT_URL",
@@ -200,6 +201,10 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn(secured_up, preflight)
         self.assertIn(tunnel_up, preflight)
         self.assertLess(preflight.index(secured_up), preflight.index(tunnel_up))
+        self.assertIn(
+            "HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED must remain false",
+            preflight,
+        )
         self.assertIn("remote_management: false", config)
         self.assertIn("update_check: false", config)
         self.assertIn("inspect_db_size: -1", config)

@@ -13,6 +13,7 @@ The preflight fails closed unless:
 - `LOCAL_LOGIN_BYPASS_ENABLED=false`;
 - `IDP_COOKIE_SECURE=true`;
 - `GATEWAY_HOST_BIND=127.0.0.1`;
+- `HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED=false`;
 - the ngrok token and HAI signing/encryption secrets are non-placeholder values;
 - `HAI_NGROK_URL` is a fixed HTTPS origin; and
 - configured Google login/source callbacks exactly match that public origin.
@@ -22,6 +23,11 @@ local-login bypass, secure cookies, loopback gateway binding, a dedicated token,
 and a fixed ngrok HTTPS origin. Calling Compose directly therefore cannot bypass
 the core exposure gate; the PowerShell preflight adds the stronger secret and
 OAuth consistency checks.
+
+The local A2A planning bridge and its Agent Card are deliberately excluded from
+the public tunnel. Local peers use their dedicated bearer token directly through
+the loopback gateway; cloud access must not turn that local-only planning
+surface into remote-agent discovery or execution.
 
 Use a dedicated ngrok authtoken with an ACL restricted to the reserved HAI
 domain. Do not reuse a general account token. The agent image is digest-pinned,
