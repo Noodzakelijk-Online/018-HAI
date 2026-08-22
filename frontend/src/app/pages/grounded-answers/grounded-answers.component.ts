@@ -17,9 +17,10 @@ import { VERIFICATION_SERVICE_TOKEN } from '../../services/verification/verifica
 import { IVerificationService } from '../../services/verification.service.interface';
 
 @Component({
-  selector: 'app-grounded-answers',
-  templateUrl: './grounded-answers.component.html',
-  styleUrls: ['./grounded-answers.component.scss'],
+    selector: 'app-grounded-answers',
+    templateUrl: './grounded-answers.component.html',
+    styleUrls: ['./grounded-answers.component.scss'],
+    standalone: false
 })
 export class GroundedAnswersComponent implements OnInit {
   result?: IVerificationResult;

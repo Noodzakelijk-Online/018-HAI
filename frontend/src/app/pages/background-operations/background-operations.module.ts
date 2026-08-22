@@ -8,7 +8,6 @@ import { NzDrawerModule } from 'ng-zorro-antd/drawer'
 import { NzEmptyModule } from 'ng-zorro-antd/empty'
 import { NzIconModule } from 'ng-zorro-antd/icon'
 import { NzLayoutModule } from 'ng-zorro-antd/layout'
-import { NzNotificationModule } from 'ng-zorro-antd/notification'
 import { NzRadioModule } from 'ng-zorro-antd/radio'
 import { NzTableModule } from 'ng-zorro-antd/table'
 import { NzTagModule } from 'ng-zorro-antd/tag'
@@ -30,7 +29,6 @@ const routes: Routes = [{ path: '', component: BackgroundOperationsComponent }]
     NzEmptyModule,
     NzIconModule,
     NzLayoutModule,
-    NzNotificationModule,
     NzRadioModule,
     NzTableModule,
     NzTagModule,

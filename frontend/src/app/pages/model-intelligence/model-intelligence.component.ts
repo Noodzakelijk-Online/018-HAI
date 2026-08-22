@@ -13,9 +13,10 @@ import {
 import { ModelIntelligenceService } from '../../services/model-intelligence.service'
 
 @Component({
-  selector: 'app-model-intelligence',
-  templateUrl: './model-intelligence.component.html',
-  styleUrls: ['./model-intelligence.component.scss'],
+    selector: 'app-model-intelligence',
+    templateUrl: './model-intelligence.component.html',
+    styleUrls: ['./model-intelligence.component.scss'],
+    standalone: false
 })
 export class ModelIntelligenceComponent implements OnInit {
   overview?: IModelIntelligenceOverview

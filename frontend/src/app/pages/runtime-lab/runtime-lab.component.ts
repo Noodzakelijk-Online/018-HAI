@@ -15,9 +15,10 @@ import { MCPPreflightService } from '../../services/mcp-preflight.service'
 import { RuntimeLabService } from '../../services/runtime-lab.service'
 
 @Component({
-  selector: 'app-runtime-lab',
-  templateUrl: './runtime-lab.component.html',
-  styleUrls: ['./runtime-lab.component.scss'],
+    selector: 'app-runtime-lab',
+    templateUrl: './runtime-lab.component.html',
+    styleUrls: ['./runtime-lab.component.scss'],
+    standalone: false
 })
 export class RuntimeLabComponent implements OnInit {
   runtimes: IRuntimeSummary[] = []

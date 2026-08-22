@@ -42,9 +42,10 @@ interface SourceActionCard {
 }
 
 @Component({
-  selector: 'app-connected-sources',
-  templateUrl: './connected-sources.component.html',
-  styleUrls: ['./connected-sources.component.scss'],
+    selector: 'app-connected-sources',
+    templateUrl: './connected-sources.component.html',
+    styleUrls: ['./connected-sources.component.scss'],
+    standalone: false
 })
 export class ConnectedSourcesComponent implements OnInit {
   connectors: ISourceConnector[] = [];

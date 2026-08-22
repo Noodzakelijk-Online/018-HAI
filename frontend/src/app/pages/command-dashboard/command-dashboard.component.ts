@@ -48,9 +48,10 @@ interface RuntimeSurfaceGroup {
 }
 
 @Component({
-  selector: 'app-command-dashboard',
-  templateUrl: './command-dashboard.component.html',
-  styleUrls: ['./command-dashboard.component.scss'],
+    selector: 'app-command-dashboard',
+    templateUrl: './command-dashboard.component.html',
+    styleUrls: ['./command-dashboard.component.scss'],
+    standalone: false
 })
 export class CommandDashboardComponent implements OnInit {
   private readonly openClawArchiveMaxBytes = 750 * 1024 * 1024;

@@ -10,7 +10,6 @@ import { NzInputNumberModule } from 'ng-zorro-antd/input-number';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzLayoutModule } from 'ng-zorro-antd/layout';
 import { NzModalModule } from 'ng-zorro-antd/modal';
-import { NzNotificationModule } from 'ng-zorro-antd/notification';
 import { NzRadioModule } from 'ng-zorro-antd/radio';
 import { NzTableModule } from 'ng-zorro-antd/table';
 import { NzTagModule } from 'ng-zorro-antd/tag';
@@ -32,7 +31,6 @@ const routes: Routes = [{ path: '', component: AmbientBrainComponent }];
     NzInputModule,
     NzLayoutModule,
     NzModalModule,
-    NzNotificationModule,
     NzRadioModule,
     NzTableModule,
     NzTagModule,

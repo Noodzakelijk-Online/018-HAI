@@ -46,9 +46,10 @@ interface SuggestedPrompt {
 }
 
 @Component({
-  selector: 'app-task-blueprint',
-  templateUrl: './task-blueprint.component.html',
-  styleUrls: ['./task-blueprint.component.scss'],
+    selector: 'app-task-blueprint',
+    templateUrl: './task-blueprint.component.html',
+    styleUrls: ['./task-blueprint.component.scss'],
+    standalone: false
 })
 export class TaskBlueprintComponent implements OnInit {
 	private readonly taskOperationRetryConfirmation = 'RETRY UNCERTAIN OPERATION';

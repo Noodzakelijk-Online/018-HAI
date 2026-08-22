@@ -1,14 +1,15 @@
-import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing'
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing'
 import { TestBed } from '@angular/core/testing'
 import { AgentTeamContract } from '../models/agent-teams.model'
 import { AgentTeamsService } from './agent-teams.service'
+import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http';
 
 describe('AgentTeamsService', () => {
   let service: AgentTeamsService
   let http: HttpTestingController
 
   beforeEach(() => {
-    TestBed.configureTestingModule({ imports: [HttpClientTestingModule] })
+    TestBed.configureTestingModule({ imports: [], providers: [provideHttpClient(withInterceptorsFromDi()), provideHttpClientTesting()] })
     service = TestBed.inject(AgentTeamsService)
     http = TestBed.inject(HttpTestingController)
   })

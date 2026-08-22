@@ -13,9 +13,10 @@ import {
 import { BackgroundOperationsService } from '../../services/background-operations.service'
 
 @Component({
-  selector: 'app-background-operations',
-  templateUrl: './background-operations.component.html',
-  styleUrls: ['./background-operations.component.scss'],
+    selector: 'app-background-operations',
+    templateUrl: './background-operations.component.html',
+    styleUrls: ['./background-operations.component.scss'],
+    standalone: false
 })
 export class BackgroundOperationsComponent implements OnInit {
   dashboard?: IOperationsDashboard

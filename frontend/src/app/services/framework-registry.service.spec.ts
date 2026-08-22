@@ -1,4 +1,4 @@
-import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import {
   IConstitution,
@@ -9,6 +9,7 @@ import {
   IFrameworkView,
 } from '../models/framework-registry.model.interface';
 import { FrameworkRegistryService } from './framework-registry.service';
+import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http';
 
 describe('FrameworkRegistryService', () => {
   let service: FrameworkRegistryService;
@@ -115,7 +116,7 @@ describe('FrameworkRegistryService', () => {
   };
 
   beforeEach(() => {
-    TestBed.configureTestingModule({ imports: [HttpClientTestingModule] });
+    TestBed.configureTestingModule({ imports: [], providers: [provideHttpClient(withInterceptorsFromDi()), provideHttpClientTesting()] });
     service = TestBed.inject(FrameworkRegistryService);
     http = TestBed.inject(HttpTestingController);
   });

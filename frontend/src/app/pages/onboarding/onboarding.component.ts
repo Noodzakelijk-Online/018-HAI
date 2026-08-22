@@ -9,9 +9,10 @@ interface OnboardingStep {
 const ONBOARDED_KEY = 'hai_onboarded';
 
 @Component({
-  selector: 'app-onboarding',
-  templateUrl: './onboarding.component.html',
-  styleUrls: ['./onboarding.component.scss'],
+    selector: 'app-onboarding',
+    templateUrl: './onboarding.component.html',
+    styleUrls: ['./onboarding.component.scss'],
+    standalone: false
 })
 export class OnboardingComponent {
   current = 0;

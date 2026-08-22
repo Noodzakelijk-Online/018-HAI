@@ -10,7 +10,6 @@ import { NzEmptyModule } from 'ng-zorro-antd/empty';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzInputNumberModule } from 'ng-zorro-antd/input-number';
-import { NzNotificationModule } from 'ng-zorro-antd/notification';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { NzSpinModule } from 'ng-zorro-antd/spin';
 import { NzTableModule } from 'ng-zorro-antd/table';
@@ -40,7 +39,6 @@ const routes: Routes = [{ path: '', component: FrameworkRegistryComponent }];
     NzIconModule,
     NzInputModule,
     NzInputNumberModule,
-    NzNotificationModule,
     NzSelectModule,
     NzSpinModule,
     NzTableModule,

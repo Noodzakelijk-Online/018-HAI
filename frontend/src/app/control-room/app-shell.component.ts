@@ -7,9 +7,10 @@ import { HaiNavigationMode, HaiViewMode, ModuleViewPreferencesService } from './
 import { ThemeMode, ThemeService } from '../services/theme.service'
 
 @Component({
-  selector: 'app-shell',
-  templateUrl: './app-shell.component.html',
-  styleUrls: ['./app-shell.component.scss'],
+    selector: 'app-shell',
+    templateUrl: './app-shell.component.html',
+    styleUrls: ['./app-shell.component.scss'],
+    standalone: false
 })
 export class AppShellComponent implements OnInit, OnDestroy {
   readonly groups = HAI_MODULE_GROUPS

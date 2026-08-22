@@ -15,9 +15,10 @@ import { KnowledgeClaimService } from '../../services/knowledge-claim.service'
 type ClaimFilter = 'attention' | 'all' | ClaimAssessmentStatus
 
 @Component({
-  selector: 'app-knowledge-claims',
-  templateUrl: './knowledge-claims.component.html',
-  styleUrls: ['./knowledge-claims.component.scss'],
+    selector: 'app-knowledge-claims',
+    templateUrl: './knowledge-claims.component.html',
+    styleUrls: ['./knowledge-claims.component.scss'],
+    standalone: false
 })
 export class KnowledgeClaimsComponent implements OnInit {
   workspaceId = '018-HAI'

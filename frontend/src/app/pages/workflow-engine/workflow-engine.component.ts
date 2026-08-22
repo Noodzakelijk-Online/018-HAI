@@ -34,9 +34,10 @@ import { IWorkflowService } from '../../services/workflow.service.interface';
 type FrameworkProvenanceState = 'missing' | 'invalid' | 'recorded' | 'verified';
 
 @Component({
-  selector: 'app-workflow-engine',
-  templateUrl: './workflow-engine.component.html',
-  styleUrls: ['./workflow-engine.component.scss'],
+    selector: 'app-workflow-engine',
+    templateUrl: './workflow-engine.component.html',
+    styleUrls: ['./workflow-engine.component.scss'],
+    standalone: false
 })
 export class WorkflowEngineComponent implements OnInit {
   overview?: IWorkflowOverview;

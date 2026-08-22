@@ -80,9 +80,10 @@ interface PortfolioPursuitDraft {
 }
 
 @Component({
-  selector: 'app-pursuits',
-  templateUrl: './pursuits.component.html',
-  styleUrls: ['./pursuits.component.scss'],
+    selector: 'app-pursuits',
+    templateUrl: './pursuits.component.html',
+    styleUrls: ['./pursuits.component.scss'],
+    standalone: false
 })
 export class PursuitsComponent implements OnInit, OnDestroy {
   dashboard?: IPursuitDashboard;

@@ -92,9 +92,10 @@ interface IConstitutionRuleSection {
 }
 
 @Component({
-  selector: 'app-framework-registry',
-  templateUrl: './framework-registry.component.html',
-  styleUrls: ['./framework-registry.component.scss'],
+    selector: 'app-framework-registry',
+    templateUrl: './framework-registry.component.html',
+    styleUrls: ['./framework-registry.component.scss'],
+    standalone: false
 })
 export class FrameworkRegistryComponent implements OnInit, OnDestroy {
   overview?: IFrameworkRegistryOverview;

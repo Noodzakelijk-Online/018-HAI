@@ -23,7 +23,7 @@ import {
 import { NzButtonModule } from 'ng-zorro-antd/button'
 import { NzDrawerModule } from 'ng-zorro-antd/drawer'
 import { NZ_ICONS, NzIconModule } from 'ng-zorro-antd/icon'
-import { NzNotificationModule, NzNotificationService } from 'ng-zorro-antd/notification'
+import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { NzSpinModule } from 'ng-zorro-antd/spin'
 import { of, throwError } from 'rxjs'
 import { ControlRoomModule } from '../../control-room/control-room.module'
@@ -217,7 +217,6 @@ describe('PlanCoordinationComponent rendering', () => {
         NzButtonModule,
         NzDrawerModule,
         NzIconModule,
-        NzNotificationModule,
         NzSpinModule,
       ],
       providers: [

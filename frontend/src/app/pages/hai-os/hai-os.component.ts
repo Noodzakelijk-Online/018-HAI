@@ -6,9 +6,10 @@ import { HAI_OS_SERVICE_TOKEN } from '../../services/hai-os/hai-os.service.token
 import { IHAIOSService } from '../../services/hai-os.service.interface';
 
 @Component({
-  selector: 'app-hai-os',
-  templateUrl: './hai-os.component.html',
-  styleUrls: ['./hai-os.component.scss'],
+    selector: 'app-hai-os',
+    templateUrl: './hai-os.component.html',
+    styleUrls: ['./hai-os.component.scss'],
+    standalone: false
 })
 export class HAIOSComponent implements OnInit {
   overview?: IHAIOSOverview;

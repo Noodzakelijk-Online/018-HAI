@@ -130,9 +130,10 @@ interface MonitorCompositionProvenanceDetail {
 }
 
 @Component({
-  selector: 'app-governance-control',
-  templateUrl: './governance-control.component.html',
-  styleUrls: ['./governance-control.component.scss'],
+    selector: 'app-governance-control',
+    templateUrl: './governance-control.component.html',
+    styleUrls: ['./governance-control.component.scss'],
+    standalone: false
 })
 export class GovernanceControlComponent implements OnInit, OnDestroy {
   readonly moduleId = 'governance-control'

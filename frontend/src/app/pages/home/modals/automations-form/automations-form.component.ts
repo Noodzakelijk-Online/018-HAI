@@ -5,9 +5,10 @@ import { IAutomationModel } from '../../../../models/automation.model.interface'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 
 @Component({
-  selector: 'app-automations-form-modal',
-  templateUrl: './automations-form.component.html',
-  styleUrls: ['./automations-form.component.scss'],
+    selector: 'app-automations-form-modal',
+    templateUrl: './automations-form.component.html',
+    styleUrls: ['./automations-form.component.scss'],
+    standalone: false
 })
 export class AutomationsFormComponent implements OnInit {
   modalTitle: string = ''

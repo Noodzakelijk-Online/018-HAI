@@ -27,9 +27,10 @@ interface MemoryActionCard {
 }
 
 @Component({
-  selector: 'app-memory',
-  templateUrl: './memory.component.html',
-  styleUrls: ['./memory.component.scss'],
+    selector: 'app-memory',
+    templateUrl: './memory.component.html',
+    styleUrls: ['./memory.component.scss'],
+    standalone: false
 })
 export class MemoryComponent implements OnInit {
   memories: IContextMemory[] = [];

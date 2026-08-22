@@ -49,9 +49,10 @@ interface PriorityField {
 }
 
 @Component({
-  selector: 'app-life-ops',
-  templateUrl: './life-ops.component.html',
-  styleUrls: ['./life-ops.component.scss'],
+    selector: 'app-life-ops',
+    templateUrl: './life-ops.component.html',
+    styleUrls: ['./life-ops.component.scss'],
+    standalone: false
 })
 export class LifeOpsComponent implements OnInit {
   readonly moduleId = 'life-ops'

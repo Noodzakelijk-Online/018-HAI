@@ -9,9 +9,10 @@ import {
 import { AccountBridgesService } from '../../services/account-bridges.service'
 
 @Component({
-  selector: 'app-account-bridges',
-  templateUrl: './account-bridges.component.html',
-  styleUrls: ['./account-bridges.component.scss'],
+    selector: 'app-account-bridges',
+    templateUrl: './account-bridges.component.html',
+    styleUrls: ['./account-bridges.component.scss'],
+    standalone: false
 })
 export class AccountBridgesComponent implements OnInit {
   bridges: IBridgeContract[] = []

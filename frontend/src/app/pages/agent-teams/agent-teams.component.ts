@@ -19,9 +19,10 @@ import { AuthSessionService } from '../../services/auth-session.service'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 
 @Component({
-  selector: 'app-agent-teams',
-  templateUrl: './agent-teams.component.html',
-  styleUrls: ['./agent-teams.component.scss'],
+    selector: 'app-agent-teams',
+    templateUrl: './agent-teams.component.html',
+    styleUrls: ['./agent-teams.component.scss'],
+    standalone: false
 })
 export class AgentTeamsComponent implements OnInit {
   @ViewChild('membersSection') membersSection?: HaiProgressiveSectionComponent

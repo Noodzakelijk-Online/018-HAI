@@ -29,9 +29,10 @@ const GROUP_TITLES: Record<string, string> = {
 };
 
 @Component({
-  selector: 'app-system-status',
-  templateUrl: './system-status.component.html',
-  styleUrls: ['./system-status.component.scss'],
+    selector: 'app-system-status',
+    templateUrl: './system-status.component.html',
+    styleUrls: ['./system-status.component.scss'],
+    standalone: false
 })
 export class SystemStatusComponent implements OnInit, OnDestroy {
   readiness?: ISystemReadiness;

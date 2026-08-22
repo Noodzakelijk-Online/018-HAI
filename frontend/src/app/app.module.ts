@@ -6,7 +6,7 @@ import {NZ_I18N} from 'ng-zorro-antd/i18n';
 import {en_US} from 'ng-zorro-antd/i18n';
 import {registerLocaleData} from '@angular/common';
 import en from '@angular/common/locales/en';
-import {HttpClientModule} from "@angular/common/http";
+import {provideHttpClient, withInterceptorsFromDi} from '@angular/common/http';
 import {BrowserAnimationsModule} from '@angular/platform-browser/animations';
 import {BulbOutline, CalendarOutline, ContactsOutline, HeartOutline, NodeIndexOutline, StarOutline} from '@ant-design/icons-angular/icons';
 import {NZ_ICONS} from 'ng-zorro-antd/icon';
@@ -26,7 +26,6 @@ export const HAI_ICONS = [BulbOutline, CalendarOutline, ContactsOutline, HeartOu
     imports: [
         BrowserModule,
         AppRoutingModule,
-        HttpClientModule,
         BrowserAnimationsModule,
         ControlRoomModule,
     ],
@@ -35,8 +34,9 @@ export const HAI_ICONS = [BulbOutline, CalendarOutline, ContactsOutline, HeartOu
         {provide: NZ_ICONS, useValue: HAI_ICONS},
         {provide: AUTH_SERVICE_TOKEN, useClass: AuthService},
         {provide: ErrorHandler, useClass: ChunkLoadRecoveryHandler},
+        provideHttpClient(withInterceptorsFromDi()),
     ],
-    bootstrap: [AppComponent]
+    bootstrap: [AppComponent],
 })
 export class AppModule {
 }

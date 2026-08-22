@@ -10,7 +10,6 @@ import { NzFormModule } from 'ng-zorro-antd/form';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzLayoutModule } from 'ng-zorro-antd/layout';
-import { NzNotificationModule } from 'ng-zorro-antd/notification';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { NzTableModule } from 'ng-zorro-antd/table';
 import { ConnectedSourcesComponent } from './connected-sources.component';
@@ -34,7 +33,6 @@ const routes: Routes = [{ path: '', component: ConnectedSourcesComponent }];
     NzIconModule,
     NzInputModule,
     NzLayoutModule,
-    NzNotificationModule,
     NzSelectModule,
     NzTableModule,
   ],

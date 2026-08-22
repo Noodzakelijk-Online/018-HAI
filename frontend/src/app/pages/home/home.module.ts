@@ -21,8 +21,6 @@ import { AutomationsFormComponent } from './modals/automations-form/automations-
 import {USER_SERVICE_TOKEN} from "../../services/user/user.service.token";
 import {UserService} from "../../services/user/user.service";
 import {NzSelectModule} from "ng-zorro-antd/select";
-import {NzNotificationModule} from "ng-zorro-antd/notification";
-
 const routes: Routes = [
   { path: '', component: HomeComponent },
 ];
@@ -46,7 +44,6 @@ const routes: Routes = [
         NzButtonModule,
         NzUploadModule,
         NzSelectModule,
-        NzNotificationModule,
     ],
   exports: [HomeComponent],
   providers: [

@@ -64,9 +64,10 @@ interface BoundedCatalogStatus {
 }
 
 @Component({
-  selector: 'app-brain-catalog',
-  templateUrl: './brain-catalog.component.html',
-  styleUrls: ['./brain-catalog.component.scss'],
+    selector: 'app-brain-catalog',
+    templateUrl: './brain-catalog.component.html',
+    styleUrls: ['./brain-catalog.component.scss'],
+    standalone: false
 })
 export class BrainCatalogComponent implements OnInit {
   catalog?: IBrainCatalogResponse

@@ -5,9 +5,10 @@ import {
 } from '../../models/framework-registry.model.interface';
 
 @Component({
-  selector: 'app-framework-registry-recommendation',
-  templateUrl: './framework-registry-recommendation.component.html',
-  styleUrls: ['./framework-registry-recommendation.component.scss'],
+    selector: 'app-framework-registry-recommendation',
+    templateUrl: './framework-registry-recommendation.component.html',
+    styleUrls: ['./framework-registry-recommendation.component.scss'],
+    standalone: false
 })
 export class FrameworkRegistryRecommendationComponent {
   @Input() selection?: IFrameworkSelectionDecision;

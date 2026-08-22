@@ -14,9 +14,10 @@ import { AuthSessionService } from '../../services/auth-session.service'
 import { RuntimeControlService } from '../../services/runtime-control.service'
 
 @Component({
-  selector: 'app-runtime-control',
-  templateUrl: './runtime-control.component.html',
-  styleUrls: ['./runtime-control.component.scss'],
+    selector: 'app-runtime-control',
+    templateUrl: './runtime-control.component.html',
+    styleUrls: ['./runtime-control.component.scss'],
+    standalone: false
 })
 export class RuntimeControlComponent implements OnInit {
   status?: IBackgroundStatus

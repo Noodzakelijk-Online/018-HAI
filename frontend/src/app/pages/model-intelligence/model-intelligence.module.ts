@@ -3,7 +3,6 @@ import { NgModule } from '@angular/core'
 import { RouterModule, Routes } from '@angular/router'
 import { NzButtonModule } from 'ng-zorro-antd/button'
 import { NzIconModule } from 'ng-zorro-antd/icon'
-import { NzNotificationModule } from 'ng-zorro-antd/notification'
 import { NzSpinModule } from 'ng-zorro-antd/spin'
 import { ModelIntelligenceComponent } from './model-intelligence.component'
 import { ControlRoomModule } from '../../control-room/control-room.module'
@@ -18,7 +17,6 @@ const routes: Routes = [{ path: '', component: ModelIntelligenceComponent }]
     ControlRoomModule,
     NzButtonModule,
     NzIconModule,
-    NzNotificationModule,
     NzSpinModule,
   ],
 })

@@ -75,9 +75,10 @@ interface NavigationItem {
 }
 
 @Component({
-  selector: 'app-control-center',
-  templateUrl: './control-center.component.html',
-  styleUrls: ['./control-center.component.scss'],
+    selector: 'app-control-center',
+    templateUrl: './control-center.component.html',
+    styleUrls: ['./control-center.component.scss'],
+    standalone: false
 })
 export class ControlCenterComponent implements OnInit {
   readonly currentHour = new Date().getHours()

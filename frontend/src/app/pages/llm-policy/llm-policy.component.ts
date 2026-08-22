@@ -43,9 +43,10 @@ interface PolicyActionCard {
 }
 
 @Component({
-  selector: 'app-llm-policy',
-  templateUrl: './llm-policy.component.html',
-  styleUrls: ['./llm-policy.component.scss'],
+    selector: 'app-llm-policy',
+    templateUrl: './llm-policy.component.html',
+    styleUrls: ['./llm-policy.component.scss'],
+    standalone: false
 })
 export class LLMPolicyComponent implements OnInit {
   policy?: ILLMPolicy;

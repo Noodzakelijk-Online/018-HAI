@@ -5,7 +5,6 @@ import { NzButtonModule } from 'ng-zorro-antd/button'
 import { NzCardModule } from 'ng-zorro-antd/card'
 import { NzIconModule } from 'ng-zorro-antd/icon'
 import { NzInputModule } from 'ng-zorro-antd/input'
-import { NzNotificationModule } from 'ng-zorro-antd/notification'
 import { NzSpinModule } from 'ng-zorro-antd/spin'
 import { NzTagModule } from 'ng-zorro-antd/tag'
 import { ControlRoomModule } from '../../control-room/control-room.module'
@@ -23,7 +22,6 @@ const routes: Routes = [{ path: '', component: BrainCatalogComponent }]
     NzCardModule,
     NzIconModule,
     NzInputModule,
-    NzNotificationModule,
     NzSpinModule,
     NzTagModule,
   ],

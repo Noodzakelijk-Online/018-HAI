@@ -5,7 +5,6 @@ import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzCardModule } from 'ng-zorro-antd/card';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzLayoutModule } from 'ng-zorro-antd/layout';
-import { NzNotificationModule } from 'ng-zorro-antd/notification';
 import { NzTableModule } from 'ng-zorro-antd/table';
 import { HAIOSComponent } from './hai-os.component';
 import { HAI_OS_SERVICE_TOKEN } from '../../services/hai-os/hai-os.service.token';
@@ -22,7 +21,6 @@ const routes: Routes = [{ path: '', component: HAIOSComponent }];
     NzCardModule,
     NzIconModule,
     NzLayoutModule,
-    NzNotificationModule,
     NzTableModule,
   ],
   providers: [{ provide: HAI_OS_SERVICE_TOKEN, useClass: HAIOSService }],

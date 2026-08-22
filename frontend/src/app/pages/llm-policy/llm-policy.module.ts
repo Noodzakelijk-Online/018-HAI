@@ -11,7 +11,6 @@ import { NzFormModule } from 'ng-zorro-antd/form';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzInputModule } from 'ng-zorro-antd/input';
 import { NzLayoutModule } from 'ng-zorro-antd/layout';
-import { NzNotificationModule } from 'ng-zorro-antd/notification';
 import { NzTableModule } from 'ng-zorro-antd/table';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { NzTimelineModule } from 'ng-zorro-antd/timeline';
@@ -37,7 +36,6 @@ const routes: Routes = [{ path: '', component: LLMPolicyComponent }];
     NzIconModule,
     NzInputModule,
     NzLayoutModule,
-    NzNotificationModule,
     NzTableModule,
     NzTagModule,
     NzTimelineModule,
