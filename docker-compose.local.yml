@@ -879,7 +879,9 @@ services:
     networks: [coding-runners-internal]
 
   nginx:
-    image: nginx:alpine
+    # Pin the manifest list, rather than a mutable alpine tag, so a rebuild
+    # cannot silently change the internet-facing gateway binary.
+    image: nginx:alpine@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913
     container_name: gateway
     hostname: gateway
     restart: unless-stopped
@@ -1351,7 +1353,7 @@ services:
   # from HAI's primary Postgres instance and is enabled only with
   # `--profile durability`. No Temporal port is exposed to the host.
   temporal-postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:dc17045ccfd343b49600570ea734b9c4991cf1c3f3302e67df51e3b402dd55c4
     profiles: ["durability"]
     restart: unless-stopped
     environment:
@@ -1445,7 +1447,7 @@ services:
       - service-hub
 
   postgres-idp:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:dc17045ccfd343b49600570ea734b9c4991cf1c3f3302e67df51e3b402dd55c4
     container_name: 018-hai-postgres-idp
     hostname: postgres-idp
     restart: unless-stopped
@@ -1497,7 +1499,7 @@ services:
       - automation-hub-network
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
     container_name: 018-hai-redis
     hostname: redis
     restart: unless-stopped

@@ -272,6 +272,25 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertRegex(match.group(1), r"(?m)^    mem_limit: \S+")
                 self.assertRegex(match.group(1), r"(?m)^    cpus: \S+")
 
+    def test_core_local_service_images_are_digest_pinned(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+
+        for service, image in (
+            ("nginx", "nginx:alpine"),
+            ("postgres-idp", "postgres:17-alpine"),
+            ("redis", "redis:7-alpine"),
+        ):
+            with self.subTest(service=service):
+                match = re.search(
+                    rf"(?ms)^  {re.escape(service)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|^networks:)",
+                    compose,
+                )
+                self.assertIsNotNone(match)
+                self.assertRegex(
+                    match.group(1),
+                    rf"(?m)^    image: {re.escape(image)}@sha256:[0-9a-f]{{64}}$",
+                )
+
     def test_redis_has_a_bounded_fail_closed_memory_budget(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         env_template = (ROOT / ".env.example").read_text(encoding="utf-8")
