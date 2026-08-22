@@ -362,6 +362,37 @@ func TestOpenClawInvalidMutationDoesNotConsumeAuthorization(t *testing.T) {
 	}
 }
 
+func TestOpenClawEcosystemUploadRejectsOversizedRequestBeforeParsingMultipart(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root := t.TempDir()
+	archive := filepath.Join(root, "openclaw-main.zip")
+	if err := writeMinimalOpenClawZip(archive); err != nil {
+		t.Fatalf("write OpenClaw archive: %v", err)
+	}
+	var calls atomic.Int32
+	handler := NewHandlerWithEcosystemMutationAuthorizer(
+		NewRegistry(testOpenClawAdapter(root, archive)),
+		allowingEcosystemMutationAuthorizer(func(EcosystemMutationAuthorizationRequest) {
+			calls.Add(1)
+		}),
+	)
+	router := mutationTestRouter(handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/agent-runtimes/openclaw/ecosystem/upload", strings.NewReader("ignored"))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=ignored")
+	req.ContentLength = int64(752*1024*1024 + 1)
+	addEcosystemAuthorizationHeaders(req)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized upload status=%d body=%s", response.Code, response.Body.String())
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("oversized upload consumed authorization %d times", calls.Load())
+	}
+}
+
 func TestOpenClawExactAuthorizedMutationSucceeds(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	root := t.TempDir()
