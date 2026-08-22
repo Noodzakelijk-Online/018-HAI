@@ -34,6 +34,7 @@ foreach ($script in @(
     (Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"),
     (Join-Path $repositoryRoot "installer\windows\Stop-HAI.ps1"),
     (Join-Path $repositoryRoot "installer\windows\HAI-Status.ps1"),
+    (Join-Path $repositoryRoot "installer\windows\Test-HAI-LocalConnector.ps1"),
     (Join-Path $repositoryRoot "installer\windows\Open-HAI.ps1")
 )) {
     $tokens = $null
@@ -169,7 +170,8 @@ foreach ($requiredPayloadPath in @(
     "nginx-config\a2a-local.conf.template",
     "installer\windows\Start-HAI.ps1",
     "installer\windows\Stop-HAI.ps1",
-    "installer\windows\HAI-Status.ps1"
+    "installer\windows\HAI-Status.ps1",
+    "installer\windows\Test-HAI-LocalConnector.ps1"
 )) {
     if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot $requiredPayloadPath) -PathType Leaf)) {
         throw "Installer payload is missing required product file: $requiredPayloadPath"

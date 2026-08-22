@@ -48,8 +48,33 @@ function Get-HaiGatewayPort {
     return $port
 }
 
+function Get-HaiA2ALocalPort {
+    $environmentFile = Get-HaiEnvironmentFile
+    if (-not (Test-Path -LiteralPath $environmentFile -PathType Leaf)) {
+        return 8091
+    }
+
+    $match = [Regex]::Match(
+        [IO.File]::ReadAllText($environmentFile),
+        "(?m)^HAI_A2A_LOCAL_PORT=(?<port>[0-9]{1,5})$"
+    )
+    if (-not $match.Success) {
+        return 8091
+    }
+
+    $port = [int]$match.Groups["port"].Value
+    if ($port -lt 1 -or $port -gt 65535) {
+        throw "HAI environment file contains an invalid local A2A port."
+    }
+    return $port
+}
+
 function Get-HaiUrl {
     return "http://127.0.0.1:$(Get-HaiGatewayPort)"
+}
+
+function Get-HaiA2AUrl {
+    return "http://127.0.0.1:$(Get-HaiA2ALocalPort)"
 }
 
 function Assert-HaiDockerReady {

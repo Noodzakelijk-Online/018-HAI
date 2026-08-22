@@ -36,7 +36,9 @@ asks for the local owner email and password, creates independent secrets in
 readiness, and opens `http://127.0.0.1:8088`.
 
 Use the Start menu entries to open the dashboard, inspect HAI status, or stop
-the stack. Stop HAI preserves the Docker volumes and local settings.
+the stack. **Test local agent connector** fetches and validates the local A2A
+Agent Card without exposing it publicly. Stop HAI preserves the Docker volumes
+and local settings.
 
 ## One installation at a time
 
