@@ -272,6 +272,12 @@ profile names, environment contract, resource ceilings, read-only mount rules,
 activation commands, and evidence required before any capability is described
 as live-proven.
 
+The ordinary local stack has explicit CPU and memory ceilings. Redis also has a
+separate 128 MB data budget with a `noeviction` policy: if rate-limit or token
+revocation storage reaches that budget, the affected operation fails rather
+than discarding a security record. Adjust `REDIS_MAXMEMORY` only together with
+the higher Redis container ceiling in `docker-compose.local.yml`.
+
 MLflow and OpenLIT remain bridge-only integrations to separately operated
 local/private services; this repository does not silently install or expose
 either observability server.

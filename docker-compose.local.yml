@@ -1501,9 +1501,13 @@ services:
     container_name: 018-hai-redis
     hostname: redis
     restart: unless-stopped
-    mem_limit: 256m
+    # The Redis data budget remains below this process ceiling so normal
+    # allocator overhead cannot trigger a container OOM. `noeviction` is
+    # intentional: losing revocation or rate-limit records would weaken the
+    # security boundary. Callers receive an error instead and fail closed.
+    mem_limit: 192m
     cpus: 0.5
-    command: ["redis-server", "--port", "${REDIS_PORT}"]
+    command: ["redis-server", "--port", "${REDIS_PORT}", "--maxmemory", "${REDIS_MAXMEMORY}", "--maxmemory-policy", "${REDIS_MAXMEMORY_POLICY}"]
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6380}:${REDIS_PORT}"
     healthcheck:
