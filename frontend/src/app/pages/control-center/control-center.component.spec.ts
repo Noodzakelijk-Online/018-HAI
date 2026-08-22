@@ -78,4 +78,19 @@ describe('ControlCenterComponent', () => {
     response.error({ error: 'timeout' })
     expect(component.isChecking(automation)).toBeFalse()
   })
+
+  it('does not present an unloaded automation registry as zero registered automations', () => {
+    const run = jasmine.createSpy('run').and.returnValue(new Subject<any>().asObservable())
+    const { component } = createComponent({ run })
+
+    const beforeLoading = (component as any).buildCommandActions()
+      .find((action: any) => action.id === 'automation')
+    expect(beforeLoading.primaryMetric).toBe('Open registry')
+
+    component.diagnosticsLoaded = true
+    component.automations = [{ id: 'automation-1' } as any]
+    const afterLoading = (component as any).buildCommandActions()
+      .find((action: any) => action.id === 'automation')
+    expect(afterLoading.primaryMetric).toBe('1 registered')
+  })
 })

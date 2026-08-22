@@ -581,8 +581,12 @@ export class ControlCenterComponent implements OnInit {
         detail: 'Register a script, service, API, or workflow target.',
         icon: 'plus',
         tone: 'blue',
-        primaryMetric: `${this.automations.length} registered`,
-        secondaryMetric: 'Opens automation registry',
+        primaryMetric: this.diagnosticsLoaded
+          ? `${this.automations.length} registered`
+          : 'Open registry',
+        secondaryMetric: this.diagnosticsLoaded
+          ? 'Automation health loaded'
+          : 'Health detail loads on demand',
         context: 'Use this when HAI needs a new controlled runtime target, health check, launch path, dependency note, or automation entry.',
         route: '/home',
       },
