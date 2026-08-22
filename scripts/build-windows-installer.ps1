@@ -51,6 +51,7 @@ $trackedFiles = @(& git -C $repositoryRoot ls-files --cached)
 $installerSourceFiles = @(& git -C $repositoryRoot ls-files --others --exclude-standard -- `
     installer/windows `
     scripts/build-windows-installer.ps1 `
+    scripts/test-live-trello.ps1 `
     docs/windows-installer.md)
 $sourceFiles = @($trackedFiles + $installerSourceFiles | Select-Object -Unique)
 if ($LASTEXITCODE -ne 0 -or $sourceFiles.Count -eq 0) {

@@ -35,6 +35,20 @@ readiness, and opens `http://127.0.0.1:8088`.
 Use the Start menu entries to open the dashboard, inspect HAI status, or stop
 the stack. Stop HAI preserves the Docker volumes and local settings.
 
+### Verify a configured Trello board
+
+For an owner who has configured a read-only Trello API key, token, and a board
+in `%LOCALAPPDATA%\HAI\hai.env`, run the packaged acceptance test from the HAI
+program folder:
+
+```powershell
+.\scripts\test-live-trello.ps1 -EnvFile "$env:LOCALAPPDATA\HAI\hai.env"
+```
+
+It runs only read-only Trello connector checks in a disposable container. A
+skipped test is treated as a failure, so a successful run proves board access,
+incremental sync, and read-only token permissions without mutating Trello.
+
 The first run writes unique database owner and reserved runtime-role passwords
 to `%LOCALAPPDATA%\HAI\hai.env`. They are never shown in the installer output.
 

@@ -216,6 +216,24 @@ class CIWorkflowContractTest(unittest.TestCase):
             with self.subTest(entrypoint_required=required):
                 self.assertIn(required, entrypoint)
 
+    def test_trello_read_only_connector_is_wired_to_the_runtime(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        backend_start = compose.index("  backend:\n")
+        backend_end = compose.index("\n  frontend:\n", backend_start)
+        backend = compose[backend_start:backend_end]
+        env_template = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+        self.assertIn("TRELLO_API_KEY: ${TRELLO_API_KEY:-}", backend)
+        self.assertIn("TRELLO_READ_TOKEN: ${TRELLO_READ_TOKEN:-}", backend)
+        self.assertIn("TRELLO_API_BASE_URL: ${TRELLO_API_BASE_URL:-https://api.trello.com}", backend)
+        self.assertIn("TRELLO_API_KEY=", env_template)
+        self.assertIn("TRELLO_READ_TOKEN=", env_template)
+        self.assertIn("TRELLO_LIVE_BOARD=", env_template)
+        self.assertIn(
+            "CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS=localhost,127.0.0.1,::1,host.docker.internal,api.github.com,api.trello.com",
+            env_template,
+        )
+
     def test_idp_toolchain_matches_ci_and_container(self) -> None:
         go_mod = (ROOT / "idp" / "go.mod").read_text(encoding="utf-8")
         dockerfile = (ROOT / "idp" / "Dockerfile").read_text(encoding="utf-8")

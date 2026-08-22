@@ -9,12 +9,13 @@ $installerScript = Join-Path $repositoryRoot "installer\windows\HAI.iss"
 $supportScript = Join-Path $repositoryRoot "installer\windows\Hai-InstallerSupport.ps1"
 $startScript = Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"
 $localModelScript = Join-Path $repositoryRoot "installer\windows\Enable-LocalModel.ps1"
+$trelloAcceptanceScript = Join-Path $PSScriptRoot "test-live-trello.ps1"
 $initializerScript = Join-Path $PSScriptRoot "initialize-windows.ps1"
 $documentation = Join-Path $repositoryRoot "docs\windows-installer.md"
 $composePath = Join-Path $repositoryRoot "docker-compose.local.yml"
 $environmentTemplatePath = Join-Path $repositoryRoot ".env.example"
 
-foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $localModelScript, $initializerScript, $documentation)) {
+foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $localModelScript, $trelloAcceptanceScript, $initializerScript, $documentation)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Windows installer contract is missing: $requiredFile"
     }
@@ -38,6 +39,7 @@ foreach ($script in @(
     $buildScript,
     $supportScript,
     $localModelScript,
+    $trelloAcceptanceScript,
     (Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"),
     (Join-Path $repositoryRoot "installer\windows\Stop-HAI.ps1"),
     (Join-Path $repositoryRoot "installer\windows\HAI-Status.ps1"),
@@ -294,6 +296,7 @@ foreach ($requiredPayloadPath in @(
     "docker-compose.local.yml",
     "installer\windows\Start-HAI.ps1",
     "installer\windows\Enable-LocalModel.ps1",
+    "scripts\test-live-trello.ps1",
     "installer\windows\Stop-HAI.ps1",
     "installer\windows\HAI-Status.ps1"
 )) {
