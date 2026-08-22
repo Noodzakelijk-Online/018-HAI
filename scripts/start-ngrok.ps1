@@ -57,8 +57,40 @@ function Require-Secret([hashtable]$Values, [string]$Name, [int]$MinimumLength) 
     }
 }
 
+function Assert-HaiComposeOwnership([string]$ExpectedRoot) {
+    $containerIDs = @(& docker ps -aq --filter "label=com.docker.compose.project=018-hai")
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not inspect existing HAI containers before changing cloud access.'
+    }
+
+    $expected = [IO.Path]::GetFullPath($ExpectedRoot)
+    foreach ($containerID in $containerIDs) {
+        $labelsJSON = (& docker inspect --format '{{json .Config.Labels}}' $containerID 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($labelsJSON)) {
+            throw "Could not inspect existing HAI container $containerID before changing cloud access."
+        }
+        try {
+            $labels = $labelsJSON | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            throw "Existing HAI container $containerID returned invalid Compose labels. Stop it manually before changing cloud access."
+        }
+        $workingDirectory = [string]$labels.'com.docker.compose.project.working_dir'
+        if ([string]::IsNullOrWhiteSpace($workingDirectory)) {
+            throw "Existing HAI container $containerID has no Compose ownership label. Stop it manually before changing cloud access."
+        }
+        if (-not [string]::Equals(
+            [IO.Path]::GetFullPath($workingDirectory),
+            $expected,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "HAI is already running from '$workingDirectory'. Stop that installation before changing cloud access from '$expected'."
+        }
+    }
+}
+
 $envPath = Resolve-RepoFile $EnvFile
 $composePath = Resolve-RepoFile $ComposeFile
+Assert-HaiComposeOwnership (Split-Path -Parent $composePath)
 
 if ($Stop) {
     & docker compose --env-file $envPath --profile cloud-tunnel -f $composePath stop ngrok

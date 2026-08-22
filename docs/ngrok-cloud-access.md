@@ -76,6 +76,11 @@ reachable login page prove only transport and authentication routing. Each
 external connector, model, or runtime still requires its own bounded
 authorization and acceptance evidence.
 
+The launcher also verifies that any existing `018-hai` Compose containers belong
+to the same installation directory as the selected Compose file. It refuses to
+start or stop cloud access for another checkout, preventing an accidental public
+change to a different local HAI stack with the same Compose project name.
+
 ## Recovery
 
 If the tunnel is unhealthy, inspect only the bounded service log:

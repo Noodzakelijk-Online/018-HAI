@@ -9,6 +9,7 @@ $installerScript = Join-Path $repositoryRoot "installer\windows\HAI.iss"
 $supportScript = Join-Path $repositoryRoot "installer\windows\Hai-InstallerSupport.ps1"
 $startScript = Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"
 $cloudAccessScript = Join-Path $repositoryRoot "installer\windows\Start-HAI-Cloud.ps1"
+$ngrokLauncherScript = Join-Path $repositoryRoot "scripts\start-ngrok.ps1"
 $connectorCheckScript = Join-Path $repositoryRoot "installer\windows\Test-HAI-LocalConnector.ps1"
 $stopScript = Join-Path $repositoryRoot "installer\windows\Stop-HAI.ps1"
 $statusScript = Join-Path $repositoryRoot "installer\windows\HAI-Status.ps1"
@@ -36,6 +37,7 @@ $status = [IO.File]::ReadAllText($statusScript)
 $open = [IO.File]::ReadAllText($openScript)
 $connectorCheck = [IO.File]::ReadAllText($connectorCheckScript)
 $cloudAccess = [IO.File]::ReadAllText($cloudAccessScript)
+$ngrokLauncher = [IO.File]::ReadAllText($ngrokLauncherScript)
 $initializer = [IO.File]::ReadAllText($initializerScript)
 $docs = [IO.File]::ReadAllText($documentation)
 $compose = [IO.File]::ReadAllText($composePath)
@@ -153,6 +155,19 @@ foreach ($required in @(
     if (($start + $support) -notmatch [Regex]::Escape($required)) {
         throw "Windows startup must expose the optional Kafka event-bus profile: $required"
     }
+}
+
+foreach ($required in @(
+    "HAIInstallerPayloadBuild",
+    "WaitOne(0)",
+    "ReleaseMutex"
+)) {
+    if ($build -notmatch [Regex]::Escape($required)) {
+        throw "Installer payload build must serialize concurrent invocations: missing '$required'."
+    }
+}
+if ($ngrokLauncher -notmatch [Regex]::Escape("Assert-HaiComposeOwnership")) {
+    throw "The direct ngrok launcher must reject a different local HAI installation before it changes cloud access."
 }
 
 # Every installed entry point must refuse to act on a different checkout that
@@ -384,6 +399,27 @@ foreach ($requiredPayloadPath in @(
     if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot $requiredPayloadPath) -PathType Leaf)) {
         throw "Installer payload is missing required product file: $requiredPayloadPath"
     }
+}
+
+$payloadMutex = New-Object System.Threading.Mutex($false, "HAIInstallerPayloadBuild")
+$payloadLockHeld = $false
+try {
+    $payloadLockHeld = $payloadMutex.WaitOne(0)
+    if (-not $payloadLockHeld) {
+        throw "The installer contract could not acquire its isolated payload lock."
+    }
+    $quotedBuildScript = $buildScript.Replace("'", "''")
+    $blockedBuildOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '$quotedBuildScript' -SkipCompile" 2>&1
+    $blockedBuildExitCode = $LASTEXITCODE
+    $blockedBuildText = [string]::Join([Environment]::NewLine, @($blockedBuildOutput))
+    if ($blockedBuildExitCode -eq 0 -or $blockedBuildText -notmatch "already preparing the shared payload") {
+        throw "A concurrent installer build must fail before it can replace the shared payload."
+    }
+} finally {
+    if ($payloadLockHeld) {
+        $payloadMutex.ReleaseMutex()
+    }
+    $payloadMutex.Dispose()
 }
 if ($installer -notmatch [Regex]::Escape("Start governed cloud access") -or
     $installer -notmatch [Regex]::Escape("Start-HAI-Cloud.ps1")) {
