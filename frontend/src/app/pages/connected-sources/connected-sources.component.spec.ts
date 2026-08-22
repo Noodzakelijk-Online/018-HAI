@@ -1,6 +1,6 @@
 import { FormBuilder } from '@angular/forms';
 import { Router } from '@angular/router';
-import { of } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { IConnectedSource, ISourcePursuitRoutingOutcome } from '../../models/connected-source.model.interface';
 import { ConnectedSourcesComponent } from './connected-sources.component';
@@ -112,6 +112,27 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 
     expect(component.adapterStatusLabel(connector.adapterStatus)).toBe('setup required');
     expect(component.connectorCanCreateSource(connector)).toBeFalse();
+  });
+
+  it('prevents duplicate generic source creation while the request is running', () => {
+    const { component } = createComponent();
+    const pending = new Subject<IConnectedSource>();
+    const sourceService = jasmine.createSpyObj('ConnectedSourceService', ['createSource']);
+    sourceService.createSource.and.returnValue(pending.asObservable());
+    (component as any).sourceService = sourceService;
+    component.connectors = [{
+      connectorKey: 'local-folder', name: 'Selected local folder', category: 'local_folder',
+      enabled: true, adapterStatus: 'local_only',
+    } as any];
+
+    component.connectSource();
+    component.connectSource();
+
+    expect(component.connecting).toBeTrue();
+    expect(sourceService.createSource).toHaveBeenCalledTimes(1);
+
+    pending.complete();
+    expect(component.connecting).toBeFalse();
   });
 
   it('initializes the live Trello connector as a non-local, scheduled board source', () => {
