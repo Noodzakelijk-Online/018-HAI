@@ -923,6 +923,10 @@ services:
     profiles: ["local-a2a"]
     container_name: 018-hai-a2a-gateway
     restart: unless-stopped
+    # The Go API listens for SIGINT and uses it to drain HTTP requests and stop
+    # bounded background schedulers before Docker replaces the container.
+    stop_signal: SIGINT
+    stop_grace_period: 25s
     read_only: true
     security_opt:
       - no-new-privileges:true

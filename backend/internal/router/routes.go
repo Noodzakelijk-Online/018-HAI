@@ -103,6 +103,16 @@ import (
 )
 
 func initializeRoutes(router *gin.Engine) error {
+	return initializeRoutesWithContext(router, context.Background())
+}
+
+// initializeRoutesWithContext registers routes and starts background services
+// against the server lifecycle. The compatibility wrapper above keeps focused
+// route tests independent from process lifecycle management.
+func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context) error {
+	if runtimeCtx == nil {
+		runtimeCtx = context.Background()
+	}
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "service": "backend"})
 	})
@@ -192,7 +202,7 @@ func initializeRoutes(router *gin.Engine) error {
 		catalogHandler := braincatalog.NewHandlerWithReviewersAndScout(catalogReviewer, collectionReviewer, repositoryScout).
 			WithMaintenance(catalogMaintenance)
 		initializeBrainCatalogRoutes(v1, catalogHandler)
-		braincatalog.StartCatalogRevalidationScheduler(context.Background(), catalogMaintenance, backgroundAllowed)
+		braincatalog.StartCatalogRevalidationScheduler(runtimeCtx, catalogMaintenance, backgroundAllowed)
 		semanticService := semantic.NewServiceFromEnv()
 		memoryService := memory.NewServiceWithSemantic(memory.DefaultRepository(), semanticService)
 		initializeMemoryRoutes(v1, memory.NewHandler(memoryService))
@@ -393,7 +403,7 @@ func initializeRoutes(router *gin.Engine) error {
 			return err
 		}
 		if ambientmonitor.DurableSchedulerEnabled() {
-			if err := ambientmonitor.StartDurableScheduler(context.Background(), ambientMonitorService, backgroundAllowed); err != nil {
+			if err := ambientmonitor.StartDurableScheduler(runtimeCtx, ambientMonitorService, backgroundAllowed); err != nil {
 				return err
 			}
 		}
@@ -579,7 +589,7 @@ func initializeRoutes(router *gin.Engine) error {
 			),
 		)
 		llm.StartModelMaintenanceScheduler(
-			context.Background(),
+			runtimeCtx,
 			llmService,
 			backgroundAllowed,
 		)
@@ -595,7 +605,7 @@ func initializeRoutes(router *gin.Engine) error {
 			workflowService,
 			executionAuthorizationService,
 		)
-		temporalService.StartWorkerEventually(context.Background())
+		temporalService.StartWorkerEventually(runtimeCtx)
 		initializeTemporalRoutes(
 			v1,
 			temporalbridge.NewHandler(temporalService),
@@ -721,8 +731,8 @@ func initializeRoutes(router *gin.Engine) error {
 		initializeA2ABridgeStatusRoutes(v1, a2aBridgeHandler)
 		initializeA2ABridgeRoutes(router, relativePathV1, a2aBridgeHandler)
 		workflowRunner.Set(workflowtask.NewRunner(taskService, automationService))
-		source.StartScheduler(context.Background(), sourceService)
-		workflow.StartScheduler(context.Background(), workflowService)
+		source.StartScheduler(runtimeCtx, sourceService)
+		workflow.StartScheduler(runtimeCtx, workflowService)
 		mcpBridgeHandler := mcpbridge.NewHandler(mcpbridge.NewServiceFromEnv(workflowService))
 		initializeMCPBridgeStatusRoutes(v1, mcpBridgeHandler)
 		initializeMCPAgentRoutes(router, relativePathV1, mcpBridgeHandler)
@@ -742,7 +752,7 @@ func initializeRoutes(router *gin.Engine) error {
 		)
 		initializeMemoryEngineRoutes(v1, memoryengine.NewHandler(memoryEngineService))
 		ambientService := ambient.NewServiceWithPursuits(ambient.DefaultRepository(), workflowService, memoryEngineService, pursuitService, memoryService)
-		ambient.StartScheduler(context.Background(), ambientService)
+		ambient.StartScheduler(runtimeCtx, ambientService)
 		initializeAmbientRoutes(v1, ambient.NewHandler(ambientService))
 		agentCycleService := agentcycle.NewServiceWithPursuits(sourceService, workflowService, ambientService, pursuitService, memoryService)
 		initializeAgentCycleRoutes(v1, agentcycle.NewHandler(agentCycleService))
