@@ -154,7 +154,7 @@ func (s *userServiceImpl) GetUserByEmail(email string) (*models.User, error) {
 func (s *userServiceImpl) GetUserByResetToken(token string) (*models.User, error) {
 	user, err := s.userRepo.FindByResetToken(token)
 	if err != nil {
-		s.logger.Error("Failed to fetch user with reset token: %s, %v", token, err)
+		s.logger.Error("Failed to fetch user with reset token: %v", err)
 		if errors.Is(err, irepository.ErrUserNotFound) {
 			return nil, ErrUserNotFound
 		}
@@ -162,7 +162,7 @@ func (s *userServiceImpl) GetUserByResetToken(token string) (*models.User, error
 	}
 
 	if user == nil {
-		s.logger.Error("User not found with reset token: %s", token)
+		s.logger.Error("User not found with reset token")
 		return nil, errors.New("user not found")
 	}
 
