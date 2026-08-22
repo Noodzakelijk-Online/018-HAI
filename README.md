@@ -512,6 +512,23 @@ docker compose --env-file .env.local -f docker-compose.local.yml ps
 
 Open [http://localhost](http://localhost).
 
+### Desktop resource defaults
+
+The ordinary local stack now applies explicit memory, CPU, and process ceilings
+to every always-on service: backend, frontend, IDP, gateway, nginx config
+manager, both Postgres databases, Redis, and the single Redpanda broker. The
+defaults are sized for a normal Windows 11 desktop and prevent idle HAI from
+claiming unrestricted host resources. Optional model, evaluation, document, and
+agent runners remain profile-gated and are not started by the standard command.
+
+The limit variables are grouped in `.env.example` (`BACKEND_MEMORY_LIMIT`,
+`POSTGRES_AUTOMATION_MEMORY_LIMIT`, and similar). Change them only for an
+observed workload, then validate the rendered configuration before restarting:
+
+```powershell
+docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
+```
+
 For a single-user local preview, set `LOCAL_LOGIN_BYPASS_ENABLED=true` and keep
 `GATEWAY_HOST_BIND=127.0.0.1`. The login screen then shows **Open local
 dashboard**, which creates a normal signed session for the configured first-run

@@ -6,6 +6,9 @@ services:
     container_name: 018-hai-idp
     hostname: idp
     restart: unless-stopped
+    mem_limit: ${IDP_MEMORY_LIMIT:-256m}
+    cpus: ${IDP_CPU_LIMIT:-0.5}
+    pids_limit: ${IDP_PIDS_LIMIT:-128}
     depends_on:
       postgres-idp:
         condition: service_healthy
@@ -75,6 +78,11 @@ services:
     container_name: 018-hai-backend
     hostname: backend
     restart: unless-stopped
+    # The API keeps enough headroom for migrations and bounded ingestion while
+    # preventing an idle local installation from consuming a desktop unchecked.
+    mem_limit: ${BACKEND_MEMORY_LIMIT:-768m}
+    cpus: ${BACKEND_CPU_LIMIT:-1.0}
+    pids_limit: ${BACKEND_PIDS_LIMIT:-256}
     depends_on:
       postgres-automation:
         condition: service_healthy
@@ -511,6 +519,9 @@ services:
     container_name: 018-hai-frontend
     hostname: frontend
     restart: unless-stopped
+    mem_limit: ${FRONTEND_MEMORY_LIMIT:-128m}
+    cpus: ${FRONTEND_CPU_LIMIT:-0.25}
+    pids_limit: ${FRONTEND_PIDS_LIMIT:-64}
     depends_on:
       backend:
         condition: service_started
@@ -831,6 +842,9 @@ services:
     container_name: gateway
     hostname: gateway
     restart: unless-stopped
+    mem_limit: ${GATEWAY_MEMORY_LIMIT:-128m}
+    cpus: ${GATEWAY_CPU_LIMIT:-0.25}
+    pids_limit: ${GATEWAY_PIDS_LIMIT:-64}
     environment:
       BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
     command:
@@ -864,6 +878,9 @@ services:
       dockerfile: Dockerfile
     container_name: 018-hai-nginx-config-manager
     restart: unless-stopped
+    mem_limit: ${NGINX_CONFIG_MANAGER_MEMORY_LIMIT:-256m}
+    cpus: ${NGINX_CONFIG_MANAGER_CPU_LIMIT:-0.5}
+    pids_limit: ${NGINX_CONFIG_MANAGER_PIDS_LIMIT:-128}
     environment:
       BROKERS_ADDR: ${BROKERS_ADDR}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
@@ -1352,6 +1369,9 @@ services:
     container_name: 018-hai-postgres-idp
     hostname: postgres-idp
     restart: unless-stopped
+    mem_limit: ${POSTGRES_IDP_MEMORY_LIMIT:-512m}
+    cpus: ${POSTGRES_IDP_CPU_LIMIT:-0.75}
+    pids_limit: ${POSTGRES_IDP_PIDS_LIMIT:-128}
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -1377,6 +1397,9 @@ services:
     container_name: 018-hai-postgres-automation
     hostname: postgres-automation
     restart: unless-stopped
+    mem_limit: ${POSTGRES_AUTOMATION_MEMORY_LIMIT:-768m}
+    cpus: ${POSTGRES_AUTOMATION_CPU_LIMIT:-1.0}
+    pids_limit: ${POSTGRES_AUTOMATION_PIDS_LIMIT:-192}
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -1400,6 +1423,9 @@ services:
     container_name: 018-hai-redis
     hostname: redis
     restart: unless-stopped
+    mem_limit: ${REDIS_MEMORY_LIMIT:-128m}
+    cpus: ${REDIS_CPU_LIMIT:-0.25}
+    pids_limit: ${REDIS_PIDS_LIMIT:-64}
     command: ["redis-server", "--port", "${REDIS_PORT}"]
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6380}:${REDIS_PORT}"

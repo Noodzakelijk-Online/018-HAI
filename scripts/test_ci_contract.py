@@ -28,6 +28,14 @@ def job_block(job_id: str) -> str:
     )]
 
 
+def compose_service_block(compose: str, service: str) -> str:
+    pattern = rf"(?ms)^  {re.escape(service)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)"
+    match = re.search(pattern, compose)
+    if not match:
+        raise AssertionError(f"missing Compose service {service!r}")
+    return match.group(1)
+
+
 class CIWorkflowContractTest(unittest.TestCase):
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
@@ -55,6 +63,29 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("mem_limit: ${KAFKA_MEMORY_LIMIT:-256m}", compose)
         self.assertIn("cpus: ${KAFKA_CPU_LIMIT:-0.5}", compose)
         self.assertIn("--overprovisioned=true", compose)
+
+    def test_local_compose_bounds_the_always_on_desktop_services(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+        for service, prefix in {
+            "idp": "IDP",
+            "backend": "BACKEND",
+            "frontend": "FRONTEND",
+            "nginx": "GATEWAY",
+            "nginxconfigmanager": "NGINX_CONFIG_MANAGER",
+            "postgres-idp": "POSTGRES_IDP",
+            "postgres-automation": "POSTGRES_AUTOMATION",
+            "redis": "REDIS",
+        }.items():
+            with self.subTest(service=service):
+                service_block = compose_service_block(compose, service)
+                self.assertIn(f"mem_limit: ${{{prefix}_MEMORY_LIMIT:-", service_block)
+                self.assertIn(f"cpus: ${{{prefix}_CPU_LIMIT:-", service_block)
+                self.assertIn(f"pids_limit: ${{{prefix}_PIDS_LIMIT:-", service_block)
+                self.assertIn(f"{prefix}_MEMORY_LIMIT=", defaults)
+                self.assertIn(f"{prefix}_CPU_LIMIT=", defaults)
+                self.assertIn(f"{prefix}_PIDS_LIMIT=", defaults)
 
     def test_directly_invoked_contract_and_smoke_files_exist(self) -> None:
         for relative_path in (
