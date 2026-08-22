@@ -353,6 +353,11 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 	if err != nil {
 		return nil, err
 	}
+	if connectorKey == trelloConnectorKey {
+		if err := validateTrelloSourceRequest(request, connector); err != nil {
+			return nil, err
+		}
+	}
 	if connectorKey == odooJSON2ConnectorKey {
 		if _, err := odooJSON2ConfigFromEnv(); err != nil {
 			return nil, fmt.Errorf("Odoo JSON-2 connector requires explicit configuration: %w", err)
@@ -649,6 +654,32 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 		health.Reason = "source access was revoked"
 		return health, nil
 	}
+	if source.ConnectorKey == trelloConnectorKey {
+		health.Configured = trelloConfigured()
+		if !health.Configured {
+			health.Status = "configuration_required"
+			health.Reason = "Trello read-only credentials are not configured"
+			return health, nil
+		}
+		if source.LocalOnly {
+			health.Status = "configuration_required"
+			health.Reason = "Trello board sources must remain remote read-only; reconnect with local-only disabled"
+			return health, nil
+		}
+		if _, err := trelloBoardID(source.SyncTarget); err != nil {
+			health.Status = "configuration_required"
+			health.Reason = "Trello board target needs review: " + err.Error()
+			return health, nil
+		}
+		health.Authorized = source.Enabled
+		if source.Enabled {
+			health.Status = "ready"
+			health.Reason = "least-privilege read-only Trello credentials and board target are configured"
+		} else {
+			health.Reason = "Trello source is paused"
+		}
+		return health, nil
+	}
 	if !isGoogleOAuthConnector(source.ConnectorKey) {
 		health.Authorized = source.Enabled
 		health.Reason = "connector health is derived from its enabled and synchronization state"
@@ -698,6 +729,25 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 		health.CursorPhase = cursor.Phase
 	}
 	return health, nil
+}
+
+func validateTrelloSourceRequest(request CreateSourceRequest, connector models.SourceConnector) error {
+	if !trelloConfigured() {
+		return fmt.Errorf("Trello connector requires %s and a least-privilege read-only %s before a board can be connected", trelloAPIKeyEnv, trelloReadTokenEnv)
+	}
+	if request.LocalOnly {
+		return fmt.Errorf("Trello is a remote read-only source; localOnly must be false")
+	}
+	if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+		return fmt.Errorf("Trello must use the %s category", connector.Category)
+	}
+	if _, err := trelloBoardID(request.SyncTarget); err != nil {
+		return err
+	}
+	if _, err := trelloBaseURL(); err != nil {
+		return fmt.Errorf("Trello API configuration is invalid: %w", err)
+	}
+	return nil
 }
 
 func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {

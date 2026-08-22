@@ -611,6 +611,16 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
+    if (connectorKey === 'trello') {
+      this.sourceForm.patchValue({
+        name: 'Trello board (read-only)',
+        syncFrequency: '1h',
+        syncTarget: '',
+        localOnly: false,
+        excludePatterns: 'archive,template',
+      });
+      return;
+    }
     if (connectorKey === 'github') {
       this.sourceForm.patchValue({
         name: 'GitHub repository',
@@ -693,6 +703,9 @@ export class ConnectedSourcesComponent implements OnInit {
     }
     if (this.sourceForm.value.connectorKey === 'github') {
       return 'GitHub owner/repository, e.g. Noodzakelijk-Online/018-HAI';
+    }
+    if (this.sourceForm.value.connectorKey === 'trello') {
+      return 'Trello board URL or ID, e.g. https://trello.com/b/abc12345/board-name';
     }
     if (this.sourceForm.value.connectorKey === 'odoo-herp') {
       return 'Odoo URL or app list, e.g. https://.../odoo?apps=CRM,Sales';

@@ -100,4 +100,19 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     component.connectors[4].adapterStatus = 'operational';
     expect(component.googleConnectorMetric()).toBe('4 ready');
   });
+
+  it('uses remote read-only defaults for a Trello board source', () => {
+    const { component } = createComponent();
+
+    component.sourceForm.patchValue({ connectorKey: 'trello' });
+    component.connectorChanged('trello');
+
+    expect(component.sourceForm.value).toEqual(jasmine.objectContaining({
+      name: 'Trello board (read-only)',
+      syncFrequency: '1h',
+      syncTarget: '',
+      localOnly: false,
+    }));
+    expect(component.syncTargetPlaceholder()).toContain('Trello board URL or ID');
+  });
 });

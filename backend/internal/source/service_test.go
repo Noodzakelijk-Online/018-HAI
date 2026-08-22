@@ -709,6 +709,43 @@ func TestCreateSourceAllowsOperationalLocalFolder(t *testing.T) {
 	}
 }
 
+func TestCreateTrelloSourceRequiresConfiguredRemoteBoard(t *testing.T) {
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	request := CreateSourceRequest{
+		OwnerIdentity: "alice",
+		ConnectorKey:  trelloConnectorKey,
+		Name:          "Automation board",
+		Enabled:       true,
+		LocalOnly:     false,
+		SyncFrequency: "1h",
+		SyncTarget:    "https://trello.com/b/abc123XY/automation-board",
+	}
+
+	if _, err := service.CreateSource(request); err == nil || !strings.Contains(err.Error(), trelloAPIKeyEnv) {
+		t.Fatalf("unconfigured Trello source error = %v, want credential guidance", err)
+	}
+
+	t.Setenv(trelloAPIKeyEnv, "test-key")
+	t.Setenv(trelloReadTokenEnv, "test-read-token")
+	created, err := service.CreateSource(request)
+	if err != nil {
+		t.Fatalf("configured Trello source: %v", err)
+	}
+	if created.LocalOnly || created.Category != "project_board" || created.SyncTarget != request.SyncTarget {
+		t.Fatalf("created Trello source = %#v", created)
+	}
+
+	request.LocalOnly = true
+	if _, err := service.CreateSource(request); err == nil || !strings.Contains(err.Error(), "localOnly") {
+		t.Fatalf("local-only Trello source error = %v, want remote-only rejection", err)
+	}
+	request.LocalOnly = false
+	request.SyncTarget = "not a board"
+	if _, err := service.CreateSource(request); err == nil || !strings.Contains(err.Error(), "board id") {
+		t.Fatalf("invalid Trello target error = %v, want board target rejection", err)
+	}
+}
+
 func TestSyncJSONFeedImportsItemsAndAdvancesCursor(t *testing.T) {
 	var receivedCursor string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
