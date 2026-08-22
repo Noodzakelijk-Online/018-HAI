@@ -1,7 +1,7 @@
 import { HttpErrorResponse } from '@angular/common/http'
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
-import { forkJoin } from 'rxjs'
+import { finalize, forkJoin } from 'rxjs'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import {
   IAccountFeed,
@@ -32,6 +32,7 @@ export class BackgroundOperationsComponent implements OnInit {
   selected?: IOperation
   selectedEvents: IOperationEvent[] = []
   detailVisible = false
+  private readonly pendingOperationActionIds = new Set<string>()
 
   readonly statusFilters = [
     { value: '', label: 'All' },
@@ -132,7 +133,9 @@ export class BackgroundOperationsComponent implements OnInit {
   }
 
   approve(op: IOperation): void {
-    this.service.approve(op.id).subscribe({
+    if (!this.beginOperationAction(op)) return
+
+    this.service.approve(op.id).pipe(finalize(() => this.endOperationAction(op))).subscribe({
       next: () => {
         this.notification.success('Approved', `${op.title} approved.`)
         this.refresh()
@@ -142,7 +145,9 @@ export class BackgroundOperationsComponent implements OnInit {
   }
 
   run(op: IOperation): void {
-    this.service.run(op.id).subscribe({
+    if (!this.beginOperationAction(op)) return
+
+    this.service.run(op.id).pipe(finalize(() => this.endOperationAction(op))).subscribe({
       next: (res) => {
         if (res.verified) {
           this.notification.success('Verified', `${op.title} executed and verified.`)
@@ -158,6 +163,20 @@ export class BackgroundOperationsComponent implements OnInit {
 
   canApprove(op: IOperation): boolean {
     return op.status === 'awaiting_approval'
+  }
+
+  isOperationActionPending(op: IOperation): boolean {
+    return this.pendingOperationActionIds.has(op.id)
+  }
+
+  private beginOperationAction(op: IOperation): boolean {
+    if (this.isOperationActionPending(op)) return false
+    this.pendingOperationActionIds.add(op.id)
+    return true
+  }
+
+  private endOperationAction(op: IOperation): void {
+    this.pendingOperationActionIds.delete(op.id)
   }
 
   canRun(op: IOperation): boolean {
