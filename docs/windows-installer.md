@@ -53,8 +53,8 @@ This starts the `event-bus` Compose profile, including Kafka, ZooKeeper, and
 the Kafka-driven nginx configuration manager. It also enables the three
 event-bus settings in `%LOCALAPPDATA%\HAI\hai.env`, so the IDP and backend use
 the broker rather than merely starting it. The next normal Start HAI run
-automatically restores the smaller local stack and clears those local broker
-settings.
+automatically stops those optional services, restores the smaller local stack,
+and clears the local broker settings.
 
 ### Enable the local safe worker
 

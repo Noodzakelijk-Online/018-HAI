@@ -127,6 +127,7 @@ if ($initializer -notmatch [Regex]::Escape('GATEWAY_HOST_BIND') -or
 foreach ($required in @(
     '[switch]$EnableEventBus',
     '"--profile", "event-bus"',
+    'stop zookeeper kafka nginxconfigmanager',
     'Set-HaiEventBusEnabled',
     'Set-HaiEventBusDisabled',
     'IDP_KAFKA_ENABLED',
