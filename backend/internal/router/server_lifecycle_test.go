@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 )
@@ -37,4 +38,13 @@ func TestServeWithContextStopsOnCancellation(t *testing.T) {
 	if err := server.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		t.Fatalf("server close: %v", err)
 	}
+}
+
+func TestShutdownSignalsIncludeInterrupt(t *testing.T) {
+	for _, candidate := range shutdownSignals() {
+		if candidate == os.Interrupt {
+			return
+		}
+	}
+	t.Fatal("shutdown signals must include os.Interrupt")
 }
