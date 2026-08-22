@@ -90,9 +90,9 @@ function Assert-HaiComposeOwnership([string]$ExpectedRoot) {
 
 $envPath = Resolve-RepoFile $EnvFile
 $composePath = Resolve-RepoFile $ComposeFile
-Assert-HaiComposeOwnership (Split-Path -Parent $composePath)
 
 if ($Stop) {
+    Assert-HaiComposeOwnership (Split-Path -Parent $composePath)
     & docker compose --env-file $envPath --profile cloud-tunnel -f $composePath stop ngrok
     if ($LASTEXITCODE -ne 0) {
         throw 'Failed to stop the ngrok service.'
@@ -145,6 +145,11 @@ foreach ($entry in $callbackPaths.GetEnumerator()) {
         throw "$($entry.Key) must equal $publicUrlText$($entry.Value) when configured."
     }
 }
+
+# Reject unsafe cloud configuration before touching Docker. This keeps
+# validation deterministic on developer machines and CI hosts without a daemon,
+# while the ownership check still runs before any Compose operation.
+Assert-HaiComposeOwnership (Split-Path -Parent $composePath)
 
 & docker compose --env-file $envPath --profile cloud-tunnel -f $composePath config --quiet
 if ($LASTEXITCODE -ne 0) {

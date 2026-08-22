@@ -316,6 +316,47 @@ try {
     if (Get-HaiEventBusEnabled) {
         throw "The event-bus state reader must report the disabled persisted configuration."
     }
+
+    # Exercise startup's rollback path without contacting Docker. This batch
+    # shim accepts Docker and Compose capability probes but rejects the actual
+    # Compose invocation that starts the stack.
+    $fakeDockerDirectory = Join-Path $eventBusTestRoot "fake-docker"
+    New-Item -ItemType Directory -Path $fakeDockerDirectory -Force | Out-Null
+    $fakeDockerScript = @'
+@echo off
+if /I "%1"=="version" (
+  echo 26.1.0
+  exit /b 0
+)
+if /I "%1"=="ps" exit /b 0
+if /I "%1"=="compose" if /I "%2"=="version" exit /b 0
+if /I "%1"=="compose" exit /b 1
+exit /b 0
+'@
+    [IO.File]::WriteAllText((Join-Path $fakeDockerDirectory "docker.cmd"), $fakeDockerScript)
+
+    $previousPath = $env:PATH
+    try {
+        $env:PATH = "$fakeDockerDirectory;$previousPath"
+        $resolvedDocker = (Get-Command docker -ErrorAction Stop).Source
+        if ($resolvedDocker -ne (Join-Path $fakeDockerDirectory "docker.cmd")) {
+            throw "The isolated startup test did not resolve its fake Docker executable."
+        }
+        $startupRejected = $false
+        try {
+            & $startScript -EnableEventBus -NoBrowser
+        } catch {
+            $startupRejected = $_.Exception.Message -match "HAI startup failed"
+        }
+        if (-not $startupRejected) {
+            throw "The isolated Docker failure must make Windows startup fail."
+        }
+    } finally {
+        $env:PATH = $previousPath
+    }
+    if (Get-HaiEventBusEnabled) {
+        throw "A failed event-bus startup must restore the previous disabled configuration."
+    }
 } finally {
     $env:LOCALAPPDATA = $previousLocalAppData
     if (Test-Path -LiteralPath $eventBusTestRoot -PathType Container) {
