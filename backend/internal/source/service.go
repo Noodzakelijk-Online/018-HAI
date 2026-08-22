@@ -252,6 +252,7 @@ type pursuitWorkflowIntakeRouter interface {
 var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
 var ErrSyncInProgress = errors.New("source sync is already in progress")
 var ErrSourceNotEnabled = errors.New("source is not enabled for sync")
+var ErrSyncExecutionFailed = errors.New("source sync execution failed")
 
 const maxSyncErrorDetails = 20
 const maxSyncPursuitOutcomes = 20
@@ -869,213 +870,128 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		items, err = s.localFolderItemsContext(ctx, source, request)
 		items = filterConnectorLocalItems(items, source.ConnectorKey)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == "json-feed" {
 		items, adapterCursor, err = fetchJSONFeedContext(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == "github" {
 		items, adapterCursor, err = fetchGitHubSourceContext(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == gmailConnectorKey {
 		items, adapterCursor, err = s.fetchGmailSource(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == driveConnectorKey {
 		items, adapterCursor, err = s.fetchDriveSource(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == contactsConnectorKey {
 		items, adapterCursor, err = s.fetchContactsSource(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == calendarConnectorKey {
 		items, adapterCursor, err = s.fetchCalendarSource(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == trelloConnectorKey {
 		items, adapterCursor, err = fetchTrelloSourceContext(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == odooJSON2ConnectorKey {
 		items, adapterCursor, err = fetchOdooJSON2Source(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.odoo_json2_read", fmt.Sprintf("read %d bounded Odoo JSON-2 record(s) through the configured model allowlist", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == shareTConnectorKey {
 		items, adapterCursor, err = fetchShareTSource(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.sharet_read", fmt.Sprintf("read %d bounded ShareT link record(s) through a read-only connector credential", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == cloudQuerySummaryConnectorKey {
 		items, adapterCursor, err = fetchCloudQuerySummaryContext(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.cloudquery_summary_read", fmt.Sprintf("read %d bounded CloudQuery sync summary record(s) from the configured local summary file", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == airbyteInventoryConnectorKey {
 		items, adapterCursor, err = fetchAirbyteInventory(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.airbyte_inventory_read", fmt.Sprintf("read %d bounded Airbyte source and connection inventory record(s) from approved workspaces", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == laroConnectorKey {
 		items, adapterCursor, err = fetchLAROSource(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.laro_read", fmt.Sprintf("read %d bounded, owner-scoped LARO legal record(s)", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == openSpecArtifactConnectorKey {
 		items, err = s.openSpecArtifactItemsContext(ctx, source, request)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.openspec_artifacts_read", fmt.Sprintf("read %d bounded OpenSpec change artifact bundle(s) from the selected local project", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == projectInstructionsConnectorKey {
 		items, err = s.projectInstructionItemsContext(ctx, source, request)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.project_instructions_read", fmt.Sprintf("read %d untrusted project instruction file(s) from the selected local project", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == fabricPatternsConnectorKey {
 		items, err = s.fabricPatternItemsContext(ctx, source, request)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.fabric_patterns_read", fmt.Sprintf("read %d bounded untrusted Fabric prompt pattern(s) from the selected local folder", len(items)))
 	}
 	if source.ConnectorKey == "whatsapp-export" {
 		items, err = s.whatsAppExportItemsContext(ctx, source, request)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == "odoo-herp" {
@@ -1085,13 +1001,8 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 	if source.ConnectorKey == calendarConnectorKey {
 		existingItems, errExisting := s.repo.FindRawItems(source.ID)
 		if errExisting != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = "calendar conflict planning could not read cached event records: " + errExisting.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", job.Message)
-			return nil, errExisting
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(errExisting)
 		}
 		items = appendCalendarConflictItems(existingItems, items, time.Now().UTC())
 		for index := range items {
@@ -1104,7 +1015,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err := ctx.Err(); err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = "sync cancelled: " + err.Error()
+			job.Message = "sync cancelled before the remaining source items could be processed"
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
 			s.audit(sourceID, "source.sync_cancelled", job.Message)
@@ -1203,7 +1114,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		job.CursorAfter = job.CursorBefore
 		job.Message = "sync result could not update source state; cursor was not confirmed"
 		if len(itemErrors) < maxSyncErrorDetails {
-			itemErrors = append(itemErrors, "source state update failed: "+compact(errSource.Error(), 220))
+			itemErrors = append(itemErrors, "source state update failed; inspect the source audit and retry")
 		}
 	}
 	job.CompletedAt = &now
@@ -2616,6 +2527,19 @@ func (s *service) endSync(sourceID uuid.UUID) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 	delete(s.activeSyncs, sourceID)
+}
+
+func (s *service) markSyncFailure(job *models.SourceSyncJob, sourceID uuid.UUID) {
+	now := time.Now().UTC()
+	job.Status = "failed"
+	job.Message = "source sync could not complete; inspect the connector configuration and retry"
+	job.CompletedAt = &now
+	_, _ = s.repo.UpdateSyncJob(job)
+	s.audit(sourceID, "source.sync_failed", job.Message)
+}
+
+func syncExecutionFailure(err error) error {
+	return fmt.Errorf("%w: %v", ErrSyncExecutionFailed, err)
 }
 
 func itemFailure(item ImportItem, stage string, _ error) string {

@@ -258,6 +258,10 @@ func (h *Handler) Sync(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return
 		}
+		if errors.Is(err, ErrSyncExecutionFailed) {
+			writeSourceInternalError(c, "source sync", err)
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -321,6 +325,10 @@ func (h *Handler) Transcribe(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
+	if errors.Is(err, ErrSyncExecutionFailed) {
+		writeSourceInternalError(c, "source transcription sync", err)
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -381,6 +389,10 @@ func (h *Handler) ExtractDocuments(c *gin.Context) {
 	result, err := h.service.SyncContext(c.Request.Context(), id, ImportRequest{Mode: ModeManualImport, Items: items, ProjectKey: source.DefaultProjectKey})
 	if errors.Is(err, ErrSyncInProgress) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, ErrSyncExecutionFailed) {
+		writeSourceInternalError(c, "document extraction sync", err)
 		return
 	}
 	if err != nil {

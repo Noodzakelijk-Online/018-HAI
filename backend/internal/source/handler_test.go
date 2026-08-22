@@ -186,6 +186,32 @@ func TestHandlerDoesNotExposeScheduledSyncFailureDetails(t *testing.T) {
 	}
 }
 
+func TestHandlerDoesNotExposeSourceSyncExecutionFailureDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root := t.TempDir()
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+	sourceID := uuid.New()
+	handler := NewHandler(NewService(newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Private local source",
+		Category: "local_folder", Enabled: true, LocalOnly: true, Status: "active",
+	}), nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.POST("/sources/:id/sync", handler.Sync)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/sync", strings.NewReader(`{"folderPath":".."}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("sync status = %d, want 500: %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), root) || strings.Contains(response.Body.String(), "allowlisted root") {
+		t.Fatalf("sync response exposed execution detail: %s", response.Body.String())
+	}
+}
+
 func TestHandlerListsOnlyOwnerScopedExtractionsFromRepository(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	aliceID := uuid.New()

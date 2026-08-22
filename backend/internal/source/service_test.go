@@ -41,6 +41,14 @@ func TestItemFailureDoesNotExposeProviderSecretsOrLocalPaths(t *testing.T) {
 	}
 }
 
+func auditMessages(logs []models.SourceAuditLog) []string {
+	messages := make([]string, 0, len(logs))
+	for _, log := range logs {
+		messages = append(messages, log.Message)
+	}
+	return messages
+}
+
 func TestSyncLocalFolderExtractsReadableFilesWithProvenance(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root+"/project-note.md", "Decision: local folder ingestion should extract useful project context. Follow up: verify provenance before task planning.")
@@ -570,6 +578,11 @@ func TestSyncLocalFolderBlocksTraversalOutsideAllowlistedRoot(t *testing.T) {
 	}
 	if repo.jobs[0].Status != "failed" {
 		t.Fatalf("job status = %q, want failed", repo.jobs[0].Status)
+	}
+	for _, record := range append([]string{repo.jobs[0].Message}, auditMessages(repo.auditLogs)...) {
+		if strings.Contains(record, root) {
+			t.Fatalf("persisted sync failure exposed allowlisted path: %q", record)
+		}
 	}
 	if !repo.hasAudit("source.sync_failed") {
 		t.Fatalf("expected failed sync audit record")
