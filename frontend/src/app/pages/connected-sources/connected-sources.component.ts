@@ -590,7 +590,7 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   syncButtonVisible(source: IConnectedSource): boolean {
-    return source.enabled && source.status !== 'revoked';
+    return source.enabled && source.status !== 'revoked' && this.connectorCanCreateSource(this.connectorFor(source));
   }
 
   sourceExtractionCount(source: IConnectedSource): number {

@@ -120,6 +120,21 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.connectorCanCreateSource({ connectorKey: 'local-folder', enabled: true } as any)).toBeTrue();
   });
 
+  it('hides sync for an existing source whose connector now requires configuration', () => {
+    const { component } = createComponent();
+    component.connectors = [{
+      connectorKey: 'trello',
+      enabled: true,
+      adapterStatus: 'configuration_required',
+    } as any];
+
+    expect(component.syncButtonVisible({
+      connectorKey: 'trello',
+      enabled: true,
+      status: 'active',
+    } as IConnectedSource)).toBeFalse();
+  });
+
   it('prevents duplicate generic source creation while the request is running', () => {
     const { component } = createComponent();
     const pending = new Subject<IConnectedSource>();
