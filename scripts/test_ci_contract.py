@@ -133,6 +133,13 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertIn(f"{setting}=", defaults)
                 self.assertIn(f"{setting}: ${{{setting}:-}}", compose)
 
+    def test_quick_start_and_google_local_callback_match_gateway_port(self) -> None:
+        defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("GATEWAY_HOST_PORT=8088", defaults)
+        self.assertIn("http://localhost:8088/api/v1/sources/oauth/google/callback", defaults)
+        self.assertIn("http://localhost:8088", readme)
+
     def test_directly_invoked_contract_and_smoke_files_exist(self) -> None:
         for relative_path in (
             "nginx-config/test_gateway_contract.py",

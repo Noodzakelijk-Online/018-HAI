@@ -510,7 +510,9 @@ docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps
 ```
 
-Open [http://localhost](http://localhost).
+Open [http://localhost:8088](http://localhost:8088) with the default
+configuration. If you deliberately override `GATEWAY_HOST_PORT`, use that port
+instead.
 
 For explicitly configured, guarded public HTTPS access, see
 [Governed ngrok cloud access](docs/ngrok-cloud-access.md). The tunnel is
