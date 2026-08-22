@@ -580,8 +580,8 @@ func (a *service) ConfirmPasswordReset(token, newPassword string) error {
 }
 
 func (a *service) ChangePassword(accessToken string, newPassword string) error {
-	if newPassword == "" {
-		return errors.New("new password is required")
+	if len(newPassword) < minimumPasswordLength {
+		return ErrRegistrationPasswordWeak
 	}
 
 	_, claims, err := a.parseAndValidateToken(accessToken)
