@@ -21,6 +21,15 @@ $initializerScript = Join-Path $PSScriptRoot "initialize-windows.ps1"
 $documentation = Join-Path $repositoryRoot "docs\windows-installer.md"
 $composePath = Join-Path $repositoryRoot "docker-compose.local.yml"
 $environmentTemplatePath = Join-Path $repositoryRoot ".env.example"
+$localGoBuildFiles = @(
+    "backend\makefile",
+    "scripts\smoke-account-bridges.sh",
+    "scripts\smoke-background-operations.sh",
+    "scripts\smoke-critical-path.sh",
+    "scripts\smoke-model-intelligence.sh",
+    "scripts\smoke-runtime-lab.sh",
+    "scripts\smoke-windows-runtime.sh"
+)
 
 foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $localModelScript, $cloudAccessScript, $connectorCheckScript, $trelloAcceptanceScript, $noFakeClaimsAudit, $initializerScript, $documentation)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
@@ -140,6 +149,20 @@ foreach ($required in @(
 if ($initializer -notmatch [Regex]::Escape('GATEWAY_HOST_BIND') -or
     $initializer -notmatch [Regex]::Escape('"127.0.0.1"')) {
     throw "The first-run initializer does not enforce a loopback gateway."
+}
+
+# Linked Git worktrees on Windows can make recent Go toolchains fail while
+# collecting optional VCS metadata. Local verification must still compile the
+# product, so every installed local smoke/build entrypoint disables stamping
+# explicitly rather than depending on the checkout shape.
+foreach ($relativePath in $localGoBuildFiles) {
+    $path = Join-Path $repositoryRoot $relativePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Local Go build entrypoint is missing: $relativePath"
+    }
+    if ([IO.File]::ReadAllText($path) -notmatch [Regex]::Escape("-buildvcs=false")) {
+        throw "Local Go build entrypoint must disable linked-worktree VCS stamping: $relativePath"
+    }
 }
 
 foreach ($required in @(

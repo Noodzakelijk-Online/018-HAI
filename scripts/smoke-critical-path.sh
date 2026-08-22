@@ -56,7 +56,7 @@ createdb -h 127.0.0.1 -p "${PG_PORT}" automation
 
 echo "==> Building and starting backend on :${API_PORT}"
 mkdir -p "${IMAGES}"
-( cd "${ROOT}/backend" && go build -o "${BIN}" ./cmd )
+( cd "${ROOT}/backend" && go build -buildvcs=false -o "${BIN}" ./cmd )
 
 # Trust auth ignores the password, but libpq needs a non-empty value in the DSN.
 DB_HOST=127.0.0.1 DB_PORT="${PG_PORT}" DB_USER="$(whoami)" DB_PASSWORD=postgres \
