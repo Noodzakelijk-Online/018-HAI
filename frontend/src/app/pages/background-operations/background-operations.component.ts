@@ -28,6 +28,7 @@ export class BackgroundOperationsComponent implements OnInit {
   loading = false
   running = false
   statusFilter = ''
+  private refreshQueued = false
 
   selected?: IOperation
   selectedEvents: IOperationEvent[] = []
@@ -53,7 +54,10 @@ export class BackgroundOperationsComponent implements OnInit {
   }
 
   refresh(): void {
-    if (this.loading) return
+    if (this.loading) {
+      this.refreshQueued = true
+      return
+    }
     this.loading = true
     forkJoin({
       dashboard: this.service.dashboard(),
@@ -64,13 +68,20 @@ export class BackgroundOperationsComponent implements OnInit {
         this.dashboard = dashboard
         this.operations = operations.operations ?? []
         this.feeds = feeds.feeds ?? []
-        this.loading = false
+        this.finishRefresh()
       },
       error: () => {
-        this.loading = false
         this.notification.error('Error', 'Failed to load background operations.')
+        this.finishRefresh()
       },
     })
+  }
+
+  private finishRefresh(): void {
+    this.loading = false
+    if (!this.refreshQueued) return
+    this.refreshQueued = false
+    this.refresh()
   }
 
   setFilter(value: string): void {
