@@ -156,6 +156,13 @@ type ConnectionHealthService interface {
 	ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error)
 }
 
+// ConnectionHealthSummaryService calculates health from records already loaded
+// for the current owner. It avoids a redundant source lookup per row in the
+// dashboard summary while preserving the per-source health rules.
+type ConnectionHealthSummaryService interface {
+	ConnectionHealthForSources(sources []models.ConnectedSource) []ConnectionHealth
+}
+
 // HistoryPageRequest bounds source-history reads. History grows continuously
 // once account connectors are enabled, so callers must opt into an explicit
 // window rather than loading an entire personal ledger into memory.
@@ -665,6 +672,26 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 	if err != nil {
 		return nil, err
 	}
+	return s.connectionHealthForSource(*source)
+}
+
+func (s *service) ConnectionHealthForSources(sources []models.ConnectedSource) []ConnectionHealth {
+	result := make([]ConnectionHealth, 0, len(sources))
+	for _, source := range sources {
+		health, err := s.connectionHealthForSource(source)
+		if err != nil {
+			result = append(result, ConnectionHealth{
+				SourceID: source.ID, ConnectorKey: source.ConnectorKey,
+				Status: "error", Reason: "connection status could not be determined",
+			})
+			continue
+		}
+		result = append(result, *health)
+	}
+	return result
+}
+
+func (s *service) connectionHealthForSource(source models.ConnectedSource) (*ConnectionHealth, error) {
 	health := &ConnectionHealth{
 		SourceID: source.ID, ConnectorKey: source.ConnectorKey,
 		Status: source.Status, Configured: true, LastSyncedAt: source.LastSyncedAt,
@@ -709,7 +736,7 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 		health.Reason = "Google OAuth client, token encryption key, or state signing key is not configured"
 		return health, nil
 	}
-	token, err := s.repo.FindOAuthToken(sourceID)
+	token, err := s.repo.FindOAuthToken(source.ID)
 	if err != nil {
 		health.Status = "disconnected"
 		health.Reason = "no Google account grant is stored for this source"

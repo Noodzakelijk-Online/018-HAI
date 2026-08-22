@@ -2296,6 +2296,7 @@ type fakeSourceRepo struct {
 	auditLogs               []models.SourceAuditLog
 	deleteExtractionErr     error
 	findSourcesErr          error
+	findSourceCalls         int
 	oauthTokens             map[uuid.UUID]*models.SourceOAuthToken
 }
 
@@ -2437,6 +2438,7 @@ func (r *fakeSourceRepo) FindSources(includeDisabled bool) ([]models.ConnectedSo
 }
 
 func (r *fakeSourceRepo) FindSource(id uuid.UUID) (*models.ConnectedSource, error) {
+	r.findSourceCalls++
 	source, ok := r.sources[id]
 	if !ok {
 		return nil, gorm.ErrRecordNotFound

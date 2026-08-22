@@ -111,6 +111,29 @@ func TestHandlerReturnsOwnerScopedConnectionHealthSummary(t *testing.T) {
 	}
 }
 
+func TestHandlerConnectionHealthSummaryReusesVisibleSources(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "First", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: uuid.New(), OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Second", Enabled: true, Status: "active"},
+	)
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/health", handler.ConnectionHealthSummary)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/health", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("health summary status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if repo.findSourceCalls != 0 {
+		t.Fatalf("per-source lookups = %d, want 0 after the visible sources were loaded", repo.findSourceCalls)
+	}
+}
+
 func TestGoogleOAuthStartRejectsForeignSourceBeforeConfigurationLookup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	foreignID := uuid.New()

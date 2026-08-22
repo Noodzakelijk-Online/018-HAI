@@ -189,17 +189,21 @@ func (h *Handler) ConnectionHealth(c *gin.Context) {
 // the current owner. It avoids the client issuing one health request per source
 // on every page load while preserving the same per-source authorization checks.
 func (h *Handler) ConnectionHealthSummary(c *gin.Context) {
-	healthService, ok := h.service.(ConnectionHealthService)
-	if !ok {
-		c.JSON(http.StatusNotImplemented, gin.H{"error": "connection health is not available"})
-		return
-	}
 	sources, err := h.service.Sources(true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "connected sources are temporarily unavailable"})
 		return
 	}
 	visible := filterVisibleSources(sources, sourceOwner(c))
+	if summaryService, ok := h.service.(ConnectionHealthSummaryService); ok {
+		c.JSON(http.StatusOK, summaryService.ConnectionHealthForSources(visible))
+		return
+	}
+	healthService, ok := h.service.(ConnectionHealthService)
+	if !ok {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "connection health is not available"})
+		return
+	}
 	result := make([]ConnectionHealth, 0, len(visible))
 	for _, source := range visible {
 		health, healthErr := healthService.ConnectionHealth(source.ID)
