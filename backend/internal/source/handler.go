@@ -51,7 +51,7 @@ func DefaultHandler() *Handler {
 func (h *Handler) Connectors(c *gin.Context) {
 	connectors, err := h.service.Connectors()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "source connector lookup", err)
 		return
 	}
 	c.JSON(http.StatusOK, connectors)
@@ -112,7 +112,7 @@ func (h *Handler) Sources(c *gin.Context) {
 	includeDisabled, _ := strconv.ParseBool(c.Query("includeDisabled"))
 	sources, err := h.service.Sources(includeDisabled)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "connected source lookup", err)
 		return
 	}
 	c.JSON(http.StatusOK, filterVisibleSources(sources, sourceOwner(c)))
@@ -142,7 +142,7 @@ func (h *Handler) SyncJobs(c *gin.Context) {
 		}
 		result, err := paged.SyncJobsForOwnerPage(sourceOwner(c), sourceID, page)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			writeSourceInternalError(c, "source sync-job lookup", err)
 			return
 		}
 		c.JSON(http.StatusOK, result)
@@ -150,13 +150,13 @@ func (h *Handler) SyncJobs(c *gin.Context) {
 	}
 	jobs, err := h.service.SyncJobs(sourceID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "source sync-job lookup", err)
 		return
 	}
 	if sourceID == nil {
 		visibleSourceIDs, err := h.visibleSourceIDs(c)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			writeSourceInternalError(c, "connected source access check", err)
 			return
 		}
 		jobs = filterVisibleSyncJobs(jobs, visibleSourceIDs)
@@ -508,7 +508,7 @@ func (h *Handler) Search(c *gin.Context) {
 	request.OwnerIdentity = sourceOwner(c)
 	result, err := h.search(c.Request.Context(), request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "connected-source search", err)
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -538,7 +538,7 @@ func (h *Handler) Extractions(c *gin.Context) {
 		}
 		result, err := paged.ExtractionsForOwnerPage(sourceOwner(c), c.Query("projectKey"), includeArchived, page)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			writeSourceInternalError(c, "source extraction lookup", err)
 			return
 		}
 		c.JSON(http.StatusOK, result)
@@ -546,7 +546,7 @@ func (h *Handler) Extractions(c *gin.Context) {
 	}
 	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), c.Query("projectKey"), includeArchived)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "source extraction lookup", err)
 		return
 	}
 	c.JSON(http.StatusOK, extractions)
@@ -637,7 +637,7 @@ func (h *Handler) AuditLogs(c *gin.Context) {
 		}
 		result, err := paged.AuditLogsForOwnerPage(sourceOwner(c), sourceID, page)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			writeSourceInternalError(c, "source audit lookup", err)
 			return
 		}
 		c.JSON(http.StatusOK, result)
@@ -645,13 +645,13 @@ func (h *Handler) AuditLogs(c *gin.Context) {
 	}
 	logs, err := h.service.AuditLogs(sourceID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "source audit lookup", err)
 		return
 	}
 	if sourceID == nil {
 		visibleSourceIDs, err := h.visibleSourceIDs(c)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			writeSourceInternalError(c, "connected source access check", err)
 			return
 		}
 		logs = filterVisibleAuditLogs(logs, visibleSourceIDs)
@@ -717,7 +717,7 @@ func writeDestructiveEffectError(c *gin.Context, err error) {
 	case errors.Is(err, ErrSourceEmergencyStopActive):
 		c.JSON(http.StatusLocked, gin.H{"error": err.Error()})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "connected-source destructive action", err)
 	}
 }
 
@@ -796,7 +796,7 @@ func selectedDocumentFolder(value string) (string, error) {
 func (h *Handler) requireSourceAccess(c *gin.Context, id uuid.UUID) bool {
 	visibleSourceIDs, err := h.visibleSourceIDs(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "connected source access check", err)
 		return false
 	}
 	if visibleSourceIDs[id] {
@@ -824,7 +824,7 @@ func (h *Handler) mutableSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
 func (h *Handler) requireMutableSource(c *gin.Context, id uuid.UUID) bool {
 	mutableSourceIDs, err := h.mutableSourceIDs(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "connected source access check", err)
 		return false
 	}
 	if mutableSourceIDs[id] {
@@ -837,12 +837,12 @@ func (h *Handler) requireMutableSource(c *gin.Context, id uuid.UUID) bool {
 func (h *Handler) requireMutableExtraction(c *gin.Context, id uuid.UUID) bool {
 	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), "", true)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "source extraction access check", err)
 		return false
 	}
 	mutableSourceIDs, err := h.mutableSourceIDs(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "connected source access check", err)
 		return false
 	}
 	for _, extraction := range extractions {
