@@ -22,6 +22,7 @@ type userServiceImpl struct {
 var (
 	ErrUserAlreadyExists = errors.New("user already exists")
 	ErrUserNotFound      = errors.New("user not found")
+	ErrPasswordWeak      = errors.New("password must contain at least 12 characters")
 )
 
 func NewUserService(repo irepository.UserRepository, logger iservice.Logger, hasher utils.PasswordHasher) UserService {
@@ -111,6 +112,10 @@ func (s *userServiceImpl) DeleteUser(id uuid.UUID) error {
 }
 
 func (s *userServiceImpl) UpdatePassword(id uuid.UUID, newPassword string) error {
+	if len(newPassword) < 12 {
+		return ErrPasswordWeak
+	}
+
 	user, err := s.userRepo.FindByID(id)
 	if err != nil {
 		s.logger.Error("Error fetching user with ID: %s, %v", id, err)

@@ -2,6 +2,7 @@ package users
 
 import (
 	"automation-hub-idp/internal/app/dto"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"net/http"
@@ -52,6 +53,12 @@ func (h *Handler) Update(c *gin.Context) {
 	if user.Password != "" {
 		err := h.userService.UpdatePassword(userID, user.Password)
 		if err != nil {
+			if errors.Is(err, ErrPasswordWeak) {
+				errorResponse.Message = ErrPasswordWeak.Error()
+				errorResponse.ErrorCode = http.StatusBadRequest
+				c.JSON(http.StatusBadRequest, errorResponse)
+				return
+			}
 			errorResponse.Message = "Error updating user"
 			errorResponse.ErrorCode = http.StatusInternalServerError
 			c.JSON(http.StatusInternalServerError, errorResponse)
