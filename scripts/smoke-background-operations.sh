@@ -74,7 +74,7 @@ mkdir -p "${IMAGES}"
 ( cd "${ROOT}/backend" && go build -buildvcs=false -o "${BIN}" ./cmd )
 
 start_backend() {
-  DB_HOST=127.0.0.1 DB_PORT="${PG_PORT}" DB_USER="$(whoami)" DB_PASSWORD=postgres \
+  DB_HOST=127.0.0.1 DB_PORT="${PG_PORT}" DB_USER="$(whoami)" DB_PASSWORD=smoke-local-postgres-password \
     DB_NAME=automation SERVER_PORT="${API_PORT}" BASE_URL=/api \
     BACKEND_API_SHARED_KEY="${API_KEY}" IMAGE_SAVE_DIR="${IMAGES}" \
     RUN_MODE=production KAFKA_BROKERS="" JWT_SECRET="${JWT_SECRET}" \

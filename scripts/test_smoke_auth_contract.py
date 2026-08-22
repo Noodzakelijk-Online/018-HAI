@@ -41,6 +41,16 @@ class SmokeAuthContractTest(unittest.TestCase):
             aggregator,
         )
 
+    def test_production_smoke_fixtures_do_not_use_the_shipped_database_password(self) -> None:
+        for name in SMOKE_SUITES:
+            with self.subTest(script=name):
+                script = (ROOT / "scripts" / name).read_text(encoding="utf-8")
+                self.assertNotIn("DB_PASSWORD=postgres", script)
+                self.assertIn(
+                    "DB_PASSWORD=smoke-local-postgres-password",
+                    script,
+                )
+
     def test_signed_session_helper_uses_expiring_hmac_sha256_jwts(self) -> None:
         helper = (ROOT / "scripts" / "smoke-auth.sh").read_text(encoding="utf-8")
         for contract in (
