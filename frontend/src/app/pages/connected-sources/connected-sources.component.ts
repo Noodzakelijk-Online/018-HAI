@@ -666,6 +666,36 @@ export class ConnectedSourcesComponent implements OnInit {
     return ['operational', 'local_only', 'modeled'].includes(status);
   }
 
+  odooJSON2StatusLabel(): string {
+    return this.adapterStatusLabel(this.odooJSON2Connector()?.adapterStatus);
+  }
+
+  odooJSON2Ready(): boolean {
+    return this.connectorCanCreateSource(this.odooJSON2Connector());
+  }
+
+  odooJSON2StatusReason(): string {
+    const connector = this.odooJSON2Connector();
+    if (!connector) {
+      return 'The backend has not exposed the read-only Odoo JSON-2 connector.';
+    }
+    if (this.odooJSON2Ready()) {
+      return 'Reads allowlisted Odoo records through the backend. Credentials stay in the local environment and write-back remains disabled.';
+    }
+    return connector.statusReason || 'Set the local Odoo JSON-2 environment values before connecting.';
+  }
+
+  startOdooJSON2Connection(): void {
+    const connector = this.odooJSON2Connector();
+    if (!this.connectorCanCreateSource(connector)) {
+      this.notification.warning('Odoo JSON-2 setup required', this.odooJSON2StatusReason());
+      return;
+    }
+
+    this.connectorChanged(connector!.connectorKey);
+    this.setAction('connect');
+  }
+
   connectorChanged(connectorKey: string): void {
     if (connectorKey === 'json-feed') {
       this.sourceForm.patchValue({
@@ -787,6 +817,18 @@ export class ConnectedSourcesComponent implements OnInit {
         localOnly: true,
         excludePatterns: 'password,secret,token,private',
       });
+      return;
+    }
+    if (connectorKey === 'odoo-json2') {
+      this.sourceForm.patchValue({
+        connectorKey,
+        name: 'Odoo JSON-2 read-only',
+        syncFrequency: '15m',
+        syncTarget: '',
+        defaultProjectKey: 'Robert-life-os',
+        localOnly: false,
+        excludePatterns: 'password,secret,token,private',
+      });
     }
   }
 
@@ -823,6 +865,9 @@ export class ConnectedSourcesComponent implements OnInit {
     }
     if (this.sourceForm.value.connectorKey === 'odoo-herp') {
       return 'Odoo URL or app list, e.g. https://.../odoo?apps=CRM,Sales';
+    }
+    if (this.sourceForm.value.connectorKey === 'odoo-json2') {
+      return 'Configured in the local environment; do not enter credentials here';
     }
     return 'Folder target, e.g. .';
   }
@@ -1225,6 +1270,10 @@ export class ConnectedSourcesComponent implements OnInit {
 
   odooSources(): IConnectedSource[] {
     return this.sources.filter((source) => source.connectorKey === 'odoo-herp');
+  }
+
+  private odooJSON2Connector(): ISourceConnector | undefined {
+    return this.connectors.find((connector) => connector.connectorKey === 'odoo-json2');
   }
 
   private selectedWhatsAppSourceId(): string {

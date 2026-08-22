@@ -354,7 +354,7 @@
                 <input nz-input formControlName="name" />
               </label>
               <label>
-                <span>Odoo base URL</span>
+                <span>Odoo reference URL</span>
                 <input nz-input formControlName="baseUrl" placeholder="https://your-company.odoo.com/odoo" />
               </label>
               <label>
@@ -377,6 +377,18 @@
                 <button type="button" nz-button nzType="primary" (click)="syncOdooApps()" [nzLoading]="syncing">Model apps</button>
               </div>
             </form>
+            <section class="connector-readiness" aria-live="polite">
+              <div>
+                <strong>Live Odoo JSON-2</strong>
+                <span class="status-pill" [attr.data-status]="odooJSON2Ready() ? 'good' : 'attention'">
+                  {{ odooJSON2StatusLabel() }}
+                </span>
+              </div>
+              <p>{{ odooJSON2StatusReason() }}</p>
+              <button type="button" nz-button nzType="default" (click)="startOdooJSON2Connection()">
+                Use read-only connector
+              </button>
+            </section>
           </div>
 
           <div *ngSwitchCase="'import'" class="operation">

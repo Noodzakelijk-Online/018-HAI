@@ -199,6 +199,52 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.syncTargetPlaceholder()).toContain('Trello board ID');
   });
 
+  it('hands an operational Odoo JSON-2 connector to the governed source form without exposing credentials', () => {
+    const { component } = createComponent();
+    component.connectors = [{
+      connectorKey: 'odoo-json2',
+      name: 'Odoo JSON-2',
+      enabled: true,
+      adapterStatus: 'operational',
+    } as any];
+
+    component.startOdooJSON2Connection();
+
+    expect(component.selectedAction).toBe('connect');
+    expect(component.sourceForm.value).toEqual(jasmine.objectContaining({
+      connectorKey: 'odoo-json2',
+      name: 'Odoo JSON-2 read-only',
+      syncFrequency: '15m',
+      syncTarget: '',
+      localOnly: false,
+    }));
+    expect(component.odooJSON2StatusLabel()).toBe('live');
+  });
+
+  it('keeps Odoo JSON-2 unavailable until the backend has local credentials configured', () => {
+    const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['warning']);
+    const component = new ConnectedSourcesComponent(
+      new FormBuilder(),
+      {} as any,
+      notification,
+      router,
+      { mode: () => 'light' } as any,
+    );
+    component.connectors = [{
+      connectorKey: 'odoo-json2',
+      enabled: true,
+      adapterStatus: 'configuration_required',
+      statusReason: 'Set HAI_ODOO_BASE_URL and local Odoo credentials before connecting.',
+    } as any];
+
+    component.startOdooJSON2Connection();
+
+    expect(component.selectedAction).toBe('connect');
+    expect(component.odooJSON2StatusLabel()).toBe('setup required');
+    expect(notification.warning).toHaveBeenCalledWith('Odoo JSON-2 setup required', jasmine.stringContaining('HAI_ODOO_BASE_URL'));
+  });
+
   it('defers record-heavy source history until the operator opens it', () => {
     const { component } = createComponent();
     const sourceService = (component as any).sourceService = jasmine.createSpyObj('ConnectedSourceService', [
