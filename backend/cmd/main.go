@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/doctor"
@@ -31,7 +34,9 @@ func main() {
 
 	config.Init()
 
-	err := router.Initialize()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	err := router.InitializeContext(ctx)
 	if err != nil {
 		panic(err)
 	}
