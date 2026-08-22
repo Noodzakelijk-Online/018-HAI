@@ -126,6 +126,44 @@ func TestIndexExtractionContextStopsBeforePersistingWhenCallerIsCancelled(t *tes
 	}
 }
 
+func TestCancelledContextStopsLocalSourceReadersBeforeDiskAccess(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	svc := &service{repo: newFakeSourceRepo()}
+	source := &models.ConnectedSource{ID: uuid.New(), DefaultProjectKey: "018-HAI"}
+	request := ImportRequest{FolderPath: "not-needed-when-cancelled"}
+
+	readers := map[string]func() error{
+		"local folder": func() error {
+			_, err := svc.localFolderItemsContext(ctx, source, request)
+			return err
+		},
+		"WhatsApp export": func() error {
+			_, err := svc.whatsAppExportItemsContext(ctx, source, request)
+			return err
+		},
+		"OpenSpec artifacts": func() error {
+			_, err := svc.openSpecArtifactItemsContext(ctx, source, request)
+			return err
+		},
+		"project instructions": func() error {
+			_, err := svc.projectInstructionItemsContext(ctx, source, request)
+			return err
+		},
+		"Fabric patterns": func() error {
+			_, err := svc.fabricPatternItemsContext(ctx, source, request)
+			return err
+		},
+	}
+	for name, read := range readers {
+		t.Run(name, func(t *testing.T) {
+			if err := read(); !errors.Is(err, context.Canceled) {
+				t.Fatalf("reader error = %v, want context.Canceled", err)
+			}
+		})
+	}
+}
+
 func TestSyncWhisperAudioRequiresControlledTranscriptionRoute(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{

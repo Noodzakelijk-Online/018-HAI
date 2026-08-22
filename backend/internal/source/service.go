@@ -810,7 +810,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 	items := request.Items
 	adapterCursor := ""
 	if len(items) == 0 && sourceUsesLocalFolder(source.ConnectorKey) {
-		items, err = s.localFolderItems(source, request)
+		items, err = s.localFolderItemsContext(ctx, source, request)
 		items = filterConnectorLocalItems(items, source.ConnectorKey)
 		if err != nil {
 			now := time.Now().UTC()
@@ -972,7 +972,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		s.audit(sourceID, "source.laro_read", fmt.Sprintf("read %d bounded, owner-scoped LARO legal record(s)", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == openSpecArtifactConnectorKey {
-		items, err = s.openSpecArtifactItems(source, request)
+		items, err = s.openSpecArtifactItemsContext(ctx, source, request)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -985,7 +985,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		s.audit(sourceID, "source.openspec_artifacts_read", fmt.Sprintf("read %d bounded OpenSpec change artifact bundle(s) from the selected local project", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == projectInstructionsConnectorKey {
-		items, err = s.projectInstructionItems(source, request)
+		items, err = s.projectInstructionItemsContext(ctx, source, request)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -998,7 +998,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		s.audit(sourceID, "source.project_instructions_read", fmt.Sprintf("read %d untrusted project instruction file(s) from the selected local project", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == fabricPatternsConnectorKey {
-		items, err = s.fabricPatternItems(source, request)
+		items, err = s.fabricPatternItemsContext(ctx, source, request)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -1011,7 +1011,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		s.audit(sourceID, "source.fabric_patterns_read", fmt.Sprintf("read %d bounded untrusted Fabric prompt pattern(s) from the selected local folder", len(items)))
 	}
 	if source.ConnectorKey == "whatsapp-export" {
-		items, err = s.whatsAppExportItems(source, request)
+		items, err = s.whatsAppExportItemsContext(ctx, source, request)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -1607,6 +1607,16 @@ func (s *service) AuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error
 }
 
 func (s *service) localFolderItems(source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {
+	return s.localFolderItemsContext(context.Background(), source, request)
+}
+
+func (s *service) localFolderItemsContext(ctx context.Context, source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	root := firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources")
 	folder, err := resolveAllowedFolder(root, request.FolderPath)
 	if err != nil {
@@ -1626,6 +1636,9 @@ func (s *service) localFolderItems(source *models.ConnectedSource, request Impor
 	}
 	items := []ImportItem{}
 	err = filepath.WalkDir(folder, func(path string, entry os.DirEntry, errWalk error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if errWalk != nil {
 			return nil
 		}
@@ -1677,6 +1690,16 @@ func (s *service) localFolderItems(source *models.ConnectedSource, request Impor
 }
 
 func (s *service) whatsAppExportItems(source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {
+	return s.whatsAppExportItemsContext(context.Background(), source, request)
+}
+
+func (s *service) whatsAppExportItemsContext(ctx context.Context, source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	projectKey := firstNonEmpty(request.ProjectKey, source.DefaultProjectKey)
 	if len(request.Items) > 0 {
 		return expandWhatsAppImportItems(request.Items, projectKey, source.Name, firstPositiveInt(request.Limit, envInt("WHATSAPP_EXPORT_CHUNK_MESSAGES", defaultWhatsAppChunkMessages))), nil
@@ -1698,6 +1721,9 @@ func (s *service) whatsAppExportItems(source *models.ConnectedSource, request Im
 
 	baseItems := []ImportItem{}
 	err = filepath.WalkDir(folder, func(path string, entry os.DirEntry, errWalk error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if errWalk != nil {
 			return nil
 		}
