@@ -712,6 +712,57 @@ func TestRunDueScheduledSyncsSkipsManualAndNotDueSources(t *testing.T) {
 	}
 }
 
+func TestRunDueScheduledSyncsDoesNotPersistConnectorFailureSecrets(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:                sourceID,
+		ConnectorKey:      "json-feed",
+		Name:              "Private feed token=scheduled-sync-secret",
+		Category:          "document",
+		Enabled:           true,
+		Status:            "active",
+		SyncFrequency:     "1m",
+		SyncTarget:        "http://127.0.0.1:1/feed?token=scheduled-sync-secret",
+		DefaultProjectKey: "018-HAI",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	run, err := service.RunDueScheduledSyncs(time.Now().UTC())
+	if err != nil {
+		t.Fatalf("RunDueScheduledSyncs: %v", err)
+	}
+	if run.Failed != 1 || len(run.Messages) != 1 {
+		t.Fatalf("run = %#v, want one failed sync", run)
+	}
+	jobs, err := repo.FindSyncJobs(&sourceID)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("sync jobs = %#v, err=%v", jobs, err)
+	}
+	audits, err := repo.FindAuditLogs(&sourceID)
+	if err != nil || len(audits) == 0 {
+		t.Fatalf("audit logs = %#v, err=%v", audits, err)
+	}
+	auditMessage := ""
+	for _, audit := range audits {
+		if audit.Action == "source.sync_failed" {
+			auditMessage = audit.Message
+			break
+		}
+	}
+	if auditMessage == "" {
+		t.Fatalf("source.sync_failed audit = %#v", audits)
+	}
+	for label, value := range map[string]string{
+		"run message":   run.Messages[0],
+		"job message":   jobs[0].Message,
+		"audit message": auditMessage,
+	} {
+		if strings.Contains(value, "scheduled-sync-secret") {
+			t.Fatalf("%s leaked connector secret: %q", label, value)
+		}
+	}
+}
+
 func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	connectors, err := service.Connectors()

@@ -1282,11 +1282,11 @@ func (s *service) runDueScheduledSyncs(now time.Time, sources []models.Connected
 		if errSync != nil {
 			if errors.Is(errSync, ErrSyncInProgress) {
 				run.Skipped++
-				run.Messages = append(run.Messages, fmt.Sprintf("%s skipped: sync already in progress", source.Name))
+				run.Messages = append(run.Messages, fmt.Sprintf("%s skipped: sync already in progress", scheduledSourceLabel(source)))
 				continue
 			}
 			run.Failed++
-			run.Messages = append(run.Messages, fmt.Sprintf("%s failed: %s", source.Name, errSync.Error()))
+			run.Messages = append(run.Messages, fmt.Sprintf("%s failed; inspect connector configuration and retry", scheduledSourceLabel(source)))
 			s.createSyncFailureWorkflow(source, errSync.Error())
 			continue
 		}
@@ -1297,9 +1297,17 @@ func (s *service) runDueScheduledSyncs(now time.Time, sources []models.Connected
 			continue
 		}
 		run.Completed++
-		run.Messages = append(run.Messages, fmt.Sprintf("%s synced: %d seen, %d added, %d updated", source.Name, result.Job.ItemsSeen, result.Job.ItemsAdded, result.Job.ItemsUpdated))
+		run.Messages = append(run.Messages, fmt.Sprintf("%s synced: %d seen, %d added, %d updated", scheduledSourceLabel(source), result.Job.ItemsSeen, result.Job.ItemsAdded, result.Job.ItemsUpdated))
 	}
 	return run, nil
+}
+
+func scheduledSourceLabel(source models.ConnectedSource) string {
+	label := compact(safety.RedactSecrets(source.Name), 120)
+	if label == "" {
+		return "connected source"
+	}
+	return label
 }
 
 func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reason string) {
