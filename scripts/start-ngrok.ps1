@@ -180,6 +180,25 @@ function Wait-ForHealthyContainer([string]$ContainerName, [int]$Attempts = 45) {
     throw "$ContainerName did not become healthy within $($Attempts * 2) seconds."
 }
 
+function Wait-ForPublicGateway([string]$PublicUrl, [int]$Attempts = 15) {
+    $readyUrl = "$PublicUrl/readyz"
+    for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
+        try {
+            # Do not accept a redirect to a different origin as evidence that
+            # this configured tunnel is serving HAI.
+            $response = Invoke-WebRequest -Uri $readyUrl -UseBasicParsing -TimeoutSec 5 -MaximumRedirection 0
+            if ($response.StatusCode -eq 200) {
+                return
+            }
+        } catch {
+            # The endpoint can take a few seconds to become public after ngrok
+            # reports its local control-plane health as ready.
+        }
+        Start-Sleep -Seconds 2
+    }
+    throw "The public ngrok gateway did not become ready at $readyUrl."
+}
+
 # Reconcile the security-sensitive base services before creating any public
 # endpoint. This applies secure-cookie and OAuth callback changes to the actual
 # running IDP rather than trusting only the env file.
@@ -206,4 +225,14 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Failed to start the ngrok service.'
 }
 Wait-ForHealthyContainer '018-hai-ngrok' 30
+try {
+    Wait-ForPublicGateway $publicUrlText
+} catch {
+    $publicGatewayFailure = $_
+    & docker compose --env-file $envPath --profile cloud-tunnel -f $composePath stop ngrok
+    if ($LASTEXITCODE -ne 0) {
+        throw "$($publicGatewayFailure.Exception.Message) HAI could not stop the unavailable ngrok service. Stop it manually before retrying."
+    }
+    throw $publicGatewayFailure
+}
 Write-Host "HAI is available through $publicUrlText"

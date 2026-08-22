@@ -232,6 +232,14 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn(secured_up, preflight)
         self.assertIn(tunnel_up, preflight)
         self.assertLess(preflight.index(secured_up), preflight.index(tunnel_up))
+        for contract in (
+            "Wait-ForPublicGateway",
+            '"$PublicUrl/readyz"',
+            "The public ngrok gateway did not become ready",
+            "stop ngrok",
+        ):
+            with self.subTest(public_gateway_contract=contract):
+                self.assertIn(contract, preflight)
         self.assertIn(
             "HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED must remain false",
             preflight,
