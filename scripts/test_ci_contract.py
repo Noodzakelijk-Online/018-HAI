@@ -172,6 +172,21 @@ class CIWorkflowContractTest(unittest.TestCase):
             "HAI_LANGFUSE_PUBLIC_KEY",
             "HAI_LANGFUSE_SECRET_KEY",
             "HAI_LANGFUSE_TIMEOUT_SECONDS",
+            "DB_AUTOMIGRATE",
+            "LM_STUDIO_MODEL_ID",
+            "SGLANG_BASE_URL",
+            "SGLANG_MODEL_ID",
+            "DSPARK_ENABLED",
+            "DSPARK_BASE_URL",
+            "DSPARK_PROBE_PATH",
+            "DSPARK_GENERATION_PATH",
+            "DSPARK_MODEL_ID",
+            "SOURCE_SCHEDULER_DURABLE",
+            "SOURCE_WORKER_POLL_SECONDS",
+            "WORKFLOW_SCHEDULER_DURABLE",
+            "WORKFLOW_WORKER_POLL_SECONDS",
+            "AMBIENT_SCHEDULER_DURABLE",
+            "AMBIENT_WORKER_POLL_SECONDS",
         ):
             with self.subTest(setting=setting):
                 self.assertIn(f"{setting}=", defaults)
