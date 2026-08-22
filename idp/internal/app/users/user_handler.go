@@ -6,6 +6,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"net/http"
+	"net/mail"
+	"strings"
 )
 
 type Handler struct {
@@ -39,6 +41,22 @@ func (h *Handler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errorResponse)
 		return
 	}
+	email := strings.TrimSpace(strings.ToLower(user.Email))
+	if user.Password == "" && email == "" {
+		errorResponse.Message = "Provide an email address or password to update"
+		errorResponse.ErrorCode = http.StatusBadRequest
+		c.JSON(http.StatusBadRequest, errorResponse)
+		return
+	}
+	if email != "" {
+		parsedEmail, err := mail.ParseAddress(email)
+		if err != nil || parsedEmail.Address != email {
+			errorResponse.Message = "Invalid email address"
+			errorResponse.ErrorCode = http.StatusBadRequest
+			c.JSON(http.StatusBadRequest, errorResponse)
+			return
+		}
+	}
 
 	temp, ok := c.Get("userID")
 	if !ok {
@@ -67,19 +85,23 @@ func (h *Handler) Update(c *gin.Context) {
 	}
 
 	userToUpdate, err := h.userService.GetUserByID(userID)
-	if err != nil {
+	if err != nil || userToUpdate == nil {
 		errorResponse.Message = "Error updating user"
 		errorResponse.ErrorCode = http.StatusInternalServerError
 		c.JSON(http.StatusInternalServerError, errorResponse)
 		return
 	}
 
-	userToUpdate.Email = user.Email
-
-	updatedUser, err := h.userService.UpdateUser(*userToUpdate)
-	if err != nil {
-		c.Status(http.StatusInternalServerError)
-		return
+	updatedUser := userToUpdate
+	if email != "" && email != userToUpdate.Email {
+		userToUpdate.Email = email
+		updatedUser, err = h.userService.UpdateUser(*userToUpdate)
+		if err != nil || updatedUser == nil {
+			errorResponse.Message = "Error updating user"
+			errorResponse.ErrorCode = http.StatusInternalServerError
+			c.JSON(http.StatusInternalServerError, errorResponse)
+			return
+		}
 	}
 	userResponse := dto.UserResponse{
 		ID:    updatedUser.ID,
