@@ -63,7 +63,7 @@ source_sync="$(curl -s -X POST "$BASE/api/v1/sources/$AID/sync" -H "Authorizatio
 check "source sync persisted an extraction" \
   "$(printf '%s' "$source_sync" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('extractions') or []))")" "1"
 check "source sync creates a governed pursuit/workflow outcome" \
-  "$(printf '%s' "$source_sync" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('pursuitOutcomes') or []))")" "1"
+  "$(printf '%s' "$source_sync" | python3 -c "import json,sys; outcomes=json.load(sys.stdin).get('pursuitOutcomes') or []; allowed={'candidate_pending','pursuit_routed','workflow_created','pursuit_linked'}; print(str(len(outcomes) == 1 and outcomes[0].get('status') in allowed).lower())")" "true"
 
 echo "1. Source listing is owner-scoped"
 check "alice sees exactly 1 source" "$(curl -s -H "Authorization: Bearer $A" "$BASE/api/v1/sources/" | jlen)" "1"

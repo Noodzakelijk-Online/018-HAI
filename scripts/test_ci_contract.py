@@ -67,6 +67,8 @@ class CIWorkflowContractTest(unittest.TestCase):
             '"source sync persisted an extraction"',
             '"source sync creates a governed pursuit/workflow outcome"',
             'pursuitOutcomes',
+            'candidate_pending',
+            'pursuit_routed',
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, script)
