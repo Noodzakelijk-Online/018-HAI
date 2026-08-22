@@ -278,6 +278,21 @@
         </div>
       </section>
 
+      <nz-alert
+        *ngIf="pursuitLoadError"
+        nzType="warning"
+        [nzMessage]="pursuitLoadError"
+        nzShowIcon
+        [nzAction]="pursuitRetryAction"
+        (nzOnClose)="pursuitLoadError = ''"
+        class="command-dashboard-alert"
+      ></nz-alert>
+      <ng-template #pursuitRetryAction>
+        <button type="button" nz-button nzType="link" nzSize="small" (click)="refreshPursuits()" [nzLoading]="pursuitsLoading">
+          Retry
+        </button>
+      </ng-template>
+
       <section class="runtime-band">
           <div class="section-heading">
             <div>

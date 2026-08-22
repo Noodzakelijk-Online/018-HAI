@@ -62,6 +62,7 @@ export class CommandDashboardComponent implements OnInit, AfterViewInit {
   searchResult?: IMemoryEngineSearchResult;
   loading = false;
   pursuitsLoading = false;
+  pursuitLoadError = '';
   searching = false;
   runtimeLoading = false;
   commandLoading = '';
@@ -512,16 +513,19 @@ export class CommandDashboardComponent implements OnInit, AfterViewInit {
 
   refreshPursuits(): void {
     this.pursuitsLoading = true;
+    this.pursuitLoadError = '';
     this.pursuits.overview().subscribe({
       next: (overview) => {
         this.pursuitDashboard = overview.dashboard;
         this.pursuitBrief = overview.brief;
         this.pursuitsLoading = false;
       },
-      error: () => {
+      error: (error) => {
         this.pursuitsLoading = false;
-        this.pursuitDashboard = undefined;
-        this.pursuitBrief = undefined;
+        const detail = error?.error?.error;
+        this.pursuitLoadError = typeof detail === 'string' && detail.trim()
+          ? detail
+          : 'Could not refresh pursuits. Existing pursuit context is retained and may be incomplete.';
       },
     });
   }
