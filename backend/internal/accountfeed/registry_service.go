@@ -173,10 +173,19 @@ func (r *Registry) Sync(ctx context.Context, id uuid.UUID) (SyncReport, bool) {
 
 // SyncDue syncs all enabled feeds.
 func (r *Registry) SyncDue(ctx context.Context) []SyncReport {
+	return r.syncDue(ctx, "")
+}
+
+// SyncDueForOwner syncs only enabled feeds belonging to the given owner.
+func (r *Registry) SyncDueForOwner(ctx context.Context, ownerUserID string) []SyncReport {
+	return r.syncDue(ctx, ownerUserID)
+}
+
+func (r *Registry) syncDue(ctx context.Context, ownerUserID string) []SyncReport {
 	r.mu.Lock()
 	var due []Feed
 	for _, f := range r.feeds {
-		if f.Enabled {
+		if f.Enabled && (ownerUserID == "" || f.OwnerUserID == ownerUserID) {
 			due = append(due, f)
 		}
 	}
