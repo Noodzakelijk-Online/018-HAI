@@ -408,7 +408,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         )
 
     def test_ci_never_uploads_generated_runtime_or_secret_artifacts(self) -> None:
-        self.assertIn("actions/upload-artifact@v4", WORKFLOW)
+        self.assertIn("actions/upload-artifact@v6", WORKFLOW)
         self.assertIn("name: hai-windows-installer", WORKFLOW)
         self.assertIn("path: installer/release/HAI-Setup-*.exe", WORKFLOW)
         self.assertNotIn("installer/release/payload", WORKFLOW)
@@ -421,7 +421,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "runs-on: windows-latest",
             "choco install innosetup --yes --no-progress",
             "build-windows-installer.ps1 -Version",
-            "actions/upload-artifact@v4",
+            "actions/upload-artifact@v6",
             "retention-days: 14",
         ):
             with self.subTest(contract=contract):

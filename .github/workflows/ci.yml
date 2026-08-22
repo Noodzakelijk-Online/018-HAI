@@ -22,7 +22,7 @@ jobs:
         shell: pwsh
         run: ./scripts/build-windows-installer.ps1 -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
       - name: Upload Windows installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: hai-windows-installer
           path: installer/release/HAI-Setup-*.exe
@@ -38,7 +38,7 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
@@ -61,7 +61,7 @@ jobs:
         working-directory: idp
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25.13"
           cache-dependency-path: idp/go.sum
@@ -82,7 +82,7 @@ jobs:
         working-directory: nginx-config-manager
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25.13"
           cache-dependency-path: nginx-config-manager/go.sum
@@ -152,7 +152,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
@@ -209,7 +209,7 @@ jobs:
           --health-retries 12
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
@@ -301,7 +301,7 @@ jobs:
           --health-retries 12
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
