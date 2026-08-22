@@ -46,6 +46,14 @@ type syncJobPayload struct {
 	SourceID string `json:"sourceId"`
 }
 
+// terminalScheduledSyncFailureReporter is intentionally optional so existing
+// source-service fakes and integrations remain compatible. The production
+// service implements it to turn a dead-lettered connector failure into a
+// reviewable workflow instead of leaving it only in the durable-job table.
+type terminalScheduledSyncFailureReporter interface {
+	ReportScheduledSyncTerminalFailure(sourceID uuid.UUID, reason string)
+}
+
 // startDurableScheduler builds the durable runner over the default queue,
 // registers the source handlers, and starts the worker loop. Any failure is
 // returned so the caller can fall back to the legacy ticker.
@@ -152,12 +160,27 @@ func syncHandler(service Service) durablejob.Handler {
 				// Not a failure: the next scan will pick it up if still due.
 				return nil
 			}
+			if job.Attempts+1 >= job.MaxAttempts {
+				reportTerminalScheduledSyncFailure(service, sourceID, err.Error())
+			}
 			return err
 		}
 		if result != nil && result.Job.Status != "completed" {
 			// Partial failures keep the cursor; retrying is the correct response.
-			return fmt.Errorf("sync source %s finished with status %s: %s", sourceID, result.Job.Status, result.Job.Message)
+			failure := fmt.Errorf("sync source %s finished with status %s: %s", sourceID, result.Job.Status, result.Job.Message)
+			if job.Attempts+1 >= job.MaxAttempts {
+				reportTerminalScheduledSyncFailure(service, sourceID, failure.Error())
+			}
+			return failure
 		}
 		return nil
 	}
+}
+
+func reportTerminalScheduledSyncFailure(service Service, sourceID uuid.UUID, reason string) {
+	reporter, ok := service.(terminalScheduledSyncFailureReporter)
+	if !ok {
+		return
+	}
+	reporter.ReportScheduledSyncTerminalFailure(sourceID, reason)
 }

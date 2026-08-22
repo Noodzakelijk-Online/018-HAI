@@ -308,3 +308,31 @@ func TestDurableSyncHandlerTreatsInProgressAsSuccess(t *testing.T) {
 		t.Fatalf("in-progress sync should not fail the job (it would retry-storm): %v", err)
 	}
 }
+
+func TestDurableSyncHandlerRoutesTerminalFailureToWorkflowReview(t *testing.T) {
+	t.Setenv(trelloAPIKeyEnv, "")
+	t.Setenv(trelloReadTokenEnv, "")
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: trelloConnectorKey,
+		Name: "Client delivery board", Category: "project_board", Enabled: true,
+		Status: "active", SyncFrequency: "15m", SyncTarget: "abc123XY",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	payload := `{"sourceId":"` + sourceID.String() + `"}`
+
+	err := syncHandler(service)(context.Background(), durablejob.Job{
+		Payload: payload, Attempts: syncMaxAttempts - 1, MaxAttempts: syncMaxAttempts,
+	})
+	if err == nil {
+		t.Fatal("terminal Trello configuration failure must remain a failed durable job")
+	}
+	if len(workflowSpy.requests) != 1 {
+		t.Fatalf("workflow review requests = %d, want 1 for a terminal source sync failure", len(workflowSpy.requests))
+	}
+	request := workflowSpy.requests[0]
+	if request.SourceType != "source_sync" || !request.RequiresReview || request.Trigger != "scheduled_source_sync_dead_lettered" {
+		t.Fatalf("terminal failure workflow = %#v, want review-gated source_sync dead-letter workflow", request)
+	}
+}

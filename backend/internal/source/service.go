@@ -1288,6 +1288,22 @@ func (s *service) runDueScheduledSyncs(now time.Time, sources []models.Connected
 }
 
 func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reason string) {
+	s.createSyncFailureWorkflowForTrigger(source, reason, "scheduled_source_sync_failed")
+}
+
+// ReportScheduledSyncTerminalFailure turns a durable-job dead letter into an
+// operator-review workflow. Retries are intentionally kept in the queue; only
+// the terminal outcome needs to interrupt the owner through HAI.
+func (s *service) ReportScheduledSyncTerminalFailure(sourceID uuid.UUID, reason string) {
+	source, err := s.repo.FindSource(sourceID)
+	if err != nil {
+		return
+	}
+	s.audit(sourceID, "source.sync_dead_lettered", compact(safety.RedactSecrets(reason), 320))
+	s.createSyncFailureWorkflowForTrigger(*source, reason, "scheduled_source_sync_dead_lettered")
+}
+
+func (s *service) createSyncFailureWorkflowForTrigger(source models.ConnectedSource, reason, trigger string) {
 	if s.workflowService == nil {
 		return
 	}
@@ -1305,7 +1321,7 @@ func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reaso
 		SourceURI:      safety.RedactURL(source.SyncTarget),
 		SourceLabel:    source.Name,
 		ContentType:    "operational_failure",
-		Trigger:        "scheduled_source_sync_failed",
+		Trigger:        trigger,
 		Actor:          "source-scheduler",
 		RequiresReview: true,
 		ReviewReason:   "background source ingestion failed and requires operator review",
