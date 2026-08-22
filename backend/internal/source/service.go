@@ -823,7 +823,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == "json-feed" {
-		items, adapterCursor, err = fetchJSONFeed(source)
+		items, adapterCursor, err = fetchJSONFeedContext(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -835,7 +835,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == "github" {
-		items, adapterCursor, err = fetchGitHubSource(source)
+		items, adapterCursor, err = fetchGitHubSourceContext(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -895,7 +895,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == trelloConnectorKey {
-		items, adapterCursor, err = fetchTrelloSource(source)
+		items, adapterCursor, err = fetchTrelloSourceContext(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -2596,6 +2596,10 @@ type jsonFeedEnvelope struct {
 }
 
 func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error) {
+	return fetchJSONFeedContext(context.Background(), source)
+}
+
+func fetchJSONFeedContext(ctx context.Context, source *models.ConnectedSource) ([]ImportItem, string, error) {
 	if source == nil {
 		return nil, "", fmt.Errorf("source is required")
 	}
@@ -2620,7 +2624,7 @@ func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error)
 		query.Set("cursor", source.Cursor)
 		target.RawQuery = query.Encode()
 	}
-	request, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("create json-feed request: %w", err)
 	}
@@ -2667,6 +2671,10 @@ func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error)
 }
 
 func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, error) {
+	return fetchGitHubSourceContext(context.Background(), source)
+}
+
+func fetchGitHubSourceContext(ctx context.Context, source *models.ConnectedSource) ([]ImportItem, string, error) {
 	if source == nil {
 		return nil, "", fmt.Errorf("source is required")
 	}
@@ -2696,7 +2704,7 @@ func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, er
 	items := []ImportItem{}
 	latest := strings.TrimSpace(source.Cursor)
 	for _, endpoint := range endpoints {
-		value, err := fetchGitHubJSON(parsedBase, endpoint.path, source.Cursor)
+		value, err := fetchGitHubJSONContext(ctx, parsedBase, endpoint.path, source.Cursor)
 		if err != nil {
 			return nil, "", fmt.Errorf("fetch github %s: %w", endpoint.kind, err)
 		}
@@ -2716,6 +2724,10 @@ func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, er
 }
 
 func fetchGitHubJSON(base *url.URL, resourcePath, cursor string) (any, error) {
+	return fetchGitHubJSONContext(context.Background(), base, resourcePath, cursor)
+}
+
+func fetchGitHubJSONContext(ctx context.Context, base *url.URL, resourcePath, cursor string) (any, error) {
 	target := *base
 	target.Path = strings.TrimRight(base.Path, "/") + resourcePath
 	query := target.Query()
@@ -2729,7 +2741,7 @@ func fetchGitHubJSON(base *url.URL, resourcePath, cursor string) (any, error) {
 		}
 	}
 	target.RawQuery = query.Encode()
-	request, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, err
 	}

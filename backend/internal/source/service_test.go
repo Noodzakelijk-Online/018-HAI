@@ -99,6 +99,16 @@ func TestSyncContextStopsBeforeCreatingWorkWhenCallerIsCancelled(t *testing.T) {
 	}
 }
 
+func TestFetchJSONFeedContextStopsBeforeOpeningRemoteRequestWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := fetchJSONFeedContext(ctx, &models.ConnectedSource{SyncTarget: "http://127.0.0.1/feed"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("fetchJSONFeedContext error = %v, want context.Canceled", err)
+	}
+}
+
 func TestSyncWhisperAudioRequiresControlledTranscriptionRoute(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
