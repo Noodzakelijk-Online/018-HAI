@@ -182,11 +182,11 @@ func fakeLeaseOwned(job *models.DurableJob, workerID string, leaseGeneration int
 		job.LeaseGeneration == leaseGeneration
 }
 
-func (f *fakeRepo) ReapExpiredLeases(now time.Time, lease time.Duration) (int, error) {
+func (f *fakeRepo) ReapExpiredLeases(queue string, now time.Time, lease time.Duration) (int, error) {
 	cutoff := now.Add(-lease)
 	reaped := 0
 	for _, job := range f.jobs {
-		if job.Status == models.DurableJobRunning && job.LockedAt != nil && job.LockedAt.Before(cutoff) {
+		if job.Queue == queue && job.Status == models.DurableJobRunning && job.LockedAt != nil && job.LockedAt.Before(cutoff) {
 			job.Status = models.DurableJobPending
 			job.LockedBy = ""
 			job.LockedAt = nil
@@ -404,7 +404,7 @@ func TestLeaseGenerationRejectsStaleWorkerCompletion(t *testing.T) {
 		t.Fatalf("first claim = %#v, %v", first, err)
 	}
 	now = now.Add(time.Minute)
-	if reaped, err := repo.ReapExpiredLeases(now, 30*time.Second); err != nil || reaped != 1 {
+	if reaped, err := repo.ReapExpiredLeases("default", now, 30*time.Second); err != nil || reaped != 1 {
 		t.Fatalf("reap = %d, %v", reaped, err)
 	}
 	second, err := repo.ClaimDue("w2", "default", now, 1)
@@ -466,6 +466,39 @@ func TestRunnerOnlyClaimsItsConfiguredQueue(t *testing.T) {
 	}
 	if !workflowRan {
 		t.Fatal("workflow queue was not processed")
+	}
+}
+
+func TestRunnerReapsOnlyItsConfiguredQueue(t *testing.T) {
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	repo := newFakeRepo()
+	sourceRunner := NewRunner(repo, Options{WorkerID: "source-worker", Queue: "source", Now: fixedClock(&now)})
+	sourceRunner.Register("scan", func(context.Context, models.DurableJob) error { return nil })
+
+	expired := now.Add(-2 * DefaultLease)
+	if _, err := repo.Enqueue(&models.DurableJob{
+		Queue: "source", Kind: "scan", Payload: "{}", RunAt: now.Add(time.Hour),
+		Status: models.DurableJobRunning, LockedBy: "dead-source", LockedAt: &expired,
+	}); err != nil {
+		t.Fatalf("enqueue source lease: %v", err)
+	}
+	workflowJob, err := repo.Enqueue(&models.DurableJob{
+		Queue: "workflow", Kind: "sweep", Payload: "{}", RunAt: now.Add(time.Hour),
+		Status: models.DurableJobRunning, LockedBy: "dead-workflow", LockedAt: &expired,
+	})
+	if err != nil {
+		t.Fatalf("enqueue workflow lease: %v", err)
+	}
+
+	if processed, err := sourceRunner.RunOnce(context.Background()); err != nil || processed != 0 {
+		t.Fatalf("source run = %d, %v", processed, err)
+	}
+	workflowStored, err := repo.Find(workflowJob.ID)
+	if err != nil {
+		t.Fatalf("find workflow job: %v", err)
+	}
+	if workflowStored.Status != models.DurableJobRunning {
+		t.Fatalf("source worker reaped workflow lease: status=%q", workflowStored.Status)
 	}
 }
 

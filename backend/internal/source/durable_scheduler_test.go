@@ -112,7 +112,7 @@ func sourceFakeLeaseOwned(job *models.DurableJob, workerID string, leaseGenerati
 		job.LeaseGeneration == leaseGeneration
 }
 
-func (f *fakeJobRepo) ReapExpiredLeases(now time.Time, lease time.Duration) (int, error) {
+func (f *fakeJobRepo) ReapExpiredLeases(queue string, now time.Time, lease time.Duration) (int, error) {
 	return 0, nil
 }
 
