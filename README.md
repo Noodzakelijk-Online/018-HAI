@@ -518,6 +518,14 @@ For explicitly configured, guarded public HTTPS access, see
 [Governed ngrok cloud access](docs/ngrok-cloud-access.md). The tunnel is
 disabled by default and never publishes the local gateway directly.
 
+### Windows 11 installer
+
+For a product-style local installation, build the Inno Setup executable and
+use its Start menu shortcuts rather than manually operating Compose. The
+installer keeps the source-built stack loopback-only, stores first-run secrets
+outside the application directory, and refuses to start a competing HAI stack.
+See [Windows installer](docs/windows-installer.md).
+
 ### Desktop resource defaults
 
 The ordinary local stack now applies explicit memory, CPU, and process ceilings

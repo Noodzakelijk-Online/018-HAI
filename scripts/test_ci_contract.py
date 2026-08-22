@@ -419,11 +419,28 @@ class CIWorkflowContractTest(unittest.TestCase):
         )
 
     def test_ci_never_uploads_generated_runtime_or_secret_artifacts(self) -> None:
-        self.assertNotIn("actions/upload-artifact", WORKFLOW)
+        self.assertIn("actions/upload-artifact@v4", WORKFLOW)
+        self.assertIn("name: hai-windows-installer", WORKFLOW)
+        self.assertIn("path: installer/release/HAI-Setup-*.exe", WORKFLOW)
+        self.assertNotIn("installer/release/payload", WORKFLOW)
+        self.assertNotIn("payload-manifest.json", WORKFLOW)
         self.assertNotRegex(WORKFLOW, r"(?i)\bupload[\w -]*(?:log|env|secret)")
+
+    def test_windows_installer_ci_compiles_the_distributable(self) -> None:
+        installer = job_block("windows-installer")
+        for contract in (
+            "runs-on: windows-latest",
+            "choco install innosetup --yes --no-progress",
+            "build-windows-installer.ps1 -Version",
+            "actions/upload-artifact@v4",
+            "retention-days: 14",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, installer)
 
     def test_every_job_has_an_explicit_timeout(self) -> None:
         for job_id in (
+            "windows-installer",
             "backend",
             "idp",
             "nginx-config-manager",
