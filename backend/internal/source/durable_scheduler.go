@@ -118,7 +118,7 @@ func scanWork(runner *durablejob.Runner, service Service) func(context.Context) 
 			if errMarshal != nil {
 				return fmt.Errorf("encode sync payload for %s: %w", item.Name, errMarshal)
 			}
-			if _, errEnqueue := runner.Enqueue(JobKindSync, string(payload), now, syncMaxAttempts); errEnqueue != nil {
+			if _, errEnqueue := runner.EnsureScheduledForPayload(JobKindSync, string(payload), now, syncMaxAttempts); errEnqueue != nil {
 				return fmt.Errorf("enqueue sync for %s: %w", item.Name, errEnqueue)
 			}
 		}

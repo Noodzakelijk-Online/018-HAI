@@ -46,6 +46,20 @@ func (f *fakeJobRepo) EnqueueIfNoActive(job *models.DurableJob) (bool, error) {
 	return err == nil, err
 }
 
+func (f *fakeJobRepo) EnqueueIfNoActiveMatchingPayload(job *models.DurableJob) (bool, error) {
+	if job.Queue == "" {
+		job.Queue = "default"
+	}
+	for _, existing := range f.jobs {
+		if existing.Queue == job.Queue && existing.Kind == job.Kind && existing.Payload == job.Payload &&
+			(existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
+			return false, nil
+		}
+	}
+	_, err := f.Enqueue(job)
+	return err == nil, err
+}
+
 func (f *fakeJobRepo) ClaimDue(workerID, queue string, now time.Time, limit int) ([]models.DurableJob, error) {
 	if queue == "" {
 		queue = "default"
@@ -189,6 +203,27 @@ func TestDurableScanEnqueuesOneSyncPerDueSourceAndReschedulesItself(t *testing.T
 	}
 	if pendingScans != 1 {
 		t.Fatalf("pending scan jobs = %d, want exactly 1 (self-rescheduled)", pendingScans)
+	}
+}
+
+func TestDurableScanDoesNotDuplicateAnActiveSourceSync(t *testing.T) {
+	source, _ := localFolderSource(t, "alice")
+	repo := newFakeSourceRepo(source)
+	service := NewService(repo, &fakeSourceMemoryService{})
+	jobs := newFakeJobRepo()
+	runner := durablejob.NewRunner(jobs, durablejob.Options{WorkerID: "w1"})
+
+	// Invoke the scanner twice before the queued source job can run. A source
+	// retry or a slow remote API must not build an unbounded duplicate backlog.
+	work := scanWork(runner, service)
+	if err := work(context.Background()); err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	if err := work(context.Background()); err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	if got := len(jobs.byKind(JobKindSync)); got != 1 {
+		t.Fatalf("sync jobs after duplicate scan = %d, want 1", got)
 	}
 }
 

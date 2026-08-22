@@ -67,6 +67,20 @@ func (f *fakeRepo) EnqueueIfNoActive(job *models.DurableJob) (bool, error) {
 	return err == nil, err
 }
 
+func (f *fakeRepo) EnqueueIfNoActiveMatchingPayload(job *models.DurableJob) (bool, error) {
+	if job.Queue == "" {
+		job.Queue = "default"
+	}
+	for _, existing := range f.jobs {
+		if existing.Queue == job.Queue && existing.Kind == job.Kind && existing.Payload == job.Payload &&
+			(existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
+			return false, nil
+		}
+	}
+	_, err := f.Enqueue(job)
+	return err == nil, err
+}
+
 func (f *fakeRepo) ClaimDue(workerID, queue string, now time.Time, limit int) ([]models.DurableJob, error) {
 	if queue == "" {
 		queue = "default"
@@ -203,6 +217,29 @@ func TestRunnerExecutesJobAndMarksSucceeded(t *testing.T) {
 	stored, _ := repo.Find(job.ID)
 	if stored.Status != models.DurableJobSucceeded {
 		t.Fatalf("status = %q, want succeeded", stored.Status)
+	}
+}
+
+func TestEnsureScheduledForPayloadDeduplicatesOnlyMatchingWork(t *testing.T) {
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	repo := newFakeRepo()
+	runner := NewRunner(repo, Options{WorkerID: "w1", Queue: "source", Now: fixedClock(&now)})
+
+	created, err := runner.EnsureScheduledForPayload("source.sync", `{"sourceId":"a"}`, now, 5)
+	if err != nil || !created {
+		t.Fatalf("first payload schedule = %v, %v; want true, nil", created, err)
+	}
+	created, err = runner.EnsureScheduledForPayload("source.sync", `{"sourceId":"a"}`, now, 5)
+	if err != nil || created {
+		t.Fatalf("duplicate payload schedule = %v, %v; want false, nil", created, err)
+	}
+	created, err = runner.EnsureScheduledForPayload("source.sync", `{"sourceId":"b"}`, now, 5)
+	if err != nil || !created {
+		t.Fatalf("distinct payload schedule = %v, %v; want true, nil", created, err)
+	}
+
+	if got := len(repo.jobs); got != 2 {
+		t.Fatalf("active jobs = %d, want 2 distinct source syncs", got)
 	}
 }
 

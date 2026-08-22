@@ -116,19 +116,40 @@ func (r *Runner) Enqueue(kind, payload string, runAt time.Time, maxAttempts int)
 // uses this at startup so restarts do not pile up duplicate schedules.
 // It reports whether a new job was created.
 func (r *Runner) EnsureScheduled(kind, payload string, runAt time.Time, maxAttempts int) (bool, error) {
+	return r.ensureScheduled(kind, payload, runAt, maxAttempts, false)
+}
+
+// EnsureScheduledForPayload is the per-work-item counterpart to
+// EnsureScheduled. It permits different payloads of one kind to run in
+// parallel, while ensuring a periodic producer cannot enqueue duplicates for
+// the same work item.
+func (r *Runner) EnsureScheduledForPayload(kind, payload string, runAt time.Time, maxAttempts int) (bool, error) {
+	return r.ensureScheduled(kind, payload, runAt, maxAttempts, true)
+}
+
+func (r *Runner) ensureScheduled(kind, payload string, runAt time.Time, maxAttempts int, matchPayload bool) (bool, error) {
 	if runAt.IsZero() {
 		runAt = r.now()
 	}
-	created, err := r.repo.EnqueueIfNoActive(&models.DurableJob{
+	job := &models.DurableJob{
 		Queue:       r.queue,
 		Kind:        kind,
 		Payload:     payload,
 		RunAt:       runAt.UTC(),
 		MaxAttempts: maxAttempts,
 		Status:      models.DurableJobPending,
-	})
+	}
+	var (
+		created bool
+		err     error
+	)
+	if matchPayload {
+		created, err = r.repo.EnqueueIfNoActiveMatchingPayload(job)
+	} else {
+		created, err = r.repo.EnqueueIfNoActive(job)
+	}
 	if err != nil {
-		return false, fmt.Errorf("ensure singleton %s job: %w", kind, err)
+		return false, fmt.Errorf("ensure active %s job: %w", kind, err)
 	}
 	return created, nil
 }
