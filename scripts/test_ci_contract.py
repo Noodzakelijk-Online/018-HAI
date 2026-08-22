@@ -393,6 +393,13 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertIn(f"{name}={default}", env_template)
                 self.assertIn(f"{name}: ${{{name}:-{default}}}", backend)
 
+    def test_a2a_bridge_fallback_matches_the_loopback_gateway(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            "HAI_A2A_BRIDGE_URL: ${HAI_A2A_BRIDGE_URL:-http://127.0.0.1:8088/api/v1/a2a}",
+            compose,
+        )
+
     def test_idp_toolchain_matches_ci_and_container(self) -> None:
         go_mod = (ROOT / "idp" / "go.mod").read_text(encoding="utf-8")
         dockerfile = (ROOT / "idp" / "Dockerfile").read_text(encoding="utf-8")
