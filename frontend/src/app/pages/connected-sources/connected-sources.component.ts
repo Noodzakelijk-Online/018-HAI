@@ -502,6 +502,7 @@ export class ConnectedSourcesComponent implements OnInit {
       case 'paused':
       case 'running':
       case 'pending':
+	  case 'configuration_ready':
       case 'not_configured':
       case 'local_only':
       case 'modeled':

@@ -688,10 +688,14 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 			health.Reason = "Trello board target needs review: " + err.Error()
 			return health, nil
 		}
-		health.Authorized = source.Enabled
+		// Environment variables and a syntactically valid board id prove only
+		// that the connector can be attempted. They do not prove that Trello
+		// accepted the token or that it can read this board, so do not surface a
+		// false "ready" state before an explicit sync provides evidence.
+		health.Authorized = false
 		if source.Enabled {
-			health.Status = "ready"
-			health.Reason = "least-privilege read-only Trello credentials and board target are configured"
+			health.Status = "configuration_ready"
+			health.Reason = "least-privilege read-only Trello credentials and board target are configured; run a sync to verify live board access"
 		} else {
 			health.Reason = "Trello source is paused"
 		}

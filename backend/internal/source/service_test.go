@@ -766,6 +766,17 @@ func TestCreateTrelloSourceRequiresConfiguredRemoteBoard(t *testing.T) {
 	if created.LocalOnly || created.Category != "project_board" || created.SyncTarget != request.SyncTarget {
 		t.Fatalf("created Trello source = %#v", created)
 	}
+	healthService, ok := service.(ConnectionHealthService)
+	if !ok {
+		t.Fatal("default source service does not expose connection health")
+	}
+	health, err := healthService.ConnectionHealth(created.ID)
+	if err != nil {
+		t.Fatalf("Trello connection health: %v", err)
+	}
+	if health.Status != "configuration_ready" || health.Authorized || !strings.Contains(health.Reason, "run a sync") {
+		t.Fatalf("Trello health = %#v, want configured but unverified", health)
+	}
 
 	request.LocalOnly = true
 	if _, err := service.CreateSource(request); err == nil || !strings.Contains(err.Error(), "localOnly") {
