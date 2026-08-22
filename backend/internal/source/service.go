@@ -2618,9 +2618,10 @@ func (s *service) endSync(sourceID uuid.UUID) {
 	delete(s.activeSyncs, sourceID)
 }
 
-func itemFailure(item ImportItem, stage string, err error) string {
-	label := firstNonEmpty(item.ExternalID, item.Title, "unknown item")
-	return compact(fmt.Sprintf("%s: %s: %v", label, stage, err), 320)
+func itemFailure(item ImportItem, stage string, _ error) string {
+	label := compact(safety.RedactSecrets(firstNonEmpty(item.ExternalID, item.Title, "source item")), 160)
+	stage = compact(safety.RedactSecrets(stage), 120)
+	return fmt.Sprintf("%s: %s; inspect the source audit and retry", label, stage)
 }
 
 func (s *service) audit(sourceID uuid.UUID, action, message string) {

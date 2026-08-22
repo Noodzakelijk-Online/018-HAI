@@ -20,6 +20,27 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestItemFailureDoesNotExposeProviderSecretsOrLocalPaths(t *testing.T) {
+	message := itemFailure(
+		ImportItem{ExternalID: "mail-42", Title: "Private inbox"},
+		"content extraction failed",
+		errors.New("provider rejected Authorization: Bearer source-sync-secret while reading C:\\Users\\NO\\private-source"),
+	)
+
+	for _, forbidden := range []string{
+		"source-sync-secret",
+		"Authorization:",
+		"C:\\Users\\NO\\private-source",
+	} {
+		if strings.Contains(message, forbidden) {
+			t.Fatalf("item failure leaked %q: %q", forbidden, message)
+		}
+	}
+	if !strings.Contains(message, "mail-42") || !strings.Contains(message, "content extraction failed") {
+		t.Fatalf("item failure lost safe recovery context: %q", message)
+	}
+}
+
 func TestSyncLocalFolderExtractsReadableFilesWithProvenance(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root+"/project-note.md", "Decision: local folder ingestion should extract useful project context. Follow up: verify provenance before task planning.")
