@@ -24,6 +24,7 @@ export class BackgroundOperationsComponent implements OnInit {
   feeds: IAccountFeed[] = []
   lastReport?: IBackgroundRunReport
   lastRunError = ''
+  overviewLoadError = ''
 
   loading = false
   running = false
@@ -59,6 +60,7 @@ export class BackgroundOperationsComponent implements OnInit {
       return
     }
     this.loading = true
+    this.overviewLoadError = ''
     forkJoin({
       dashboard: this.service.dashboard(),
       operations: this.service.list(this.statusFilter ? { status: this.statusFilter } : undefined),
@@ -71,6 +73,7 @@ export class BackgroundOperationsComponent implements OnInit {
         this.finishRefresh()
       },
       error: () => {
+        this.overviewLoadError = 'Could not load the operational dashboard. The displayed queue may be incomplete.'
         this.notification.error('Error', 'Failed to load background operations.')
         this.finishRefresh()
       },

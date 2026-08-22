@@ -14,6 +14,16 @@
     </button>
   </header>
 
+  <nz-alert
+    *ngIf="overviewLoadError"
+    nzType="error"
+    nzShowIcon
+    [nzMessage]="overviewLoadError"
+    nzDescription="Retry before using this screen to decide that no action is required."
+    nzCloseable
+    (nzOnClose)="overviewLoadError = ''"
+  ></nz-alert>
+
   <section class="bg-ops__action-stage" *ngIf="dashboard as d">
     <article class="bg-ops__run-card">
       <div class="bg-ops__run-icon"><span nz-icon nzType="thunderbolt"></span></div>

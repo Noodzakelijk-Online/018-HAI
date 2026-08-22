@@ -1,5 +1,5 @@
 import { Router } from '@angular/router'
-import { Subject, of } from 'rxjs'
+import { Subject, of, throwError } from 'rxjs'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { IOperation } from '../../models/background-operations.model.interface'
 import { BackgroundOperationsService } from '../../services/background-operations.service'
@@ -69,6 +69,21 @@ describe('BackgroundOperationsComponent action submission', () => {
 })
 
 describe('BackgroundOperationsComponent refresh', () => {
+  it('keeps a visible recovery state when the operational dashboard cannot load', () => {
+    const service = jasmine.createSpyObj<BackgroundOperationsService>('BackgroundOperationsService', ['dashboard', 'list', 'feeds'])
+    service.dashboard.and.returnValue(throwError(() => new Error('gateway unavailable')))
+    service.list.and.returnValue(of({ operations: [] }))
+    service.feeds.and.returnValue(of({ feeds: [] }))
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['success', 'error', 'warning'])
+    const router = jasmine.createSpyObj<Router>('Router', ['navigate'])
+    const component = new BackgroundOperationsComponent(service, notification, router)
+
+    component.refresh()
+
+    expect(component.overviewLoadError).toContain('operational dashboard')
+    expect(component.loading).toBeFalse()
+  })
+
   it('does not start overlapping dashboard batches while a refresh is pending', () => {
     const dashboard = new Subject<any>()
     const operations = new Subject<any>()
