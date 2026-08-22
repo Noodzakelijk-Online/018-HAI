@@ -512,6 +512,10 @@ docker compose --env-file .env.local -f docker-compose.local.yml ps
 
 Open [http://localhost](http://localhost).
 
+For explicitly configured, guarded public HTTPS access, see
+[Governed ngrok cloud access](docs/ngrok-cloud-access.md). The tunnel is
+disabled by default and never publishes the local gateway directly.
+
 ### Desktop resource defaults
 
 The ordinary local stack now applies explicit memory, CPU, and process ceilings

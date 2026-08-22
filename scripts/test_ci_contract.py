@@ -87,6 +87,36 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertIn(f"{prefix}_CPU_LIMIT=", defaults)
                 self.assertIn(f"{prefix}_PIDS_LIMIT=", defaults)
 
+    def test_optional_ngrok_tunnel_is_profiled_and_fail_closed(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
+        launcher = (ROOT / "scripts" / "start-ngrok.ps1")
+        entrypoint = ROOT / "deploy" / "ngrok" / "start-ngrok.sh"
+
+        service = compose_service_block(compose, "ngrok")
+        self.assertIn('profiles: ["cloud-tunnel"]', service)
+        self.assertNotIn("ports:", service)
+        self.assertIn("read_only: true", service)
+        self.assertIn("no-new-privileges:true", service)
+        self.assertIn("cap_drop:", service)
+        self.assertIn("HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED", service)
+        self.assertIn("NGROK_AUTHTOKEN=", defaults)
+        self.assertIn("HAI_NGROK_URL=", defaults)
+        self.assertIn("HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED=false", defaults)
+        self.assertTrue(launcher.is_file())
+        self.assertTrue(entrypoint.is_file())
+
+        launcher_text = launcher.read_text(encoding="utf-8")
+        entrypoint_text = entrypoint.read_text(encoding="utf-8")
+        for content in (launcher_text, entrypoint_text):
+            self.assertIn("RUN_MODE", content)
+            self.assertIn("LOCAL_LOGIN_BYPASS_ENABLED", content)
+            self.assertIn("IDP_COOKIE_SECURE", content)
+            self.assertIn("GATEWAY_HOST_BIND", content)
+            self.assertIn("HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED", content)
+            self.assertIn("NGROK_AUTHTOKEN", content)
+            self.assertIn("HAI_NGROK_URL", content)
+
     def test_directly_invoked_contract_and_smoke_files_exist(self) -> None:
         for relative_path in (
             "nginx-config/test_gateway_contract.py",
