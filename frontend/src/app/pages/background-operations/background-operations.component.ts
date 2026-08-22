@@ -115,14 +115,14 @@ export class BackgroundOperationsComponent implements OnInit {
 
   backgroundRunError(err: unknown): string {
     const response = err as HttpErrorResponse
-    const detail = response?.error?.error
-    if (typeof detail === 'string' && detail.trim()) return detail
     if (response?.status === 404) {
       return 'The background engine is not reachable. Refresh the page after the local gateway has restarted.'
     }
     if (response?.status === 409) {
       return 'A background pass is already running. Wait a moment, then refresh this page.'
     }
+    const detail = response?.error?.error
+    if (typeof detail === 'string' && detail.trim()) return detail
     return 'The background pass could not start. Your sources and existing operations were not changed.'
   }
 

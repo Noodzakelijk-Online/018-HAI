@@ -127,3 +127,19 @@ describe('BackgroundOperationsComponent refresh', () => {
     expect(component.loading).toBeFalse()
   })
 })
+
+describe('BackgroundOperationsComponent background run recovery', () => {
+  it('explains a busy background pass without exposing the internal error text', () => {
+    const service = jasmine.createSpyObj<BackgroundOperationsService>('BackgroundOperationsService', ['runBackground'])
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['success', 'error', 'warning'])
+    const router = jasmine.createSpyObj<Router>('Router', ['navigate'])
+    const component = new BackgroundOperationsComponent(service, notification, router)
+
+    const message = component.backgroundRunError({
+      status: 409,
+      error: { error: 'background: run already in progress' },
+    })
+
+    expect(message).toBe('A background pass is already running. Wait a moment, then refresh this page.')
+  })
+})
