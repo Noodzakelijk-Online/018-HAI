@@ -24,6 +24,7 @@ export class BackgroundOperationsComponent implements OnInit {
   feeds: IAccountFeed[] = []
   lastReport?: IBackgroundRunReport
   lastRunError = ''
+  lastRunNotice = ''
 
   loading = false
   running = false
@@ -77,8 +78,14 @@ export class BackgroundOperationsComponent implements OnInit {
   }
 
   runBackground(): void {
+    if (!this.hasEnabledFeeds()) {
+      this.lastRunNotice = 'No enabled account feed is configured for this background pass. Connect or enable a feed first.'
+      this.notification.info('Connect a source first', 'This pass reads only enabled account feeds. No work was started.')
+      return
+    }
     this.running = true
     this.lastRunError = ''
+    this.lastRunNotice = ''
     this.service.runBackground().subscribe({
       next: (report) => {
         this.lastReport = report
@@ -104,10 +111,23 @@ export class BackgroundOperationsComponent implements OnInit {
     if (response?.status === 404) {
       return 'The background engine is not reachable. Refresh the page after the local gateway has restarted.'
     }
+    if (response?.status === 401 || response?.status === 403) {
+      return 'This action requires an owner account with permission to run controlled background work. Sign in as the local owner, then try again.'
+    }
     if (response?.status === 409) {
       return 'A background pass is already running. Wait a moment, then refresh this page.'
     }
+    if (response?.status === 429) {
+      return 'The background engine is temporarily rate-limited. Wait a moment before trying again.'
+    }
+    if (response?.status === 0 || response?.status >= 500) {
+      return 'The background engine is temporarily unavailable. Your sources and existing operations were not changed. Refresh after the local backend is healthy.'
+    }
     return 'The background pass could not start. Your sources and existing operations were not changed.'
+  }
+
+  hasEnabledFeeds(): boolean {
+    return this.feeds.some((feed) => feed.enabled)
   }
 
   selectStatus(status: string): void {
