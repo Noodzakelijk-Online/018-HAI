@@ -127,7 +127,7 @@ func TestBridgesAndPermissionsAreTruthful(t *testing.T) {
 }
 
 func TestCredentialPresenceIsUnverifiedNotConnected(t *testing.T) {
-	t.Setenv("GITHUB_READ_TOKEN", "ghp_dummy_token_value")
+	t.Setenv("GITHUB_SOURCE_TOKEN", "ghp_dummy_token_value")
 	b, _ := Bridge(ProviderGitHub)
 	if b.ConnectionStatus() != ConnCredentialsPresentUnverified {
 		t.Fatalf("a present credential must be credentials_present_unverified (not connected), got %s", b.ConnectionStatus())
