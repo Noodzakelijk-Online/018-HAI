@@ -40,7 +40,7 @@ const DefaultTimeout = 3 * time.Second
 // Criticality reflects what the process can actually serve without:
 //   - Postgres is critical: every domain route reads or writes it.
 //   - Kafka is not: the publisher degrades to a no-op when brokers are absent.
-//   - Redis is not: the backend does not connect to it yet (see RedisProbe).
+//   - Redis is not: it backs shared rate limiting when that optional control is enabled.
 //   - An LLM provider is not: generation is one capability, not the service.
 func Probes(cfg config.Configuration) []doctor.Probe {
 	return []doctor.Probe{
@@ -82,11 +82,10 @@ func PostgresProbe(cfg config.Configuration) doctor.Probe {
 
 // RedisProbe checks the Redis declared in the compose stack.
 //
-// The backend does not currently connect to Redis: rate-limit and quota state
-// lives in an in-process map and is lost on restart. The probe still reports
-// Redis honestly, because an operator looking at readiness needs to see the
-// difference between "this dependency is healthy" and "this dependency is
-// running but nothing uses it".
+// Redis backs the optional shared rate limiter. Without it, an enabled rate
+// limit falls back to a per-process counter and is reset on restart. The probe
+// makes that operational difference visible without making Redis a critical
+// dependency for the local-first single-instance deployment.
 func RedisProbe(cfg config.Configuration) doctor.Probe {
 	addr := strings.TrimSpace(cfg.RedisAddr)
 	return doctor.Probe{
@@ -94,7 +93,10 @@ func RedisProbe(cfg config.Configuration) doctor.Probe {
 		Critical: false,
 		Run: func(ctx context.Context) error {
 			if addr == "" {
-				return fmt.Errorf("REDIS_ADDR is not set; quota and rate-limit state stays in-process and resets on restart")
+				if cfg.RateLimitPerMinute > 0 {
+					return fmt.Errorf("REDIS_ADDR is not set; enabled rate limiting falls back to a per-process in-memory counter and resets on restart")
+				}
+				return fmt.Errorf("REDIS_ADDR is not set; shared rate limiting is disabled")
 			}
 			var dialer net.Dialer
 			conn, err := dialer.DialContext(ctx, "tcp", addr)
@@ -106,8 +108,8 @@ func RedisProbe(cfg config.Configuration) doctor.Probe {
 			if deadline, ok := ctx.Deadline(); ok {
 				_ = conn.SetDeadline(deadline)
 			}
-			// Inline RESP so a liveness check does not pull in a Redis client
-			// the backend has no other use for yet.
+			// Inline RESP keeps this probe independent from the production rate
+			// limiter client while still verifying Redis protocol readiness.
 			if _, err := conn.Write([]byte("*1\r\n$4\r\nPING\r\n")); err != nil {
 				return fmt.Errorf("write PING to %s: %w", addr, err)
 			}
