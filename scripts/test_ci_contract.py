@@ -382,12 +382,12 @@ class CIWorkflowContractTest(unittest.TestCase):
 
         for name, default in (
             ("SOURCE_SCHEDULER_DURABLE", "true"),
-            ("SOURCE_WORKER_POLL_SECONDS", "15"),
+            ("SOURCE_WORKER_POLL_SECONDS", "60"),
             ("WORKFLOW_SCHEDULER_DURABLE", "true"),
-            ("WORKFLOW_WORKER_POLL_SECONDS", "15"),
+            ("WORKFLOW_WORKER_POLL_SECONDS", "60"),
             ("WORKFLOW_REMINDER_DELIVERY_ENABLED", "true"),
             ("AMBIENT_SCHEDULER_DURABLE", "true"),
-            ("AMBIENT_WORKER_POLL_SECONDS", "15"),
+            ("AMBIENT_WORKER_POLL_SECONDS", "60"),
         ):
             with self.subTest(name=name):
                 self.assertIn(f"{name}={default}", env_template)
