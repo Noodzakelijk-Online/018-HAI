@@ -10,6 +10,7 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Hai-InstallerSupport.ps1")
 
 Assert-HaiDockerReady
+Assert-HaiSingleInstallation
 Assert-HaiLocalEnvironment
 
 $environmentContent = [IO.File]::ReadAllText((Get-HaiEnvironmentFile))

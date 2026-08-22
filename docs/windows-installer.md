@@ -146,6 +146,11 @@ an existing HAI stack started from another directory, Start HAI stops and names
 the existing directory. Stop or migrate that installation before using the
 installer. This prevents two HAI instances from competing for the same data.
 
+Every installed HAI command checks this ownership before it opens the dashboard,
+reports status, stops services, enables cloud access, or checks the local
+connector. This prevents a shortcut from accidentally acting on a different
+checkout that happens to use HAI's fixed Compose project name.
+
 ## Uninstall and data
 
 Uninstall removes the installed program files only. It **does not delete**

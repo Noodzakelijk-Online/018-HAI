@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Hai-InstallerSupport.ps1')
 
 Assert-HaiDockerReady
+Assert-HaiSingleInstallation
 Assert-HaiLocalEnvironment
 
 $cloudAccessScript = Join-Path (Get-HaiInstallRoot) 'scripts\start-ngrok.ps1'

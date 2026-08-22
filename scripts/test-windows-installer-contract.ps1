@@ -10,6 +10,9 @@ $supportScript = Join-Path $repositoryRoot "installer\windows\Hai-InstallerSuppo
 $startScript = Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"
 $cloudAccessScript = Join-Path $repositoryRoot "installer\windows\Start-HAI-Cloud.ps1"
 $connectorCheckScript = Join-Path $repositoryRoot "installer\windows\Test-HAI-LocalConnector.ps1"
+$stopScript = Join-Path $repositoryRoot "installer\windows\Stop-HAI.ps1"
+$statusScript = Join-Path $repositoryRoot "installer\windows\HAI-Status.ps1"
+$openScript = Join-Path $repositoryRoot "installer\windows\Open-HAI.ps1"
 $localModelScript = Join-Path $repositoryRoot "installer\windows\Enable-LocalModel.ps1"
 $trelloAcceptanceScript = Join-Path $PSScriptRoot "test-live-trello.ps1"
 $noFakeClaimsAudit = Join-Path $PSScriptRoot "no-fake-claims-audit.ps1"
@@ -28,6 +31,11 @@ $build = [IO.File]::ReadAllText($buildScript)
 $installer = [IO.File]::ReadAllText($installerScript)
 $support = [IO.File]::ReadAllText($supportScript)
 $start = [IO.File]::ReadAllText($startScript)
+$stop = [IO.File]::ReadAllText($stopScript)
+$status = [IO.File]::ReadAllText($statusScript)
+$open = [IO.File]::ReadAllText($openScript)
+$connectorCheck = [IO.File]::ReadAllText($connectorCheckScript)
+$cloudAccess = [IO.File]::ReadAllText($cloudAccessScript)
 $initializer = [IO.File]::ReadAllText($initializerScript)
 $docs = [IO.File]::ReadAllText($documentation)
 $compose = [IO.File]::ReadAllText($composePath)
@@ -147,7 +155,22 @@ foreach ($required in @(
     }
 }
 
-$connectorCheck = [IO.File]::ReadAllText($connectorCheckScript)
+# Every installed entry point must refuse to act on a different checkout that
+# happens to share HAI's fixed Compose project/container names. Otherwise a
+# status, stop, cloud, connector, or open command can silently target another
+# local deployment.
+foreach ($entryPoint in @{
+    "Stop HAI" = $stop
+    "HAI status" = $status
+    "Open HAI" = $open
+    "Cloud access" = $cloudAccess
+    "Local connector check" = $connectorCheck
+}.GetEnumerator()) {
+    if ($entryPoint.Value -notmatch [Regex]::Escape("Assert-HaiSingleInstallation")) {
+        throw "$($entryPoint.Key) must reject a different local HAI installation before acting."
+    }
+}
+
 foreach ($required in @(
     "Get-HaiEnvironmentFile",
     "Get-HaiUrl",
@@ -162,7 +185,6 @@ foreach ($required in @(
     }
 }
 
-$cloudAccess = [IO.File]::ReadAllText($cloudAccessScript)
 foreach ($required in @(
     "Get-HaiEnvironmentFile",
     "Get-HaiComposeFile",
@@ -325,6 +347,9 @@ foreach ($required in @(
     if ($docs -notmatch [Regex]::Escape($required)) {
         throw "Installer documentation is missing '$required'."
     }
+}
+if ($docs -notmatch [Regex]::Escape("Every installed HAI command checks this ownership")) {
+    throw "Installer documentation must explain the one-installation ownership check."
 }
 
 & $buildScript -SkipCompile
