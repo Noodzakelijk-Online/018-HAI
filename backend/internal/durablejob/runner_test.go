@@ -17,6 +17,7 @@ import (
 type fakeRepo struct {
 	jobs        map[uuid.UUID]*models.DurableJob
 	extendCalls int
+	reapCalls   int
 }
 
 type leaseLosingRepo struct {
@@ -183,6 +184,7 @@ func fakeLeaseOwned(job *models.DurableJob, workerID string, leaseGeneration int
 }
 
 func (f *fakeRepo) ReapExpiredLeases(now time.Time, lease time.Duration) (int, error) {
+	f.reapCalls++
 	cutoff := now.Add(-lease)
 	reaped := 0
 	for _, job := range f.jobs {
@@ -194,6 +196,35 @@ func (f *fakeRepo) ReapExpiredLeases(now time.Time, lease time.Duration) (int, e
 		}
 	}
 	return reaped, nil
+}
+
+func TestRunnerReapsLeasesAtMostOncePerLeaseInterval(t *testing.T) {
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	repo := newFakeRepo()
+	runner := NewRunner(repo, Options{
+		WorkerID: "worker",
+		Lease:    time.Minute,
+		Now:      fixedClock(&now),
+	})
+
+	if _, err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	now = now.Add(30 * time.Second)
+	if _, err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if repo.reapCalls != 1 {
+		t.Fatalf("reap calls before lease interval = %d, want 1", repo.reapCalls)
+	}
+
+	now = now.Add(30 * time.Second)
+	if _, err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatalf("third run: %v", err)
+	}
+	if repo.reapCalls != 2 {
+		t.Fatalf("reap calls at lease interval = %d, want 2", repo.reapCalls)
+	}
 }
 
 func (f *fakeRepo) CountActiveByKind(kind string) (int64, error) {

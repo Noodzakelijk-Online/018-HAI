@@ -43,6 +43,8 @@ type Runner struct {
 
 	mu       sync.RWMutex
 	handlers map[string]Handler
+	reapMu   sync.Mutex
+	lastReap time.Time
 }
 
 // Options configures a Runner. Zero values fall back to sane defaults.
@@ -198,7 +200,7 @@ func (r *Runner) RegisterRecurring(kind string, interval time.Duration, maxAttem
 // returned, so one bad job cannot stall the queue.
 func (r *Runner) RunOnce(ctx context.Context) (int, error) {
 	now := r.now()
-	if _, err := r.repo.ReapExpiredLeases(now, r.lease); err != nil {
+	if err := r.reapExpiredLeasesIfDue(now); err != nil {
 		return 0, fmt.Errorf("reap expired leases: %w", err)
 	}
 	jobs, err := r.repo.ClaimDue(r.workerID, r.queue, now, r.batch)
@@ -214,6 +216,24 @@ func (r *Runner) RunOnce(ctx context.Context) (int, error) {
 		processed++
 	}
 	return processed, firstErr
+}
+
+// reapExpiredLeasesIfDue recovers abandoned work immediately on a fresh
+// runner, then no more often than the lease duration. A lease cannot expire
+// sooner than that, so reaping every queue poll only adds idle database writes
+// without improving crash recovery.
+func (r *Runner) reapExpiredLeasesIfDue(now time.Time) error {
+	r.reapMu.Lock()
+	defer r.reapMu.Unlock()
+
+	if !r.lastReap.IsZero() && now.Before(r.lastReap.Add(r.lease)) {
+		return nil
+	}
+	if _, err := r.repo.ReapExpiredLeases(now, r.lease); err != nil {
+		return err
+	}
+	r.lastReap = now
+	return nil
 }
 
 // execute runs one claimed job and records the outcome.
