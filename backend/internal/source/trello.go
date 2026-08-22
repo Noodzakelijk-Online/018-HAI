@@ -236,7 +236,13 @@ func fetchTrelloChangedCards(ctx context.Context, base *url.URL, key, token, boa
 		}
 		cardID := strings.TrimSpace(action.Data.Card.ID)
 		if cardID == "" {
-			requiresFullScan = true
+			// updateBoard changes board metadata only. Board metadata is already
+			// read at the start of this run, so re-reading every card cannot add
+			// card content. All other cardless events remain conservative: Trello
+			// may introduce a card-affecting shape we do not yet understand.
+			if !trelloActionIsBoardOnly(action.Type) {
+				requiresFullScan = true
+			}
 			continue
 		}
 		cardIDs[cardID] = struct{}{}
@@ -265,6 +271,10 @@ func fetchTrelloChangedCards(ctx context.Context, base *url.URL, key, token, boa
 		items = append(items, trelloImportItem(card, boardName, listNames[card.IDList], projectKey))
 	}
 	return items, trelloCursor(latest, cursor), false, nil
+}
+
+func trelloActionIsBoardOnly(actionType string) bool {
+	return strings.EqualFold(strings.TrimSpace(actionType), "updateBoard")
 }
 
 func fetchTrelloBoardCards(ctx context.Context, base *url.URL, key, token, boardID, cursor string, cursorTime time.Time, boardName string, listNames map[string]string, projectKey string) ([]ImportItem, string, error) {

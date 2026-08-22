@@ -279,9 +279,9 @@ func TestSyncTrelloIncrementalFallsBackToBoardScanForAmbiguousAction(t *testing.
 		case "/1/boards/abc123XY/lists":
 			_, _ = w.Write([]byte(`[{"id":"list-1","name":"Doing"}]`))
 		case "/1/boards/abc123XY/actions":
-			// Board-level and member actions may have no card reference. The
-			// connector must reconcile safely instead of advancing its cursor.
-			_, _ = w.Write([]byte(`[{"id":"action-1","type":"updateBoard","date":"2026-07-12T00:00:00Z","data":{}}]`))
+			// An unknown cardless action must reconcile safely instead of
+			// advancing the cursor and potentially losing a card change.
+			_, _ = w.Write([]byte(`[{"id":"action-1","type":"futureCardChange","date":"2026-07-12T00:00:00Z","data":{}}]`))
 		case "/1/boards/abc123XY/cards":
 			fullBoardCardRequest = true
 			_, _ = w.Write([]byte(`[{"id":"card-new","name":"Fresh activity","shortUrl":"https://trello.com/c/new","dateLastActivity":"2026-07-12T00:00:00Z","idList":"list-1"}]`))
@@ -311,6 +311,53 @@ func TestSyncTrelloIncrementalFallsBackToBoardScanForAmbiguousAction(t *testing.
 	}
 	if result.Job.CursorAfter != "2026-07-12T00:00:00Z" {
 		t.Fatalf("CursorAfter = %q, want latest observed action/card activity", result.Job.CursorAfter)
+	}
+}
+
+func TestSyncTrelloIncrementalIgnoresBoardOnlyActionsWithoutCardScan(t *testing.T) {
+	var fullBoardCardRequest bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("key") == "" || r.URL.Query().Get("token") == "" {
+			http.Error(w, "missing credentials", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/1/boards/abc123XY":
+			_, _ = w.Write([]byte(`{"id":"board-1","name":"Client Delivery","shortUrl":"https://trello.com/b/abc123"}`))
+		case "/1/boards/abc123XY/lists":
+			_, _ = w.Write([]byte(`[{"id":"list-1","name":"Doing"}]`))
+		case "/1/boards/abc123XY/actions":
+			_, _ = w.Write([]byte(`[{"id":"action-1","type":"updateBoard","date":"2026-07-12T00:00:00Z","data":{}}]`))
+		case "/1/boards/abc123XY/cards":
+			fullBoardCardRequest = true
+			http.Error(w, "board-only action must not trigger a card reconciliation", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv(trelloBaseURLEnv, server.URL)
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+	t.Setenv(trelloAPIKeyEnv, "test-key")
+	t.Setenv(trelloReadTokenEnv, "test-read-token")
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(newTrelloSource(sourceID, "abc123XY", "2026-07-05T00:00:00Z"))
+	result, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeIncrementalSync})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if fullBoardCardRequest {
+		t.Fatal("board-only action triggered a card reconciliation")
+	}
+	if result.Job.ItemsSeen != 0 || len(result.Extractions) != 0 {
+		t.Fatalf("items=%d extractions=%d, want no card work for a board-only action", result.Job.ItemsSeen, len(result.Extractions))
+	}
+	if result.Job.CursorAfter != "2026-07-12T00:00:00Z" {
+		t.Fatalf("CursorAfter = %q, want board event cursor", result.Job.CursorAfter)
 	}
 }
 
