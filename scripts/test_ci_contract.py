@@ -187,6 +187,13 @@ class CIWorkflowContractTest(unittest.TestCase):
             "WORKFLOW_WORKER_POLL_SECONDS",
             "AMBIENT_SCHEDULER_DURABLE",
             "AMBIENT_WORKER_POLL_SECONDS",
+            "WHATSAPP_EXPORT_CHUNK_MESSAGES",
+            "HAI_CATALOG_REVALIDATION_ENABLED",
+            "HAI_CATALOG_REVALIDATION_INTERVAL_HOURS",
+            "HAI_CATALOG_REVALIDATION_BATCH_SIZE",
+            "HAI_CATALOG_REVALIDATION_SCHEDULER_ENABLED",
+            "HAI_CATALOG_REVALIDATION_SCHEDULER_INTERVAL_MINUTES",
+            "OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS",
         ):
             with self.subTest(setting=setting):
                 self.assertIn(f"{setting}=", defaults)
