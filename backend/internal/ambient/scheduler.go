@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"automation-hub-backend/internal/schedulerstatus"
 )
 
 type Scheduler struct {
@@ -23,6 +25,7 @@ type Scheduler struct {
 func StartScheduler(ctx context.Context, service Service) {
 	policy := policyFromEnv()
 	if !policy.SchedulerEnabled {
+		schedulerstatus.Record(schedulerstatus.State{Name: "ambient", Detail: "disabled by AMBIENT_SCHEDULER_ENABLED"})
 		return
 	}
 	interval := time.Duration(policy.ScanIntervalSeconds) * time.Second
@@ -32,13 +35,23 @@ func StartScheduler(ctx context.Context, service Service) {
 	if durableSchedulerEnabled() {
 		if err := startDurableScheduler(ctx, service, interval); err != nil {
 			if !legacyFallbackEnabled() {
+				schedulerstatus.Record(schedulerstatus.State{Name: "ambient", Enabled: true, Durable: true, Detail: "durable queue unavailable: " + err.Error()})
 				log.Printf("ambient scheduler: durable queue unavailable (%v); scheduler not started; set DURABLE_SCHEDULER_LEGACY_FALLBACK_ENABLED=true only for local development", err)
 				return
 			}
+			schedulerstatus.Record(schedulerstatus.State{Name: "ambient", Enabled: true, Detail: "durable queue unavailable; explicitly enabled legacy fallback: " + err.Error()})
 			log.Printf("ambient scheduler: durable queue unavailable (%v); using the explicitly enabled in-process fallback", err)
 		} else {
+			schedulerstatus.Record(schedulerstatus.State{Name: "ambient", Enabled: true, Durable: true, Running: true, Detail: "durable worker attached"})
 			return
 		}
+	} else {
+		schedulerstatus.Record(schedulerstatus.State{Name: "ambient", Enabled: true, Detail: "legacy scheduler explicitly configured"})
+	}
+	if !durableSchedulerEnabled() {
+		schedulerstatus.Record(schedulerstatus.State{Name: "ambient", Enabled: true, Running: true, Detail: "legacy scheduler explicitly configured"})
+	} else if legacyFallbackEnabled() {
+		schedulerstatus.Record(schedulerstatus.State{Name: "ambient", Enabled: true, Running: true, Detail: "explicitly enabled legacy fallback"})
 	}
 	scheduler := &Scheduler{service: service}
 	go scheduler.Start(ctx, interval)

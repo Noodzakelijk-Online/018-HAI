@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"automation-hub-backend/internal/schedulerstatus"
 )
 
 type ScheduledWorkflowService interface {
@@ -41,6 +43,7 @@ func NewScheduler(service ScheduledWorkflowService, interval time.Duration, limi
 // explicit local-development escape hatch.
 func StartScheduler(ctx context.Context, service ScheduledWorkflowService) {
 	if !schedulerEnabled("WORKFLOW_SCHEDULER_ENABLED", true) {
+		schedulerstatus.Record(schedulerstatus.State{Name: "workflow", Detail: "disabled by WORKFLOW_SCHEDULER_ENABLED"})
 		return
 	}
 	interval := schedulerInterval("WORKFLOW_SCHEDULER_INTERVAL_SECONDS")
@@ -48,13 +51,23 @@ func StartScheduler(ctx context.Context, service ScheduledWorkflowService) {
 	if durableSchedulerEnabled() {
 		if err := startDurableScheduler(ctx, service, interval, limit); err != nil {
 			if !legacyFallbackEnabled() {
+				schedulerstatus.Record(schedulerstatus.State{Name: "workflow", Enabled: true, Durable: true, Detail: "durable queue unavailable: " + err.Error()})
 				log.Printf("workflow scheduler: durable queue unavailable (%v); scheduler not started; set DURABLE_SCHEDULER_LEGACY_FALLBACK_ENABLED=true only for local development", err)
 				return
 			}
+			schedulerstatus.Record(schedulerstatus.State{Name: "workflow", Enabled: true, Detail: "durable queue unavailable; explicitly enabled legacy fallback: " + err.Error()})
 			log.Printf("workflow scheduler: durable queue unavailable (%v); using the explicitly enabled in-process fallback", err)
 		} else {
+			schedulerstatus.Record(schedulerstatus.State{Name: "workflow", Enabled: true, Durable: true, Running: true, Detail: "durable worker attached"})
 			return
 		}
+	} else {
+		schedulerstatus.Record(schedulerstatus.State{Name: "workflow", Enabled: true, Detail: "legacy scheduler explicitly configured"})
+	}
+	if !durableSchedulerEnabled() {
+		schedulerstatus.Record(schedulerstatus.State{Name: "workflow", Enabled: true, Running: true, Detail: "legacy scheduler explicitly configured"})
+	} else if legacyFallbackEnabled() {
+		schedulerstatus.Record(schedulerstatus.State{Name: "workflow", Enabled: true, Running: true, Detail: "explicitly enabled legacy fallback"})
 	}
 	scheduler := NewScheduler(service, interval, limit)
 	go scheduler.Start(ctx)

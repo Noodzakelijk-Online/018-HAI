@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"automation-hub-backend/internal/schedulerstatus"
 )
 
 type Scheduler struct {
@@ -33,19 +35,30 @@ func NewScheduler(service Service, interval time.Duration) *Scheduler {
 // explicit SOURCE_SCHEDULER_DURABLE=false remains a deliberate legacy choice.
 func StartScheduler(ctx context.Context, service Service) {
 	if !schedulerEnabled() {
+		schedulerstatus.Record(schedulerstatus.State{Name: "source", Detail: "disabled by SOURCE_SCHEDULER_ENABLED"})
 		return
 	}
 	interval := schedulerInterval()
 	if durableSchedulerEnabled() {
 		if err := startDurableScheduler(ctx, service, interval); err != nil {
 			if !legacyFallbackEnabled() {
+				schedulerstatus.Record(schedulerstatus.State{Name: "source", Enabled: true, Durable: true, Detail: "durable queue unavailable: " + err.Error()})
 				log.Printf("source scheduler: durable queue unavailable (%v); scheduler not started; set DURABLE_SCHEDULER_LEGACY_FALLBACK_ENABLED=true only for local development", err)
 				return
 			}
+			schedulerstatus.Record(schedulerstatus.State{Name: "source", Enabled: true, Detail: "durable queue unavailable; explicitly enabled legacy fallback: " + err.Error()})
 			log.Printf("source scheduler: durable queue unavailable (%v); using the explicitly enabled in-process fallback", err)
 		} else {
+			schedulerstatus.Record(schedulerstatus.State{Name: "source", Enabled: true, Durable: true, Running: true, Detail: "durable worker attached"})
 			return
 		}
+	} else {
+		schedulerstatus.Record(schedulerstatus.State{Name: "source", Enabled: true, Detail: "legacy scheduler explicitly configured"})
+	}
+	if !durableSchedulerEnabled() {
+		schedulerstatus.Record(schedulerstatus.State{Name: "source", Enabled: true, Running: true, Detail: "legacy scheduler explicitly configured"})
+	} else if legacyFallbackEnabled() {
+		schedulerstatus.Record(schedulerstatus.State{Name: "source", Enabled: true, Running: true, Detail: "explicitly enabled legacy fallback"})
 	}
 	scheduler := NewScheduler(service, interval)
 	go scheduler.Start(ctx)
