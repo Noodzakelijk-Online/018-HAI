@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"net/http"
+	"sync"
 
 	"automation-hub-backend/internal/doctor"
 
@@ -27,8 +28,46 @@ import (
 // The diagnose function is injected so the handler is testable without touching
 // global configuration or opening real sockets.
 func readinessHandler(diagnose func(ctx context.Context) doctor.Report) gin.HandlerFunc {
+	// Docker, nginx, the installer, and an operator may poll readiness at the
+	// same instant. Coalesce only an active run so they share one set of live
+	// probes; there is intentionally no TTL cache and every later request still
+	// obtains a fresh report.
+	var mu sync.Mutex
+	var active *readinessFlight
+
+	readinessReport := func(ctx context.Context) doctor.Report {
+		mu.Lock()
+		if active != nil {
+			flight := active
+			mu.Unlock()
+			select {
+			case <-flight.done:
+				return flight.report
+			case <-ctx.Done():
+				return doctor.Report{Checks: []doctor.Check{{
+					Name:     "readiness.request",
+					Severity: doctor.SeverityFail,
+					Detail:   "request canceled while waiting for an active readiness probe",
+				}}}
+			}
+		}
+
+		flight := &readinessFlight{done: make(chan struct{})}
+		active = flight
+		mu.Unlock()
+
+		report := diagnose(ctx)
+
+		mu.Lock()
+		flight.report = report
+		active = nil
+		close(flight.done)
+		mu.Unlock()
+		return report
+	}
+
 	return func(c *gin.Context) {
-		report := diagnose(c.Request.Context())
+		report := readinessReport(c.Request.Context())
 		ok, warn, fail := report.Counts()
 
 		status := "ready"
@@ -48,4 +87,9 @@ func readinessHandler(diagnose func(ctx context.Context) doctor.Report) gin.Hand
 			"checks":  report.Checks,
 		})
 	}
+}
+
+type readinessFlight struct {
+	done   chan struct{}
+	report doctor.Report
 }
