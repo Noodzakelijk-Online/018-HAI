@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/docling"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/whispercpp"
 	"context"
 	"errors"
@@ -420,10 +421,25 @@ func (h *Handler) RunDueScheduledSyncs(c *gin.Context) {
 	}
 	result, err := h.service.RunDueScheduledSyncsForOwner(time.Now().UTC(), ownerIdentity)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "scheduled source sync", err)
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+// writeSourceInternalError keeps unexpected connector, storage, and provider
+// failures out of browser responses. The opaque ID links the operator-visible
+// response to separately redacted server telemetry without disclosing secrets
+// or local machine paths to the client.
+func writeSourceInternalError(c *gin.Context, operation string, err error) {
+	errorID := uuid.NewString()
+	if err != nil {
+		_ = c.Error(fmt.Errorf("%s failed (%s): %s", operation, errorID, safety.RedactSecrets(err.Error())))
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{
+		"error":   operation + " could not complete",
+		"errorId": errorID,
+	})
 }
 
 func (h *Handler) Pause(c *gin.Context) {

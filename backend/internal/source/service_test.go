@@ -2210,6 +2210,7 @@ type fakeSourceRepo struct {
 	lastExtractionSourceIDs []uuid.UUID
 	auditLogs               []models.SourceAuditLog
 	deleteExtractionErr     error
+	findSourcesErr          error
 	oauthTokens             map[uuid.UUID]*models.SourceOAuthToken
 }
 
@@ -2338,6 +2339,9 @@ func (r *fakeSourceRepo) RevokeSource(
 }
 
 func (r *fakeSourceRepo) FindSources(includeDisabled bool) ([]models.ConnectedSource, error) {
+	if r.findSourcesErr != nil {
+		return nil, r.findSourcesErr
+	}
 	result := []models.ConnectedSource{}
 	for _, source := range r.sources {
 		if includeDisabled || (source.Enabled && source.Status != "revoked") {

@@ -7,6 +7,7 @@ import (
 	"automation-hub-backend/internal/whispercpp"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -149,6 +150,39 @@ func TestHandlerRunsDueSyncsOnlyForAuthenticatedOwner(t *testing.T) {
 	authenticatedRouter.ServeHTTP(authenticatedResponse, httptest.NewRequest(http.MethodPost, "/sources/sync-due", nil))
 	if authenticatedResponse.Code != http.StatusOK {
 		t.Fatalf("authenticated status = %d, want 200: %s", authenticatedResponse.Code, authenticatedResponse.Body.String())
+	}
+}
+
+func TestHandlerDoesNotExposeScheduledSyncFailureDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeSourceRepo()
+	repo.findSourcesErr = errors.New("provider rejected Authorization: Bearer secret-token-value while reading C:\\Users\\NO\\private-source")
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+	})
+	router.POST("/sources/sync-due", handler.RunDueScheduledSyncs)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/sources/sync-due", nil))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("sync due status = %d, want 500: %s", response.Code, response.Body.String())
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if payload["error"] != "scheduled source sync could not complete" {
+		t.Fatalf("public error = %q", payload["error"])
+	}
+	if payload["errorId"] == "" {
+		t.Fatalf("expected opaque error ID: %#v", payload)
+	}
+	for _, leaked := range []string{"secret-token-value", "C:\\Users\\NO\\private-source", "Authorization"} {
+		if strings.Contains(response.Body.String(), leaked) {
+			t.Fatalf("response leaked %q: %s", leaked, response.Body.String())
+		}
 	}
 }
 
