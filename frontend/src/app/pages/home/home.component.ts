@@ -42,6 +42,7 @@ export class HomeComponent implements OnInit {
   hidePassword: boolean = true
   hidePasswordConfirm: boolean = true
   automations: IAutomationModel[] = []
+  automationLoadFailed = false
   @ViewChild('automationModal', { static: false })
   automationModal!: AutomationsFormComponent
 
@@ -323,14 +324,14 @@ export class HomeComponent implements OnInit {
     this.automationsService.getAutomations().subscribe({
       next: (automations: IAutomationModel[]) => {
         this.automations = automations.sort((a, b) => a.position - b.position)
+        this.automationLoadFailed = false
       },
-      error: (error) => {
-        // registry a log
-        console.error('Error fetching automations', error)
+      error: () => {
+        this.automationLoadFailed = true
         this.notification.create(
           'error',
-          'Error',
-          'There was an error fetching the automations.'
+          'Automations unavailable',
+          'The registry could not be loaded. Check the connection and try again.'
         )
       },
     })

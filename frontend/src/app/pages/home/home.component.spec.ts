@@ -76,4 +76,19 @@ describe('HomeComponent', () => {
       'Your profile could not be loaded. Check the connection and try again.'
     );
   });
+
+  it('records a failed automation load instead of treating it as an empty registry', () => {
+    const notification = TestBed.inject(NzNotificationService) as unknown as { create: jasmine.Spy };
+    notification.create = jasmine.createSpy('create');
+    const automationsService = TestBed.inject(AUTOMATIONS_SERVICE_TOKEN) as unknown as {
+      getAutomations: jasmine.Spy;
+    };
+    automationsService.getAutomations = jasmine
+      .createSpy('getAutomations')
+      .and.returnValue(throwError(() => new Error('offline')));
+
+    component.loadAutomations();
+
+    expect(component.automationLoadFailed).toBeTrue();
+  });
 });
