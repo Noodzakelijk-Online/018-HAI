@@ -4,7 +4,6 @@ import (
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/whispercpp"
-	"context"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -188,7 +187,7 @@ func (h *Handler) Sync(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	result, err := syncSourceRequest(c.Request.Context(), h.service, id, request)
+	result, err := syncSourceWithContext(c.Request.Context(), h.service, id, request)
 	if err != nil {
 		if errors.Is(err, ErrSyncInProgress) {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
@@ -198,13 +197,6 @@ func (h *Handler) Sync(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
-}
-
-func syncSourceRequest(ctx context.Context, service Service, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
-	if contextual, ok := service.(ContextSyncService); ok {
-		return contextual.SyncContext(ctx, sourceID, request)
-	}
-	return service.Sync(sourceID, request)
 }
 
 // Transcribe invokes the opt-in local whisper.cpp runner for a configured
@@ -259,7 +251,7 @@ func (h *Handler) Transcribe(c *gin.Context) {
 			Metadata:   "engine=whisper.cpp;model=" + transcript.ModelID + ";language=" + transcript.Language + ";audio_retained=false;consent=source_owner",
 		})
 	}
-	result, err := syncSourceRequest(c.Request.Context(), h.service, id, ImportRequest{Mode: ModeManualImport, Items: items, ProjectKey: source.DefaultProjectKey, controlledTranscription: true})
+	result, err := syncSourceWithContext(c.Request.Context(), h.service, id, ImportRequest{Mode: ModeManualImport, Items: items, ProjectKey: source.DefaultProjectKey, controlledTranscription: true})
 	if errors.Is(err, ErrSyncInProgress) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return

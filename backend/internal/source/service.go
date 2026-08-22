@@ -166,6 +166,13 @@ type ContextSyncService interface {
 	SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
 }
 
+func syncSourceWithContext(ctx context.Context, service Service, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
+	if contextual, ok := service.(ContextSyncService); ok {
+		return contextual.SyncContext(ctx, sourceID, request)
+	}
+	return service.Sync(sourceID, request)
+}
+
 type Service interface {
 	Connectors() ([]models.SourceConnector, error)
 	CreateSource(request CreateSourceRequest) (*models.ConnectedSource, error)
