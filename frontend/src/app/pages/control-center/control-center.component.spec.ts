@@ -1,0 +1,59 @@
+import { fakeAsync, tick } from '@angular/core/testing'
+import { Subject } from 'rxjs'
+import { ControlCenterComponent } from './control-center.component'
+
+describe('ControlCenterComponent', () => {
+  function createComponent(agentCycle: { run: jasmine.Spy }) {
+    const notifications = {
+      error: jasmine.createSpy('error'),
+      success: jasmine.createSpy('success'),
+      warning: jasmine.createSpy('warning'),
+    }
+
+    const component = new ControlCenterComponent(
+      {} as any,
+      {} as any,
+      {} as any,
+      agentCycle as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      notifications as any,
+      {} as any
+    )
+
+    return { component, notifications }
+  }
+
+  it('does not start overlapping operating-brief refreshes', () => {
+    const run = jasmine.createSpy('run')
+    const response = new Subject<any>()
+    run.and.returnValue(response.asObservable())
+    const { component } = createComponent({ run })
+
+    component.runScan()
+    component.runScan()
+
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(component.scanning).toBeTrue()
+
+    response.error({ error: { error: 'backend unavailable' } })
+    expect(component.scanning).toBeFalse()
+  })
+
+  it('releases the running state when the operating-brief request times out', fakeAsync(() => {
+    const run = jasmine.createSpy('run')
+    run.and.returnValue(new Subject<any>().asObservable())
+    const { component, notifications } = createComponent({ run })
+
+    component.runScan()
+    tick(30000)
+
+    expect(component.scanning).toBeFalse()
+    expect(notifications.error).toHaveBeenCalledWith(
+      'Agent cycle failed',
+      'The operational cycle could not complete.'
+    )
+  }))
+})

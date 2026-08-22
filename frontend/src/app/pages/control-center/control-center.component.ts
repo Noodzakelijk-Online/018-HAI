@@ -1,7 +1,7 @@
 import { Component, Inject, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
 import { forkJoin, of } from 'rxjs'
-import { catchError, timeout } from 'rxjs/operators'
+import { catchError, finalize, timeout } from 'rxjs/operators'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { IAgentCycleRunResult } from '../../models/agent-cycle.model.interface'
 import {
@@ -109,6 +109,7 @@ export class ControlCenterComponent implements OnInit {
   archivingMemoryId = ''
   diagnosticsExpanded = false
   mobileNavigationOpen = false
+  private readonly operationTimeoutMs = 30000
   private checkingIds = new Set<string>()
   private launchingIds = new Set<string>()
 
@@ -309,8 +310,14 @@ export class ControlCenterComponent implements OnInit {
   }
 
   runScan(): void {
+    if (this.scanning) {
+      return
+    }
     this.scanning = true
-    this.agentCycleService.run({ trigger: 'command-center', limit: 5 }).subscribe({
+    this.agentCycleService.run({ trigger: 'command-center', limit: 5 }).pipe(
+      timeout(this.operationTimeoutMs),
+      finalize(() => (this.scanning = false))
+    ).subscribe({
       next: (result) => {
         this.lastAgentCycle = result
         if (result.dashboard) {
@@ -322,7 +329,6 @@ export class ControlCenterComponent implements OnInit {
             scans: [result.ambientScan, ...(this.ambientOverview.scans || [])].slice(0, 10),
           }
         }
-        this.scanning = false
         this.rebuildViewModel()
         if (result.status === 'completed') {
           this.notification.success(result.executionScope === 'owner_scoped' ? 'Personal operating refresh completed' : 'Agent cycle completed', this.agentCycleSummary(result))
@@ -334,7 +340,6 @@ export class ControlCenterComponent implements OnInit {
         this.refresh()
       },
       error: (error) => {
-        this.scanning = false
         this.notification.error(
           'Agent cycle failed',
           error?.error?.error || 'The operational cycle could not complete.'

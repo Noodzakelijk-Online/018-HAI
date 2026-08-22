@@ -3,7 +3,7 @@ import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { NzModalService } from 'ng-zorro-antd/modal';
-import { catchError, forkJoin, of } from 'rxjs';
+import { catchError, forkJoin, of, timeout } from 'rxjs';
 import {
   IPursuitDetail,
   IPursuitMatchCandidate,
@@ -68,6 +68,7 @@ export class WorkflowEngineComponent implements OnInit {
   saving = false;
   matchingPursuits = false;
   runningAction?: 'refresh' | 'worker' | 'selected' | 'followups' | 'recovery' | 'reminders';
+  private readonly operationTimeoutMs = 30000;
   lastOperation?: {
     name: string;
     status: 'completed' | 'failed';
@@ -736,7 +737,7 @@ export class WorkflowEngineComponent implements OnInit {
       return;
     }
     this.runningAction = 'worker';
-    this.workflowService.runDue({ limit: 10 }).subscribe({
+    this.workflowService.runDue({ limit: 10 }).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (summary) => {
         this.runSummary = summary;
         this.runningAction = undefined;
@@ -769,7 +770,7 @@ export class WorkflowEngineComponent implements OnInit {
       return;
     }
     this.runningAction = 'recovery';
-    this.workflowService.recoverStaleClaims({ limit: 50 }).subscribe({
+    this.workflowService.recoverStaleClaims({ limit: 50 }).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (summary) => {
         this.recoverySummary = summary;
         this.runningAction = undefined;
