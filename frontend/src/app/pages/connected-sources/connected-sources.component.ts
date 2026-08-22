@@ -602,6 +602,10 @@ export class ConnectedSourcesComponent implements OnInit {
     return source.enabled && source.status !== 'revoked' && this.connectorCanCreateSource(this.connectorFor(source));
   }
 
+  folderSources(): IConnectedSource[] {
+    return this.sources.filter((source) => source.connectorKey === 'local-folder' && this.syncButtonVisible(source));
+  }
+
   sourceExtractionCount(source: IConnectedSource): number {
     return this.extractions.filter((extraction) => extraction.sourceId === source.id).length;
   }
@@ -918,6 +922,14 @@ export class ConnectedSourcesComponent implements OnInit {
 
   syncFolder(): void {
     if (this.folderForm.invalid) {
+      return;
+    }
+    const source = this.sources.find((item) => item.id === this.folderForm.value.sourceId);
+    if (!source || source.connectorKey !== 'local-folder' || !this.syncButtonVisible(source)) {
+      this.notification.warning(
+        'Local folder source required',
+        'Select an active local-folder source before scanning an allowlisted folder.'
+      );
       return;
     }
     this.syncing = true;

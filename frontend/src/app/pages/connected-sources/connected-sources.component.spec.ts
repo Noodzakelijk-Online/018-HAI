@@ -252,4 +252,40 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.recordHistoryMetric()).toBe('2');
     expect(component.recordHistoryHasMore()).toBeFalse();
   });
+
+  it('does not run a folder scan against a non-folder source', () => {
+    const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
+    const sourceService = jasmine.createSpyObj('ConnectedSourceService', ['sync']);
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['warning']);
+    const component = new ConnectedSourcesComponent(
+      new FormBuilder(),
+      sourceService as any,
+      notification,
+      router,
+      { mode: () => 'light' } as any,
+    );
+    component.connectors = [{ connectorKey: 'trello', enabled: true, adapterStatus: 'operational' } as any];
+    component.sources = [{ id: 'source-1', connectorKey: 'trello', enabled: true, status: 'active' } as IConnectedSource];
+    component.folderForm.patchValue({ sourceId: 'source-1' });
+
+    component.syncFolder();
+
+    expect(sourceService.sync).not.toHaveBeenCalled();
+    expect(notification.warning).toHaveBeenCalledWith('Local folder source required', jasmine.any(String));
+  });
+
+  it('offers only active local-folder sources for folder scans', () => {
+    const { component } = createComponent();
+    component.connectors = [
+      { connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only' },
+      { connectorKey: 'trello', enabled: true, adapterStatus: 'operational' },
+    ] as any;
+    component.sources = [
+      { id: 'folder', connectorKey: 'local-folder', enabled: true, status: 'active' },
+      { id: 'trello', connectorKey: 'trello', enabled: true, status: 'active' },
+      { id: 'paused-folder', connectorKey: 'local-folder', enabled: false, status: 'paused' },
+    ] as IConnectedSource[];
+
+    expect(component.folderSources().map((source) => source.id)).toEqual(['folder']);
+  });
 });
