@@ -780,6 +780,50 @@ func TestCreateSourceAllowsOperationalEmailExportConnector(t *testing.T) {
 	}
 }
 
+func TestCreateSourceRejectsUnconfiguredTrelloWithActionableReason(t *testing.T) {
+	t.Setenv(trelloAPIKeyEnv, "")
+	t.Setenv(trelloReadTokenEnv, "")
+
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	_, err := service.CreateSource(CreateSourceRequest{
+		OwnerIdentity: "alice",
+		ConnectorKey:  trelloConnectorKey,
+		Name:          "Robert's Trello board",
+		Enabled:       true,
+		SyncFrequency: "manual",
+		SyncTarget:    "board-id",
+	})
+	if err == nil {
+		t.Fatal("CreateSource succeeded for an unconfigured Trello connector")
+	}
+	if !strings.Contains(err.Error(), "configuration is required") || !strings.Contains(err.Error(), "TRELLO_API_KEY") {
+		t.Fatalf("CreateSource error = %q, want actionable configuration requirement", err)
+	}
+}
+
+func TestCreateSourceRejectsUnconfiguredGoogleConnectorWithActionableReason(t *testing.T) {
+	t.Setenv("GOOGLE_OAUTH_CLIENT_ID", "")
+	t.Setenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+	t.Setenv("GOOGLE_OAUTH_REDIRECT_URL", "")
+	t.Setenv("HAI_GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY", "")
+	t.Setenv("HAI_GOOGLE_OAUTH_STATE_SIGNING_KEY", "")
+
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	_, err := service.CreateSource(CreateSourceRequest{
+		OwnerIdentity: "alice",
+		ConnectorKey:  gmailConnectorKey,
+		Name:          "Robert's Gmail",
+		Enabled:       true,
+		SyncFrequency: "manual",
+	})
+	if err == nil {
+		t.Fatal("CreateSource succeeded for an unconfigured Google connector")
+	}
+	if !strings.Contains(err.Error(), "configuration is required") || !strings.Contains(err.Error(), "GOOGLE_OAUTH_") {
+		t.Fatalf("CreateSource error = %q, want actionable configuration requirement", err)
+	}
+}
+
 func TestSyncEmailExportUsesAllowlistedFolderAndEmailFilesOnly(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root+"/inbox.mbox", "From sender@example.com Sun Jun  1 10:00:00 2026\nSubject: Evidence request\n\nFollow up: prepare the requested evidence bundle.")

@@ -314,7 +314,7 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 	if !googleOAuthReady() {
 		for i := range connectors {
 			if isGoogleOAuthConnector(connectors[i].ConnectorKey) {
-				connectors[i].AdapterStatus = AdapterNotImplemented
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
 				connectors[i].StatusReason = "real read-only Google OAuth adapter is implemented but GOOGLE_OAUTH_* or the dedicated HAI OAuth encryption/signing keys are not set"
 			}
 		}
@@ -324,7 +324,7 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 	if !trelloConfigured() {
 		for i := range connectors {
 			if connectors[i].ConnectorKey == trelloConnectorKey {
-				connectors[i].AdapterStatus = AdapterNotImplemented
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
 				connectors[i].StatusReason = "real read-only Trello REST adapter is implemented but TRELLO_API_KEY/TRELLO_READ_TOKEN are not set, so it cannot connect yet"
 			}
 		}
@@ -488,7 +488,7 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 		}
 	}
 	if !connector.Enabled || !adapterIsUsable(connector.AdapterStatus) {
-		return nil, fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", connectorKey)
+		return nil, connectorUnavailableError(connector)
 	}
 	category := firstNonEmpty(request.Category, connector.Category)
 	if category == "" {
@@ -2058,7 +2058,7 @@ func (s *service) ensureConnectors() error {
 }
 
 func (s *service) connectorByKey(connectorKey string) (models.SourceConnector, error) {
-	connectors, err := s.repo.FindConnectors()
+	connectors, err := s.Connectors()
 	if err != nil {
 		return models.SourceConnector{}, err
 	}
@@ -2068,6 +2068,22 @@ func (s *service) connectorByKey(connectorKey string) (models.SourceConnector, e
 		}
 	}
 	return models.SourceConnector{}, fmt.Errorf("connector %s is not registered", connectorKey)
+}
+
+func connectorUnavailableError(connector models.SourceConnector) error {
+	key := strings.TrimSpace(connector.ConnectorKey)
+	if !connector.Enabled {
+		return fmt.Errorf("connector %s is disabled", key)
+	}
+
+	switch strings.TrimSpace(connector.AdapterStatus) {
+	case AdapterConfigurationRequired:
+		return fmt.Errorf("connector %s configuration is required: %s", key, strings.TrimSpace(connector.StatusReason))
+	case AdapterNotImplemented, "":
+		return fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", key)
+	default:
+		return fmt.Errorf("connector %s is unavailable (status %s): %s", key, connector.AdapterStatus, strings.TrimSpace(connector.StatusReason))
+	}
 }
 
 func (s *service) upsertRawItem(source *models.ConnectedSource, item ImportItem, index int) (*models.SourceRawItem, bool, error) {
