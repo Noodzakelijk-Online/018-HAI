@@ -81,6 +81,24 @@ func TestSyncLocalFolderExtractsReadableFilesWithProvenance(t *testing.T) {
 	}
 }
 
+func TestSyncContextStopsBeforeCreatingWorkWhenCallerIsCancelled(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: "local-folder", Name: "Cancelled source", Category: "local_folder",
+		Enabled: true, LocalOnly: true, Status: "active",
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := NewService(repo, nil).SyncContext(ctx, sourceID, ImportRequest{Mode: ModeManualImport})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SyncContext error = %v, want context.Canceled", err)
+	}
+	if len(repo.jobs) != 0 {
+		t.Fatalf("cancelled sync created %d job(s)", len(repo.jobs))
+	}
+}
+
 func TestSyncWhisperAudioRequiresControlledTranscriptionRoute(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{

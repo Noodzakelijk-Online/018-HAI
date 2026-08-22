@@ -220,7 +220,7 @@ func (h *Handler) Sync(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	result, err := h.service.Sync(id, request)
+	result, err := h.service.SyncContext(c.Request.Context(), id, request)
 	if err != nil {
 		if errors.Is(err, ErrSyncInProgress) {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})

@@ -163,6 +163,7 @@ type Service interface {
 	Sources(includeDisabled bool) ([]models.ConnectedSource, error)
 	SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
 	Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
+	SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
 	// DueSources lists enabled sources whose schedule is due at now. The durable
 	// scheduler uses it to enqueue one retryable job per source.
 	DueSources(now time.Time) ([]models.ConnectedSource, error)
@@ -692,6 +693,19 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 }
 
 func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
+	return s.SyncContext(context.Background(), sourceID, request)
+}
+
+// SyncContext preserves request and worker cancellation through the connector
+// fetches. Sync remains for compatibility with in-process callers that do not
+// own a lifecycle context.
+func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !s.beginSync(sourceID) {
 		return nil, ErrSyncInProgress
 	}
@@ -833,7 +847,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == gmailConnectorKey {
-		items, adapterCursor, err = s.fetchGmailSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchGmailSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -845,7 +859,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == driveConnectorKey {
-		items, adapterCursor, err = s.fetchDriveSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchDriveSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -857,7 +871,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == contactsConnectorKey {
-		items, adapterCursor, err = s.fetchContactsSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchContactsSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -869,7 +883,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == calendarConnectorKey {
-		items, adapterCursor, err = s.fetchCalendarSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchCalendarSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -893,7 +907,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == odooJSON2ConnectorKey {
-		items, adapterCursor, err = fetchOdooJSON2Source(context.Background(), source)
+		items, adapterCursor, err = fetchOdooJSON2Source(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -906,7 +920,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		s.audit(sourceID, "source.odoo_json2_read", fmt.Sprintf("read %d bounded Odoo JSON-2 record(s) through the configured model allowlist", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == shareTConnectorKey {
-		items, adapterCursor, err = fetchShareTSource(context.Background(), source)
+		items, adapterCursor, err = fetchShareTSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -932,7 +946,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		s.audit(sourceID, "source.cloudquery_summary_read", fmt.Sprintf("read %d bounded CloudQuery sync summary record(s) from the configured local summary file", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == airbyteInventoryConnectorKey {
-		items, adapterCursor, err = fetchAirbyteInventory(context.Background(), source)
+		items, adapterCursor, err = fetchAirbyteInventory(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -945,7 +959,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		s.audit(sourceID, "source.airbyte_inventory_read", fmt.Sprintf("read %d bounded Airbyte source and connection inventory record(s) from approved workspaces", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == laroConnectorKey {
-		items, adapterCursor, err = fetchLAROSource(context.Background(), source)
+		items, adapterCursor, err = fetchLAROSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
@@ -1031,6 +1045,15 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	for index, item := range items {
+		if err := ctx.Err(); err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = "sync cancelled: " + err.Error()
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_cancelled", job.Message)
+			return nil, err
+		}
 		if shouldExclude(source.ExcludePatterns, item.Title+" "+item.SourceURI) {
 			continue
 		}
@@ -1053,7 +1076,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			recordFailure(item, "index update failed", errIndex)
 			continue
 		}
-		projection, errProjection := s.projectExtractionToLifeGraph(context.Background(), source, extraction)
+		projection, errProjection := s.projectExtractionToLifeGraph(ctx, source, extraction)
 		if errProjection != nil {
 			warning := itemFailure(item, "life graph projection failed", errProjection)
 			if len(warnings) < maxSyncErrorDetails {
