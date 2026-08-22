@@ -1566,6 +1566,7 @@ func initializePhase2Routes(apiVersion *gin.RouterGroup, handler *phase2.Handler
 	backgroundRuns := apiVersion.Group("/background")
 	backgroundRuns.Use(requireAuthenticatedOwner())
 	{
+		backgroundRuns.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
 		backgroundRuns.POST("/run", requirePermission(rbac.PermExecute), handler.RunBackground)
 	}
 }

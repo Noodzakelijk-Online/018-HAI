@@ -1,7 +1,7 @@
 import { HttpErrorResponse } from '@angular/common/http'
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
-import { finalize, forkJoin } from 'rxjs'
+import { finalize } from 'rxjs'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import {
   IAccountFeed,
@@ -61,15 +61,11 @@ export class BackgroundOperationsComponent implements OnInit {
     }
     this.loading = true
     this.overviewLoadError = ''
-    forkJoin({
-      dashboard: this.service.dashboard(),
-      operations: this.service.list(this.statusFilter ? { status: this.statusFilter } : undefined),
-      feeds: this.service.feeds(),
-    }).subscribe({
+    this.service.overview(this.statusFilter ? { status: this.statusFilter } : undefined).subscribe({
       next: ({ dashboard, operations, feeds }) => {
         this.dashboard = dashboard
-        this.operations = operations.operations ?? []
-        this.feeds = feeds.feeds ?? []
+        this.operations = operations ?? []
+        this.feeds = feeds ?? []
         this.finishRefresh()
       },
       error: () => {

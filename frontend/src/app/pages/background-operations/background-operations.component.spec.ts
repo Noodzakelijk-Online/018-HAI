@@ -69,11 +69,28 @@ describe('BackgroundOperationsComponent action submission', () => {
 })
 
 describe('BackgroundOperationsComponent refresh', () => {
-  it('keeps a visible recovery state when the operational dashboard cannot load', () => {
-    const service = jasmine.createSpyObj<BackgroundOperationsService>('BackgroundOperationsService', ['dashboard', 'list', 'feeds'])
-    service.dashboard.and.returnValue(throwError(() => new Error('gateway unavailable')))
+
+  it('loads the page through one overview request instead of three independent requests', () => {
+    const service = jasmine.createSpyObj<any>('BackgroundOperationsService', ['overview', 'dashboard', 'list', 'feeds'])
+    service.overview.and.returnValue(of({ dashboard: {}, operations: [], feeds: [] }))
+    service.dashboard.and.returnValue(of({}))
     service.list.and.returnValue(of({ operations: [] }))
     service.feeds.and.returnValue(of({ feeds: [] }))
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['success', 'error', 'warning'])
+    const router = jasmine.createSpyObj<Router>('Router', ['navigate'])
+    const component = new BackgroundOperationsComponent(service, notification, router)
+
+    component.refresh()
+
+    expect(service.overview).toHaveBeenCalledTimes(1)
+    expect(service.dashboard).not.toHaveBeenCalled()
+    expect(service.list).not.toHaveBeenCalled()
+    expect(service.feeds).not.toHaveBeenCalled()
+  })
+
+  it('keeps a visible recovery state when the operational dashboard cannot load', () => {
+    const service = jasmine.createSpyObj<BackgroundOperationsService>('BackgroundOperationsService', ['overview'])
+    service.overview.and.returnValue(throwError(() => new Error('gateway unavailable')))
     const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['success', 'error', 'warning'])
     const router = jasmine.createSpyObj<Router>('Router', ['navigate'])
     const component = new BackgroundOperationsComponent(service, notification, router)
@@ -85,16 +102,10 @@ describe('BackgroundOperationsComponent refresh', () => {
   })
 
   it('does not start overlapping dashboard batches while a refresh is pending', () => {
-    const dashboard = new Subject<any>()
-    const operations = new Subject<any>()
-    const feeds = new Subject<any>()
-    const queuedDashboard = new Subject<any>()
-    const queuedOperations = new Subject<any>()
-    const queuedFeeds = new Subject<any>()
-    const service = jasmine.createSpyObj<BackgroundOperationsService>('BackgroundOperationsService', ['dashboard', 'list', 'feeds'])
-    service.dashboard.and.returnValues(dashboard.asObservable(), queuedDashboard.asObservable())
-    service.list.and.returnValues(operations.asObservable(), queuedOperations.asObservable())
-    service.feeds.and.returnValues(feeds.asObservable(), queuedFeeds.asObservable())
+    const overview = new Subject<any>()
+    const queuedOverview = new Subject<any>()
+    const service = jasmine.createSpyObj<BackgroundOperationsService>('BackgroundOperationsService', ['overview'])
+    service.overview.and.returnValues(overview.asObservable(), queuedOverview.asObservable())
     const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['success', 'error', 'warning'])
     const router = jasmine.createSpyObj<Router>('Router', ['navigate'])
     const component = new BackgroundOperationsComponent(service, notification, router)
@@ -102,27 +113,15 @@ describe('BackgroundOperationsComponent refresh', () => {
     component.refresh()
     component.refresh()
 
-    expect(service.dashboard).toHaveBeenCalledTimes(1)
-    expect(service.list).toHaveBeenCalledTimes(1)
-    expect(service.feeds).toHaveBeenCalledTimes(1)
+    expect(service.overview).toHaveBeenCalledTimes(1)
 
-    dashboard.next({})
-    dashboard.complete()
-    operations.next({ operations: [] })
-    operations.complete()
-    feeds.next({ feeds: [] })
-    feeds.complete()
+    overview.next({ dashboard: {}, operations: [], feeds: [] })
+    overview.complete()
 
-    expect(service.dashboard).toHaveBeenCalledTimes(2)
-    expect(service.list).toHaveBeenCalledTimes(2)
-    expect(service.feeds).toHaveBeenCalledTimes(2)
+    expect(service.overview).toHaveBeenCalledTimes(2)
 
-    queuedDashboard.next({})
-    queuedDashboard.complete()
-    queuedOperations.next({ operations: [] })
-    queuedOperations.complete()
-    queuedFeeds.next({ feeds: [] })
-    queuedFeeds.complete()
+    queuedOverview.next({ dashboard: {}, operations: [], feeds: [] })
+    queuedOverview.complete()
 
     expect(component.loading).toBeFalse()
   })
