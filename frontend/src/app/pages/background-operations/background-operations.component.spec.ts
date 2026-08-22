@@ -142,4 +142,22 @@ describe('BackgroundOperationsComponent background run recovery', () => {
 
     expect(message).toBe('A background pass is already running. Wait a moment, then refresh this page.')
   })
+
+  it('does not submit a second background pass while the first request is pending', () => {
+    const backgroundRun = new Subject<any>()
+    const service = jasmine.createSpyObj<BackgroundOperationsService>('BackgroundOperationsService', ['runBackground'])
+    service.runBackground.and.returnValue(backgroundRun.asObservable())
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['success', 'error', 'warning'])
+    const router = jasmine.createSpyObj<Router>('Router', ['navigate'])
+    const component = new BackgroundOperationsComponent(service, notification, router)
+    spyOn(component, 'refresh')
+
+    component.runBackground()
+    component.runBackground()
+
+    expect(service.runBackground).toHaveBeenCalledTimes(1)
+
+    backgroundRun.next({ operationsCreated: 0, verified: 0, awaitingApproval: 0 })
+    backgroundRun.complete()
+  })
 })

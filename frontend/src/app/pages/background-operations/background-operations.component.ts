@@ -93,6 +93,7 @@ export class BackgroundOperationsComponent implements OnInit {
   }
 
   runBackground(): void {
+    if (this.running) return
     this.running = true
     this.lastRunError = ''
     this.service.runBackground().subscribe({
