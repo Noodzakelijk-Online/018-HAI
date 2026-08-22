@@ -583,6 +583,10 @@ export class ConnectedSourcesComponent implements OnInit {
 		}
 	}
 
+  googleConnectorCanConnect(connectorKey: 'gmail' | 'google-drive' | 'google-contacts' | 'google-calendar'): boolean {
+    return this.connectorCanConnect(this.connectors.find((connector) => connector.connectorKey === connectorKey));
+  }
+
 	selectedConnectorCanConnect(): boolean {
 		return this.connectorCanConnect(this.connectors.find(
 		  (connector) => connector.connectorKey === this.sourceForm.value.connectorKey

@@ -253,19 +253,19 @@
                 before either connector can be authorized.
               </p>
               <div class="form-footer">
-                <button type="button" nz-button nzType="primary" (click)="connectGmail()">
+                <button type="button" nz-button nzType="primary" (click)="connectGmail()" [nzLoading]="connecting" [disabled]="connecting || !googleConnectorCanConnect('gmail')" title="Configure valid Google OAuth and HAI encryption keys before connecting Gmail.">
                   <span nz-icon nzType="google"></span>
                   Connect Gmail
                 </button>
-                <button type="button" nz-button nzType="default" (click)="connectGoogleDrive()">
+                <button type="button" nz-button nzType="default" (click)="connectGoogleDrive()" [disabled]="connecting || !googleConnectorCanConnect('google-drive')" title="Configure valid Google OAuth and HAI encryption keys before connecting Drive.">
                   <span nz-icon nzType="folder-open"></span>
                   Connect Drive
                 </button>
-                <button type="button" nz-button nzType="default" (click)="connectGoogleContacts()">
+                <button type="button" nz-button nzType="default" (click)="connectGoogleContacts()" [disabled]="connecting || !googleConnectorCanConnect('google-contacts')" title="Configure valid Google OAuth and HAI encryption keys before connecting Contacts.">
                   <span nz-icon nzType="contacts"></span>
                   Connect Contacts
                 </button>
-                <button type="button" nz-button nzType="default" (click)="connectGoogleCalendar()">
+                <button type="button" nz-button nzType="default" (click)="connectGoogleCalendar()" [disabled]="connecting || !googleConnectorCanConnect('google-calendar')" title="Configure valid Google OAuth and HAI encryption keys before connecting Calendar.">
                   <span nz-icon nzType="calendar"></span>
                   Connect Calendar
                 </button>

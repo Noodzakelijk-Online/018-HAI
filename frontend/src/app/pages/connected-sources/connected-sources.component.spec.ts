@@ -112,6 +112,17 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 		expect(component.adapterStatusLabel('configuration_required')).toBe('setup required');
 	});
 
+  it('keeps Google connection controls disabled until that connector is configured', () => {
+    const { component } = createComponent();
+    component.connectors = [
+      { connectorKey: 'gmail', enabled: true, adapterStatus: 'configuration_required' } as any,
+      { connectorKey: 'google-drive', enabled: true, adapterStatus: 'operational' } as any,
+    ];
+
+    expect(component.googleConnectorCanConnect('gmail')).toBeFalse();
+    expect(component.googleConnectorCanConnect('google-drive')).toBeTrue();
+  });
+
   it('uses remote read-only defaults for a Trello board source', () => {
     const { component } = createComponent();
 
