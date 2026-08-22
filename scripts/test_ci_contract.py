@@ -164,6 +164,10 @@ class CIWorkflowContractTest(unittest.TestCase):
         frontend = job_block("frontend")
 
         self.assertIn('"packageManager": "npm@10.9.8"', package)
+        self.assertIn(
+            '"node": "^22.22.3 || ^24.15.0 || >=26.0.0"',
+            package,
+        )
         self.assertIn('"@angular/core": "22.1.1"', package)
         self.assertIn('"@angular/build": "22.1.3"', package)
         self.assertIn('"builder": "@angular/build:application"', angular)
