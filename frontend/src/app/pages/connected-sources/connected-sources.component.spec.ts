@@ -100,4 +100,26 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     component.connectors[4].adapterStatus = 'operational';
     expect(component.googleConnectorMetric()).toBe('4 ready');
   });
+
+  it('initializes the live Trello connector as a non-local, scheduled board source', () => {
+    const { component } = createComponent();
+    component.sourceForm.patchValue({
+      connectorKey: 'trello',
+      localOnly: true,
+      syncTarget: 'documents',
+      excludePatterns: 'trash,temp',
+    });
+
+    component.connectorChanged('trello');
+
+    expect(component.sourceForm.value).toEqual(jasmine.objectContaining({
+      connectorKey: 'trello',
+      name: 'Trello board (read-only API)',
+      localOnly: false,
+      syncFrequency: '15m',
+      syncTarget: '',
+      excludePatterns: '',
+    }));
+    expect(component.syncTargetPlaceholder()).toContain('Trello board ID');
+  });
 });

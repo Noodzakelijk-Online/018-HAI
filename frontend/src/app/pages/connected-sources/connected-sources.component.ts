@@ -613,6 +613,16 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
+    if (connectorKey === 'trello') {
+      this.sourceForm.patchValue({
+        name: 'Trello board (read-only API)',
+        syncFrequency: '15m',
+        syncTarget: '',
+        localOnly: false,
+        excludePatterns: '',
+      });
+      return;
+    }
     if (connectorKey === 'github') {
       this.sourceForm.patchValue({
         name: 'GitHub repository',
