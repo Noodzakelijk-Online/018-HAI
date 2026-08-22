@@ -253,6 +253,13 @@ export class ConnectedSourcesComponent implements OnInit {
     const connector = this.connectors.find(
       (item) => item.connectorKey === this.sourceForm.value.connectorKey
     );
+    if (!connector || !this.connectorCanCreateSource(connector)) {
+      this.notification.warning(
+        'Connector setup required',
+        connector?.statusReason || 'Refresh connectors and complete the required connector setup before creating a source.'
+      );
+      return;
+    }
     this.sourceService
       .createSource({
         connectorKey: this.sourceForm.value.connectorKey,
@@ -466,6 +473,8 @@ export class ConnectedSourcesComponent implements OnInit {
         return 'local files only';
       case 'modeled':
         return 'built-in model';
+      case 'configuration_required':
+        return 'setup required';
       case 'not_implemented':
         return 'not implemented';
       default:
@@ -630,6 +639,13 @@ export class ConnectedSourcesComponent implements OnInit {
   connectorLabel(connector: ISourceConnector): string {
     const status = connector.adapterStatus || (connector.enabled ? 'operational' : 'not_implemented');
     return `${connector.name} — ${this.adapterStatusLabel(status)}`;
+  }
+
+  connectorCanCreateSource(connector?: ISourceConnector): boolean {
+    if (!connector?.enabled) {
+      return false;
+    }
+    return ['operational', 'local_only', 'modeled'].includes((connector.adapterStatus || '').toLowerCase());
   }
 
   connectorChanged(connectorKey: string): void {
@@ -989,10 +1005,10 @@ export class ConnectedSourcesComponent implements OnInit {
       'google-calendar': 'calendar.readonly',
     };
     const label = labels[connectorKey];
-    if (!connector?.enabled || connector.adapterStatus === 'not_implemented') {
+    if (!connector || !this.connectorCanCreateSource(connector)) {
       this.notification.warning(
         `${label} not configured`,
-        'Configure the Google OAuth client, redirect URL, token encryption key, and state signing key first.'
+        connector?.statusReason || 'Configure the Google OAuth client, redirect URL, token encryption key, and state signing key first.'
       );
       return;
     }

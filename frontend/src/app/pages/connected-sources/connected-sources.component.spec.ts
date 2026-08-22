@@ -102,6 +102,18 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.googleConnectorMetric()).toBe('4 ready');
   });
 
+  it('labels configuration-required connectors as setup required and prevents source creation', () => {
+    const { component } = createComponent();
+    const connector = {
+      connectorKey: 'trello',
+      enabled: true,
+      adapterStatus: 'configuration_required',
+    } as any;
+
+    expect(component.adapterStatusLabel(connector.adapterStatus)).toBe('setup required');
+    expect(component.connectorCanCreateSource(connector)).toBeFalse();
+  });
+
   it('initializes the live Trello connector as a non-local, scheduled board source', () => {
     const { component } = createComponent();
     component.sourceForm.patchValue({

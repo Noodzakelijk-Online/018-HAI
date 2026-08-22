@@ -148,7 +148,7 @@
                     *ngFor="let connector of connectors"
                     [nzValue]="connector.connectorKey"
                     [nzLabel]="connectorLabel(connector)"
-                    [nzDisabled]="!connector.enabled"
+                    [nzDisabled]="!connectorCanCreateSource(connector)"
                   ></nz-option>
                 </nz-select>
               </label>
