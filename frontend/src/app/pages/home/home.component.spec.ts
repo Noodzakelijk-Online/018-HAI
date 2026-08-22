@@ -57,4 +57,23 @@ describe('HomeComponent', () => {
     expect(component.automations.map((automation) => automation.id)).toEqual(['first', 'second']);
     expect(notification.error).toHaveBeenCalled();
   });
+
+  it('keeps the profile modal closed and explains when the profile cannot load', () => {
+    const notification = TestBed.inject(NzNotificationService) as unknown as { error: jasmine.Spy };
+    notification.error = jasmine.createSpy('error');
+    const userService = TestBed.inject(USER_SERVICE_TOKEN) as unknown as {
+      getUser: jasmine.Spy;
+    };
+    userService.getUser = jasmine
+      .createSpy('getUser')
+      .and.returnValue(throwError(() => new Error('offline')));
+
+    component.showProfileModal();
+
+    expect(component.isProfileVisible).toBeFalse();
+    expect(notification.error).toHaveBeenCalledWith(
+      'Profile unavailable',
+      'Your profile could not be loaded. Check the connection and try again.'
+    );
+  });
 });

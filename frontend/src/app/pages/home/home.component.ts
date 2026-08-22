@@ -255,9 +255,18 @@ export class HomeComponent implements OnInit {
   }
 
   showProfileModal(): void {
-    this.userSubscription = this.userService.getUser().subscribe((user) => {
-      this.profileForm.get('email')?.setValue(user.email)
-      this.isProfileVisible = true
+    this.userSubscription = this.userService.getUser().subscribe({
+      next: (user) => {
+        this.profileForm.get('email')?.setValue(user.email)
+        this.isProfileVisible = true
+      },
+      error: () => {
+        this.isProfileVisible = false
+        this.notification.error(
+          'Profile unavailable',
+          'Your profile could not be loaded. Check the connection and try again.'
+        )
+      },
     })
   }
 
