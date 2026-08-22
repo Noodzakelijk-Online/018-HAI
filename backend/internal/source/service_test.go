@@ -99,6 +99,24 @@ func TestSyncContextStopsBeforeCreatingWorkWhenCallerIsCancelled(t *testing.T) {
 	}
 }
 
+func TestSourceAuditRedactsCredentialLikeFailureDetails(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo()
+	service := NewService(repo, nil).(*service)
+
+	service.audit(sourceID, "source.sync_failed", "fetch failed: token=super-secret-value Authorization: Bearer another-secret")
+
+	if len(repo.auditLogs) != 1 {
+		t.Fatalf("audit logs=%d, want 1", len(repo.auditLogs))
+	}
+	message := repo.auditLogs[0].Message
+	for _, secret := range []string{"super-secret-value", "another-secret"} {
+		if strings.Contains(message, secret) {
+			t.Fatalf("audit message leaked %q: %s", secret, message)
+		}
+	}
+}
+
 func TestFetchJSONFeedContextStopsBeforeOpeningRemoteRequestWhenCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

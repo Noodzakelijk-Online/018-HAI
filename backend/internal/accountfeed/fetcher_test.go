@@ -24,6 +24,13 @@ func TestValidateFeedURLRejectsPrivateNetworkAddresses(t *testing.T) {
 	}
 }
 
+func TestValidateFeedURLRejectsEmbeddedCredentials(t *testing.T) {
+	err := validateFeedURL("https://operator:secret@example.test/feed.json")
+	if err == nil || !strings.Contains(err.Error(), "credentials") {
+		t.Fatalf("validateFeedURL accepted embedded credentials: %v", err)
+	}
+}
+
 func TestFetchFeedBytesDoesNotFollowRedirects(t *testing.T) {
 	redirected := false
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

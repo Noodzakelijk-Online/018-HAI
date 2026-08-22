@@ -115,6 +115,9 @@ func validateFeedURL(raw string) error {
 	if host == "" {
 		return fmt.Errorf("accountfeed: feed URL host is empty")
 	}
+	if u.User != nil {
+		return fmt.Errorf("accountfeed: feed URL credentials are not allowed")
+	}
 	if strings.Contains(strings.ToLower(host), "metadata") {
 		return fmt.Errorf("accountfeed: metadata host not allowed")
 	}

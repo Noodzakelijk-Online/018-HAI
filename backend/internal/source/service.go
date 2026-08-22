@@ -2465,7 +2465,7 @@ func (s *service) audit(sourceID uuid.UUID, action, message string) {
 	_, _ = s.repo.SaveAuditLog(&models.SourceAuditLog{
 		SourceID: sourceID,
 		Action:   action,
-		Message:  message,
+		Message:  safety.RedactSecrets(message),
 	})
 }
 
