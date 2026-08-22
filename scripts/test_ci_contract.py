@@ -298,6 +298,22 @@ class CIWorkflowContractTest(unittest.TestCase):
 
         self.assertIn("    mem_limit: 512m", backend)
 
+    def test_local_model_profile_exposes_a_private_ollama_service(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        match = re.search(
+            r"(?ms)^  ollama-local:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|^networks:)",
+            compose,
+        )
+        self.assertIsNotNone(match)
+        service = match.group(1) if match else ""
+
+        self.assertIn('profiles: ["local-model"]', service)
+        self.assertIn("ollama/ollama:0.32.11@sha256:", service)
+        self.assertIn("ollama-local-data:/root/.ollama", service)
+        self.assertIn("mem_limit: 2g", service)
+        self.assertIn("cpus: 2.0", service)
+        self.assertNotIn("ports:", service)
+
     def test_core_local_service_images_are_digest_pinned(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
 
