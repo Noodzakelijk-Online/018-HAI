@@ -254,14 +254,14 @@ class CIWorkflowContractTest(unittest.TestCase):
     def test_redis_has_a_bounded_fail_closed_memory_budget(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         env_template = (ROOT / ".env.example").read_text(encoding="utf-8")
-        start = compose.index("  redis:\n")
+        start = compose.index("\n  redis:\n") + 1
         end = compose.index("\n  zookeeper:\n", start)
         redis = compose[start:end]
 
         self.assertIn("REDIS_MAXMEMORY=128mb", env_template)
         self.assertIn("REDIS_MAXMEMORY_POLICY=noeviction", env_template)
-        self.assertIn('"--maxmemory", "${REDIS_MAXMEMORY}"', redis)
-        self.assertIn('"--maxmemory-policy", "${REDIS_MAXMEMORY_POLICY}"', redis)
+        self.assertIn('"--maxmemory", "${REDIS_MAXMEMORY:-128mb}"', redis)
+        self.assertIn('"--maxmemory-policy", "${REDIS_MAXMEMORY_POLICY:-noeviction}"', redis)
 
     def test_default_compose_entrypoint_uses_the_canonical_source_stack(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")

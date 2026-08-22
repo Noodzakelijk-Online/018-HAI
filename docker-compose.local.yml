@@ -1507,7 +1507,9 @@ services:
     # security boundary. Callers receive an error instead and fail closed.
     mem_limit: 192m
     cpus: 0.5
-    command: ["redis-server", "--port", "${REDIS_PORT}", "--maxmemory", "${REDIS_MAXMEMORY}", "--maxmemory-policy", "${REDIS_MAXMEMORY_POLICY}"]
+    # The defaults also keep older installed `hai.env` files bootable after an
+    # application upgrade adds these settings to the environment template.
+    command: ["redis-server", "--port", "${REDIS_PORT}", "--maxmemory", "${REDIS_MAXMEMORY:-128mb}", "--maxmemory-policy", "${REDIS_MAXMEMORY_POLICY:-noeviction}"]
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6380}:${REDIS_PORT}"
     healthcheck:
