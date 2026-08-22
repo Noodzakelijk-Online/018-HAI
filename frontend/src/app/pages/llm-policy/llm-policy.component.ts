@@ -63,6 +63,9 @@ export class LLMPolicyComponent implements OnInit {
   probing = false;
   maintaining = false;
   routing = false;
+  routingHistoryLoaded = false;
+  probeHistoryLoaded = false;
+  maintenanceHistoryLoaded = false;
   themeMode = this.themeService.mode();
   private providerTierGroups = new Map<string, TierModelGroup[]>();
   private providerPreviews = new Map<string, ILLMModel[]>();
@@ -101,10 +104,16 @@ export class LLMPolicyComponent implements OnInit {
         this.notification.error('Error', 'Failed to load LLM routing policy.');
       },
     });
-    this.loadLogs();
-    this.loadGenerationHistory();
-    this.loadProbeHistory();
-    this.loadModelMaintenanceHistory();
+    if (this.routingHistoryLoaded) {
+      this.loadLogs();
+      this.loadGenerationHistory();
+    }
+    if (this.probeHistoryLoaded) {
+      this.loadProbeHistory();
+    }
+    if (this.maintenanceHistoryLoaded) {
+      this.loadModelMaintenanceHistory();
+    }
   }
 
   toggleTheme(): void {
@@ -124,6 +133,7 @@ export class LLMPolicyComponent implements OnInit {
     this.llmPolicyService.probeProviders().subscribe({
       next: (probes) => {
         this.probes = probes;
+        this.probeHistoryLoaded = true;
         this.rebuildActionCards();
         this.probing = false;
       },
@@ -136,6 +146,7 @@ export class LLMPolicyComponent implements OnInit {
   }
 
   private loadProbeHistory(): void {
+    this.probeHistoryLoaded = true;
     this.llmPolicyService.getProbeHistory().subscribe({
       next: (probes) => {
         this.probes = this.latestProbeByProvider(probes || []);
@@ -149,6 +160,7 @@ export class LLMPolicyComponent implements OnInit {
   }
 
   private loadModelMaintenanceHistory(): void {
+    this.maintenanceHistoryLoaded = true;
     this.llmPolicyService.getModelMaintenanceHistory().subscribe({
       next: (records) => (this.maintenance = records || []),
       error: () => (this.maintenance = []),
@@ -227,6 +239,7 @@ export class LLMPolicyComponent implements OnInit {
   }
 
   loadLogs(): void {
+    this.routingHistoryLoaded = true;
     this.llmPolicyService.getLogs().subscribe({
       next: (logs) => {
         this.logs = logs;
@@ -240,6 +253,7 @@ export class LLMPolicyComponent implements OnInit {
   }
 
   loadGenerationHistory(): void {
+    this.routingHistoryLoaded = true;
     this.llmPolicyService.getGenerationHistory().subscribe({
       next: (records) => {
         this.generations = records || [];
@@ -339,8 +353,8 @@ export class LLMPolicyComponent implements OnInit {
         title: 'Review routing log',
         detail: 'Inspect recent choices and fallback paths.',
         icon: 'history',
-        metric: `${this.generations.length} outcomes`,
-        secondaryMetric: latestLogMetric,
+        metric: this.routingHistoryLoaded ? `${this.generations.length} outcomes` : 'on demand',
+        secondaryMetric: this.routingHistoryLoaded ? latestLogMetric : 'Open to load history',
         context:
           'Opens the trace of selected models, skipped options, estimated cost, validation pressure, and fallback history.',
         tone: 'gold',

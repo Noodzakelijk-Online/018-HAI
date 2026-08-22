@@ -1,6 +1,7 @@
 import { FormBuilder } from '@angular/forms'
 import { Router } from '@angular/router'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
+import { of } from 'rxjs'
 import { ILLMPolicyService } from '../../services/llm-policy.service.interface'
 import { ThemeService } from '../../services/theme.service'
 import { LLMPolicyComponent } from './llm-policy.component'
@@ -54,5 +55,30 @@ describe('LLMPolicyComponent', () => {
     expect(component.validationColor('needs_review')).toBe('gold')
     expect(component.validationColor('failed')).toBe('red')
     expect(component.validationColor()).toBe('default')
+  })
+
+  it('defers routing, probe, and maintenance history until an operator opens it', () => {
+    const themeService = jasmine.createSpyObj<ThemeService>('ThemeService', ['mode', 'toggle', 'label', 'icon'])
+    themeService.mode.and.returnValue('dark')
+    themeService.icon.and.returnValue('star')
+    const service = jasmine.createSpyObj<ILLMPolicyService>('ILLMPolicyService', [
+      'getPolicy', 'getLogs', 'getGenerationHistory', 'getProbeHistory', 'getModelMaintenanceHistory',
+    ])
+    service.getPolicy.and.returnValue(of({ providers: [] } as any))
+    service.getLogs.and.returnValue(of([]))
+    service.getGenerationHistory.and.returnValue(of([]))
+    service.getProbeHistory.and.returnValue(of([]))
+    service.getModelMaintenanceHistory.and.returnValue(of([]))
+    const component = new LLMPolicyComponent(
+      new FormBuilder(), service, {} as NzNotificationService, {} as Router, themeService
+    )
+
+    component.refresh()
+
+    expect(service.getPolicy).toHaveBeenCalled()
+    expect(service.getLogs).not.toHaveBeenCalled()
+    expect(service.getGenerationHistory).not.toHaveBeenCalled()
+    expect(service.getProbeHistory).not.toHaveBeenCalled()
+    expect(service.getModelMaintenanceHistory).not.toHaveBeenCalled()
   })
 })
