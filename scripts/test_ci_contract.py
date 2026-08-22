@@ -225,6 +225,27 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn('profiles: ["legacy-compatibility"]', service)
         self.assertIn("Legacy compatibility server", service)
 
+    def test_core_local_services_have_explicit_resource_ceilings(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        for name in (
+            "postgres-idp",
+            "postgres-automation",
+            "redis",
+            "backend-migrate",
+            "idp",
+            "backend",
+            "frontend",
+            "nginx",
+        ):
+            with self.subTest(service=name):
+                match = re.search(
+                    rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|^networks:)",
+                    compose,
+                )
+                self.assertIsNotNone(match)
+                self.assertRegex(match.group(1), r"(?m)^    mem_limit: \S+")
+                self.assertRegex(match.group(1), r"(?m)^    cpus: \S+")
+
     def test_trello_read_only_connector_is_wired_to_the_runtime(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         backend_start = compose.index("  backend:\n")

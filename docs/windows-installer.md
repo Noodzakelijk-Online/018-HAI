@@ -35,6 +35,12 @@ readiness, and opens `http://127.0.0.1:8088`.
 Use the Start menu entries to open the dashboard, inspect HAI status, or stop
 the stack. Stop HAI preserves the Docker volumes and local settings.
 
+The default local control plane has explicit Docker ceilings: 1 GB for the
+backend and automation database, 512 MB for the IDP and identity database,
+256 MB for Redis and the static frontend, and 128 MB for the gateway. These
+are ceilings, not reserved memory. Optional models, scanners, document tools,
+and event-bus services have separate profiles and do not start unless enabled.
+
 ### Verify a configured Trello board
 
 For an owner who has configured a read-only Trello API key, token, and a board

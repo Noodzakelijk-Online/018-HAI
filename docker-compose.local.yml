@@ -6,6 +6,8 @@ services:
     container_name: 018-hai-idp
     hostname: idp
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
     depends_on:
       postgres-idp:
         condition: service_healthy
@@ -79,6 +81,8 @@ services:
     container_name: 018-hai-backend-migrate
     command: ["/root/app", "migrate", "up"]
     restart: "no"
+    mem_limit: 512m
+    cpus: 1.0
     depends_on:
       postgres-automation:
         condition: service_healthy
@@ -111,6 +115,8 @@ services:
     container_name: 018-hai-backend
     hostname: backend
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.5
     depends_on:
       backend-migrate:
         condition: service_completed_successfully
@@ -554,6 +560,8 @@ services:
     container_name: 018-hai-frontend
     hostname: frontend
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
     depends_on:
       backend:
         condition: service_started
@@ -874,6 +882,8 @@ services:
     container_name: gateway
     hostname: gateway
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
     environment:
       BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
     command:
@@ -1438,6 +1448,8 @@ services:
     container_name: 018-hai-postgres-idp
     hostname: postgres-idp
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -1463,6 +1475,8 @@ services:
     container_name: 018-hai-postgres-automation
     hostname: postgres-automation
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.5
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -1486,6 +1500,8 @@ services:
     container_name: 018-hai-redis
     hostname: redis
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
     command: ["redis-server", "--port", "${REDIS_PORT}"]
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6380}:${REDIS_PORT}"
