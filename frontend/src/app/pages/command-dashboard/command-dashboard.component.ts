@@ -150,7 +150,6 @@ export class CommandDashboardComponent implements OnInit {
 
   ngOnInit(): void {
     this.refresh();
-    this.refreshPursuits();
     this.refreshRuntimes();
     this.loadCommandLogs();
   }
