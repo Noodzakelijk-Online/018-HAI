@@ -13,10 +13,11 @@ in `docs/operator-runbook.md`.
 - Go build/test run in `golang:1.23` container (no Go toolchain on host)
 
 > Note on which compose file is authoritative: `docker-compose.local.yml` builds
-> the backend, frontend and IDP **from source**. `docker-compose.yml` pulls
-> prebuilt upstream `jacksonbarreto/*` images and is not the HAI stack. Use the
-> local file. This corrects the earlier `ANALYSIS_REPORT.md`, which recommended
-> the opposite.
+> the backend, frontend and IDP **from source**. The root `docker-compose.yml`
+> and the historical component-local Compose files are now compatibility wrappers
+> that include that same source-built stack. Use the local file directly for the
+> documented command. This corrects the earlier `ANALYSIS_REPORT.md`, which
+> recommended external prebuilt images.
 
 ---
 

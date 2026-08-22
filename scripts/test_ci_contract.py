@@ -270,6 +270,21 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertNotIn("jacksonbarreto/", compose)
         self.assertNotIn(":latest", compose)
 
+    def test_legacy_compose_entrypoints_delegate_to_the_canonical_source_stack(
+        self,
+    ) -> None:
+        for relative_path in (
+            "backend/docker-compose.yml",
+            "idp/docker-compose.yml",
+            "gate/docker-compose.yml",
+        ):
+            with self.subTest(path=relative_path):
+                compose = (ROOT / relative_path).read_text(encoding="utf-8")
+                self.assertIn("include:", compose)
+                self.assertIn("../docker-compose.local.yml", compose)
+                self.assertNotIn("jacksonbarreto/", compose)
+                self.assertNotIn("env_file:", compose)
+
     def test_trello_read_only_connector_is_wired_to_the_runtime(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         backend_start = compose.index("  backend:\n")

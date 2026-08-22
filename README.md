@@ -1037,7 +1037,7 @@ docs/                    Architecture, runbooks, evidence, audits, and roadmap
 docker-compose.local.yml Windows/local-first Compose topology
 .env.example             Environment template; copy to untracked .env.local
 generic-auto/            Legacy compatibility server; disabled by default
-gate/                    Legacy gateway/config area; local Compose uses nginx-config/
+gate/                    Legacy gateway/config area; its Compose file delegates to the local source-built stack
 ```
 
 ## Further Documentation
