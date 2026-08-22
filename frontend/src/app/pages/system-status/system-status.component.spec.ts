@@ -52,4 +52,18 @@ describe('SystemStatusComponent', () => {
     expect(refresh).toHaveBeenCalledTimes(2);
     component.ngOnDestroy();
   }));
+
+  it('waits one minute between visible readiness refreshes', fakeAsync(() => {
+    const refresh = spyOn(component, 'refresh');
+
+    component.ngOnInit();
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    tick(15000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    tick(45000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    component.ngOnDestroy();
+  }));
 });

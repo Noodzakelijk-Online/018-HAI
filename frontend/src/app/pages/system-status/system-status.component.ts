@@ -64,7 +64,7 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
     // going down without the operator reloading. Hidden tabs are paused and
     // refreshed on visibility return, avoiding background request churn.
     document.addEventListener('visibilitychange', this.visibilityHandler);
-    this.pollSub = interval(15000).subscribe(() => {
+    this.pollSub = interval(60000).subscribe(() => {
       if (!document.hidden) {
         this.refresh(true);
       }
