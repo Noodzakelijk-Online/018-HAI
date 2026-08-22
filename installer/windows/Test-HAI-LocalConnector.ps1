@@ -28,8 +28,9 @@ try {
 } catch {
     throw "The local HAI connector Agent Card is unavailable at $baseUrl. Start HAI and wait for readiness before retrying."
 }
-if ($cardResponse.name -ne "HAI controlled planning" -or
-    $cardResponse.skills[0].id -ne "hai_controlled_planning") {
+$planningSkill = @($cardResponse.skills | Where-Object { $_.id -eq "hai_controlled_planning" }) |
+    Select-Object -First 1
+if ($cardResponse.name -ne "HAI controlled planning" -or $null -eq $planningSkill) {
     throw "The local HAI connector returned an unexpected Agent Card. Do not connect another tool until the HAI installation has been repaired."
 }
 

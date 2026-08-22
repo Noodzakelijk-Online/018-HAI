@@ -218,7 +218,8 @@ foreach ($required in @(
     "/.well-known/agent-card.json",
     "/api/v1/a2a",
     "SendMessage",
-    "non-executable planning"
+    "non-executable planning",
+    'Where-Object { $_.id -eq "hai_controlled_planning" }'
 )) {
     if ($connectorCheck -notmatch [Regex]::Escape($required)) {
         throw "Installed local-connector check is missing '$required'."
@@ -486,8 +487,17 @@ try {
         throw "The installer contract could not acquire its isolated payload lock."
     }
     $quotedBuildScript = $buildScript.Replace("'", "''")
-    $blockedBuildOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '$quotedBuildScript' -SkipCompile" 2>&1
-    $blockedBuildExitCode = $LASTEXITCODE
+    # The child is expected to fail while this process owns the named mutex.
+    # Keep that expected native exit code available for the assertion instead
+    # of letting PowerShell's global Stop preference terminate this contract.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $blockedBuildOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '$quotedBuildScript' -SkipCompile" 2>&1
+        $blockedBuildExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     $blockedBuildText = [string]::Join([Environment]::NewLine, @($blockedBuildOutput))
     if ($blockedBuildExitCode -eq 0 -or $blockedBuildText -notmatch "already preparing the shared payload") {
         throw "A concurrent installer build must fail before it can replace the shared payload."
