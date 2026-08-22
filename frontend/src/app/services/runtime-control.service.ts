@@ -7,6 +7,7 @@ import {
   IEmergencyStopVerification,
   IReadiness,
   IRecoveryReport,
+  IResumeApprovalRequest,
 } from '../models/runtime-control.model.interface'
 
 @Injectable({ providedIn: 'root' })
@@ -29,6 +30,17 @@ export class RuntimeControlService {
 
   resume(): Observable<{ emergencyStop: IEmergencyStopState }> {
     return this.http.post<{ emergencyStop: IEmergencyStopState }>(`${this.apiUrl}/background/resume`, {})
+  }
+
+  requestResumeApproval(): Observable<IResumeApprovalRequest> {
+    return this.http.post<IResumeApprovalRequest>(`${this.apiUrl}/background/resume-approval`, {})
+  }
+
+  approveAndResume(reviewItemId: string): Observable<{ emergencyStop: IEmergencyStopState }> {
+    return this.http.post<{ emergencyStop: IEmergencyStopState }>(
+      `${this.apiUrl}/background/resume-approval/${encodeURIComponent(reviewItemId)}/approve-and-resume`,
+      { confirmation: 'RESUME BACKGROUND PROCESSING' }
+    )
   }
 
   setMode(mode: string): Observable<{ mode: string }> {

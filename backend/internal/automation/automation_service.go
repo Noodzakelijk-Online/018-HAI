@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	defaultAPILaunchAllowedHosts = "localhost,127.0.0.1,::1,backend,frontend,gateway,generic-auto,idp"
+	defaultAPILaunchAllowedHosts = "localhost,127.0.0.1,::1,backend,frontend,gateway,idp"
 )
 
 type HealthResult struct {

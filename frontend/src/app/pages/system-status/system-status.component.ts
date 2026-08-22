@@ -3,6 +3,7 @@ import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { Subscription, interval } from 'rxjs';
 import {
   ISystemCheck,
+  ISystemInfo,
   ISystemReadiness,
   SystemCheckSeverity,
 } from '../../models/system-status.model.interface';
@@ -36,6 +37,7 @@ const GROUP_TITLES: Record<string, string> = {
 })
 export class SystemStatusComponent implements OnInit, OnDestroy {
   readiness?: ISystemReadiness;
+  systemInfo?: ISystemInfo;
   groups: CheckGroup[] = [];
   recommendedActions: string[] = [];
   loading = false;
@@ -43,6 +45,15 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   lastUpdated?: Date;
 
   private pollSub?: Subscription;
+  private readinessRequestInFlight = false;
+  private systemInfoRequestInFlight = false;
+  private readonly visibilityHandler = () => {
+    // A hidden tab has no operator who can act on a readiness change. Refresh
+    // immediately on return instead of polling while backgrounded.
+    if (!document.hidden) {
+      this.refresh(true);
+    }
+  };
 
   constructor(
     @Inject(SYSTEM_STATUS_SERVICE_TOKEN)
@@ -51,17 +62,29 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit(): void {
+    this.loadSystemInfo();
     this.refresh();
     // Readiness is a live signal; poll it so the page reflects a dependency
-    // going down without the operator reloading.
-    this.pollSub = interval(15000).subscribe(() => this.refresh(true));
+    // going down without the operator reloading. Hidden tabs are paused and
+    // refreshed on visibility return, avoiding background request churn.
+    document.addEventListener('visibilitychange', this.visibilityHandler);
+    this.pollSub = interval(60000).subscribe(() => {
+      if (!document.hidden) {
+        this.refresh(true);
+      }
+    });
   }
 
   ngOnDestroy(): void {
     this.pollSub?.unsubscribe();
+    document.removeEventListener('visibilitychange', this.visibilityHandler);
   }
 
   refresh(silent = false): void {
+    if (this.readinessRequestInFlight) {
+      return;
+    }
+    this.readinessRequestInFlight = true;
     if (!silent) {
       this.loading = true;
     }
@@ -73,16 +96,37 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
         this.lastUpdated = new Date();
         this.loading = false;
         this.loadError = false;
+        this.readinessRequestInFlight = false;
       },
       error: () => {
         this.loading = false;
         this.loadError = true;
+        this.readinessRequestInFlight = false;
         if (!silent) {
           this.notification.error(
             'System status unavailable',
             'Could not reach the readiness probe. You may need to sign in again.'
           );
         }
+      },
+    });
+  }
+
+  private loadSystemInfo(): void {
+    if (this.systemInfoRequestInFlight) {
+      return;
+    }
+    this.systemInfoRequestInFlight = true;
+    this.systemStatusService.info().subscribe({
+      next: (info) => {
+        this.systemInfo = info;
+        this.systemInfoRequestInFlight = false;
+      },
+      error: () => {
+        // Readiness remains useful even when the authenticated metadata route
+        // is temporarily unavailable. Do not turn provenance into a noisy
+        // second failure state or poll it in the background.
+        this.systemInfoRequestInFlight = false;
       },
     });
   }

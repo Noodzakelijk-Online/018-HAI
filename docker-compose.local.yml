@@ -6,12 +6,12 @@ services:
     container_name: 018-hai-idp
     hostname: idp
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
     depends_on:
       postgres-idp:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
     environment:
       BLOCKING_TIME_EXPONENTIATION_BASIS: ${BLOCKING_TIME_EXPONENTIATION_BASIS}
@@ -58,6 +58,10 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_REQUIRE_STARTTLS: ${SMTP_REQUIRE_STARTTLS:-true}
+      # Kafka is optional for the local control plane. With
+      # IDP_KAFKA_ENABLED=false the IDP logs locally and account events are
+      # deliberately non-durable best-effort notifications.
+      IDP_KAFKA_ENABLED: ${IDP_KAFKA_ENABLED:-false}
     healthcheck:
       test: ["CMD-SHELL", "bash -ec '</dev/tcp/127.0.0.1/${WEB_SERVER_PORT}'"]
       interval: 10s
@@ -68,6 +72,42 @@ services:
       - service-hub
       - idp-network
 
+  # Applies schema changes with the database owner, then exits. The long-lived
+  # backend uses DB_RUNTIME_* and cannot create or alter the schema.
+  backend-migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: 018-hai-backend-migrate
+    command: ["/root/app", "migrate", "up"]
+    restart: "no"
+    mem_limit: 512m
+    cpus: 1.0
+    depends_on:
+      postgres-automation:
+        condition: service_healthy
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${AUTOMATION_DB_NAME}
+      DB_HOST: ${AUTOMATION_DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_RUNTIME_USER: ${DB_RUNTIME_USER}
+      DB_RUNTIME_PASSWORD: ${DB_RUNTIME_PASSWORD}
+      DB_MIGRATIONS_ENABLED: "true"
+      DB_AUTOMIGRATE: "false"
+      HAI_SEMANTIC_RETRIEVAL_ENABLED: ${HAI_SEMANTIC_RETRIEVAL_ENABLED}
+      IMAGE_SAVE_DIR: /tmp/images
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - automation-hub-network
+
   backend:
     build:
       context: ./backend
@@ -75,11 +115,11 @@ services:
     container_name: 018-hai-backend
     hostname: backend
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.5
     depends_on:
-      postgres-automation:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
+      backend-migrate:
+        condition: service_completed_successfully
       idp:
         condition: service_started
     environment:
@@ -89,11 +129,12 @@ services:
       BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
       HAI_MEMORY_ENCRYPTION_KEY: ${HAI_MEMORY_ENCRYPTION_KEY}
       HAI_APPROVAL_PROOF_SIGNING_KEY: ${HAI_APPROVAL_PROOF_SIGNING_KEY}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_USER: ${DB_RUNTIME_USER}
+      DB_PASSWORD: ${DB_RUNTIME_PASSWORD}
       DB_NAME: ${AUTOMATION_DB_NAME}
       DB_HOST: ${AUTOMATION_DB_HOST}
       DB_PORT: ${DB_PORT}
+      DB_MIGRATIONS_ENABLED: "false"
       IMAGE_MAX_SIZE_IN_MB: ${IMAGE_MAX_SIZE_IN_MB}
       IMAGE_EXTENSIONS: ${IMAGE_EXTENSIONS}
       IMAGE_SAVE_DIR: ${IMAGE_SAVE_DIR}
@@ -220,7 +261,7 @@ services:
       HAI_A2A_BRIDGE_ENABLED: ${HAI_A2A_BRIDGE_ENABLED:-false}
       HAI_A2A_BRIDGE_TOKEN: ${HAI_A2A_BRIDGE_TOKEN:-}
       HAI_A2A_BRIDGE_OWNER_ID: ${HAI_A2A_BRIDGE_OWNER_ID:-}
-      HAI_A2A_BRIDGE_URL: ${HAI_A2A_BRIDGE_URL:-http://127.0.0.1/api/v1/a2a}
+      HAI_A2A_BRIDGE_URL: ${HAI_A2A_BRIDGE_URL:-http://127.0.0.1:8088/api/v1/a2a}
       HAI_LM_EVAL_ENABLED: ${HAI_LM_EVAL_ENABLED:-false}
       HAI_LM_EVAL_BASE_URL: ${HAI_LM_EVAL_BASE_URL:-http://lm-eval-runner:8080}
       HAI_LM_EVAL_TIMEOUT_SECONDS: ${HAI_LM_EVAL_TIMEOUT_SECONDS:-130}
@@ -432,19 +473,32 @@ services:
       CONNECTED_SOURCE_HTTP_MAX_BYTES: ${CONNECTED_SOURCE_HTTP_MAX_BYTES}
       GITHUB_SOURCE_API_BASE_URL: ${GITHUB_SOURCE_API_BASE_URL}
       GITHUB_SOURCE_TOKEN: ${GITHUB_SOURCE_TOKEN}
+      # Trello stays read-only. The board target belongs to each ConnectedSource
+      # record; only the API credentials flow from the local environment.
+      TRELLO_API_KEY: ${TRELLO_API_KEY:-}
+      TRELLO_READ_TOKEN: ${TRELLO_READ_TOKEN:-}
+      TRELLO_API_BASE_URL: ${TRELLO_API_BASE_URL:-https://api.trello.com}
       SOURCE_SCHEDULER_ENABLED: ${SOURCE_SCHEDULER_ENABLED}
       SOURCE_SCHEDULER_INTERVAL_SECONDS: ${SOURCE_SCHEDULER_INTERVAL_SECONDS}
       SOURCE_SCHEDULER_RUN_ON_STARTUP: ${SOURCE_SCHEDULER_RUN_ON_STARTUP}
+      DURABLE_SCHEDULER_LEGACY_FALLBACK_ENABLED: ${DURABLE_SCHEDULER_LEGACY_FALLBACK_ENABLED:-false}
+      SOURCE_SCHEDULER_DURABLE: ${SOURCE_SCHEDULER_DURABLE:-true}
+      SOURCE_WORKER_POLL_SECONDS: ${SOURCE_WORKER_POLL_SECONDS:-60}
       WORKFLOW_SCHEDULER_ENABLED: ${WORKFLOW_SCHEDULER_ENABLED}
       WORKFLOW_OPEN_LOOP_SCHEDULER_ENABLED: ${WORKFLOW_OPEN_LOOP_SCHEDULER_ENABLED}
       WORKFLOW_SCHEDULER_INTERVAL_SECONDS: ${WORKFLOW_SCHEDULER_INTERVAL_SECONDS}
       WORKFLOW_SCHEDULER_RUN_LIMIT: ${WORKFLOW_SCHEDULER_RUN_LIMIT}
       WORKFLOW_SCHEDULER_RUN_ON_STARTUP: ${WORKFLOW_SCHEDULER_RUN_ON_STARTUP}
+      WORKFLOW_SCHEDULER_DURABLE: ${WORKFLOW_SCHEDULER_DURABLE:-true}
+      WORKFLOW_WORKER_POLL_SECONDS: ${WORKFLOW_WORKER_POLL_SECONDS:-60}
+      WORKFLOW_REMINDER_DELIVERY_ENABLED: ${WORKFLOW_REMINDER_DELIVERY_ENABLED:-true}
       WORKFLOW_CLAIM_LEASE_SECONDS: ${WORKFLOW_CLAIM_LEASE_SECONDS}
       AMBIENT_SCHEDULER_ENABLED: ${AMBIENT_SCHEDULER_ENABLED}
       AMBIENT_EXECUTION_ENABLED: ${AMBIENT_EXECUTION_ENABLED}
       AMBIENT_RUN_ON_STARTUP: ${AMBIENT_RUN_ON_STARTUP}
       AMBIENT_SCAN_INTERVAL_SECONDS: ${AMBIENT_SCAN_INTERVAL_SECONDS}
+      AMBIENT_SCHEDULER_DURABLE: ${AMBIENT_SCHEDULER_DURABLE:-true}
+      AMBIENT_WORKER_POLL_SECONDS: ${AMBIENT_WORKER_POLL_SECONDS:-60}
       AMBIENT_MINIMUM_SCORE: ${AMBIENT_MINIMUM_SCORE}
       AMBIENT_MINIMUM_CONFIDENCE: ${AMBIENT_MINIMUM_CONFIDENCE}
       AMBIENT_OPPORTUNITY_LIMIT: ${AMBIENT_OPPORTUNITY_LIMIT}
@@ -453,7 +507,7 @@ services:
       AMBIENT_SCAN_RETENTION: ${AMBIENT_SCAN_RETENTION}
       OUTCOME_MONITOR_SCHEDULER_ENABLED: ${OUTCOME_MONITOR_SCHEDULER_ENABLED:-true}
       OUTCOME_MONITOR_SWEEP_SECONDS: ${OUTCOME_MONITOR_SWEEP_SECONDS:-300}
-      OUTCOME_MONITOR_POLL_SECONDS: ${OUTCOME_MONITOR_POLL_SECONDS:-15}
+      OUTCOME_MONITOR_POLL_SECONDS: ${OUTCOME_MONITOR_POLL_SECONDS:-60}
       OUTCOME_MONITOR_LEASE_SECONDS: ${OUTCOME_MONITOR_LEASE_SECONDS:-120}
       OUTCOME_MONITOR_SCOPE_LIMIT: ${OUTCOME_MONITOR_SCOPE_LIMIT:-50}
       OUTCOME_MONITOR_BATCH_LIMIT: ${OUTCOME_MONITOR_BATCH_LIMIT:-20}
@@ -507,6 +561,8 @@ services:
     container_name: 018-hai-frontend
     hostname: frontend
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
     depends_on:
       backend:
         condition: service_started
@@ -823,10 +879,14 @@ services:
     networks: [coding-runners-internal]
 
   nginx:
-    image: nginx:alpine
+    # Pin the manifest list, rather than a mutable alpine tag, so a rebuild
+    # cannot silently change the internet-facing gateway binary.
+    image: nginx:alpine@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913
     container_name: gateway
     hostname: gateway
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
     environment:
       BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
     command:
@@ -901,6 +961,7 @@ services:
       context: ./nginx-config-manager
       dockerfile: Dockerfile
     container_name: 018-hai-nginx-config-manager
+    profiles: ["event-bus"]
     restart: unless-stopped
     environment:
       BROKERS_ADDR: ${BROKERS_ADDR}
@@ -1292,7 +1353,7 @@ services:
   # from HAI's primary Postgres instance and is enabled only with
   # `--profile durability`. No Temporal port is exposed to the host.
   temporal-postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:dc17045ccfd343b49600570ea734b9c4991cf1c3f3302e67df51e3b402dd55c4
     profiles: ["durability"]
     restart: unless-stopped
     environment:
@@ -1385,11 +1446,43 @@ services:
     networks:
       - service-hub
 
+  # Local inference remains opt-in. The Windows installer enables this profile
+  # only after the operator explicitly requests a reviewed model download.
+  # It is private to Compose networks, so no model endpoint is exposed on the
+  # host or through ngrok.
+  ollama-local:
+    image: ollama/ollama:0.32.11@sha256:e790300fb6494a09b0c493954b1aa39c560bb900043a8a3b77f38a42a160bfc2
+    container_name: 018-hai-ollama-local
+    hostname: ollama-local
+    profiles: ["local-model"]
+    restart: unless-stopped
+    expose: ["11434"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=256m"]
+    volumes:
+      - ollama-local-data:/root/.ollama
+    mem_limit: 2g
+    cpus: 2.0
+    pids_limit: 256
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 20s
+    networks:
+      - service-hub
+      - automation-hub-network
+
   postgres-idp:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:dc17045ccfd343b49600570ea734b9c4991cf1c3f3302e67df51e3b402dd55c4
     container_name: 018-hai-postgres-idp
     hostname: postgres-idp
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -1415,6 +1508,8 @@ services:
     container_name: 018-hai-postgres-automation
     hostname: postgres-automation
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.5
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -1434,11 +1529,19 @@ services:
       - automation-hub-network
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
     container_name: 018-hai-redis
     hostname: redis
     restart: unless-stopped
-    command: ["redis-server", "--port", "${REDIS_PORT}"]
+    # The Redis data budget remains below this process ceiling so normal
+    # allocator overhead cannot trigger a container OOM. `noeviction` is
+    # intentional: losing revocation or rate-limit records would weaken the
+    # security boundary. Callers receive an error instead and fail closed.
+    mem_limit: 192m
+    cpus: 0.5
+    # The defaults also keep older installed `hai.env` files bootable after an
+    # application upgrade adds these settings to the environment template.
+    command: ["redis-server", "--port", "${REDIS_PORT}", "--maxmemory", "${REDIS_MAXMEMORY:-128mb}", "--maxmemory-policy", "${REDIS_MAXMEMORY_POLICY:-noeviction}"]
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6380}:${REDIS_PORT}"
     healthcheck:
@@ -1457,6 +1560,7 @@ services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
     container_name: 018-hai-zookeeper
+    profiles: ["event-bus"]
     restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_PORT}
@@ -1474,6 +1578,7 @@ services:
     image: confluentinc/cp-kafka:7.6.1
     container_name: 018-hai-kafka
     hostname: kafka
+    profiles: ["event-bus"]
     restart: unless-stopped
     depends_on:
       zookeeper:
@@ -1500,6 +1605,10 @@ services:
       - service-hub
 
   generic-auto:
+    # Legacy compatibility server retained only for old route consumers. It is
+    # not part of the HAI engine and must not consume resources on a normal
+    # Windows installation.
+    profiles: ["legacy-compatibility"]
     build:
       context: ./generic-auto
       dockerfile: dockerfile
@@ -1593,3 +1702,5 @@ volumes:
     name: 018-hai-temporal-postgres-data
   runner-ollama-data:
     name: 018-hai-runner-ollama-data
+  ollama-local-data:
+    name: 018-hai-ollama-local-data

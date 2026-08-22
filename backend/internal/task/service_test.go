@@ -1428,6 +1428,10 @@ func (s *fakeTaskSourceService) Sync(sourceID uuid.UUID, request source.ImportRe
 	return nil, nil
 }
 
+func (s *fakeTaskSourceService) SyncContext(_ context.Context, sourceID uuid.UUID, request source.ImportRequest) (*source.SyncResult, error) {
+	return s.Sync(sourceID, request)
+}
+
 func (s *fakeTaskSourceService) StartGoogleOAuth(sourceID uuid.UUID) (string, error) {
 	return "", nil
 }

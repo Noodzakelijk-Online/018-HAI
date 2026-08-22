@@ -100,11 +100,13 @@ export class ControlCenterComponent implements OnInit {
   lastAgentCycle?: IAgentCycleRunResult
 
   loading = false
+  overviewLoadError = ''
   scanning = false
   memoryLoading = false
   memoriesLoaded = false
   diagnosticsListLoading = false
   diagnosticsLoaded = false
+  diagnosticsLoadError = ''
   resolvingId = ''
   archivingMemoryId = ''
   diagnosticsExpanded = false
@@ -190,56 +192,56 @@ export class ControlCenterComponent implements OnInit {
   }
 
   refresh(): void {
-    this.loading = true
-    let pending = 3
-    const done = () => {
-      pending -= 1
-      if (pending <= 0) {
-        this.loading = false
-      }
+    if (this.loading) {
+      return
     }
-
-    this.workflowService.dashboard().pipe(
+    this.loading = true
+    this.overviewLoadError = ''
+    const failedLoads: string[] = []
+    forkJoin({
+      workflow: this.workflowService.dashboard().pipe(
         timeout(2500),
-        catchError(() => of(undefined))
-      ).subscribe({
-        next: (workflow) => {
-          this.workflowDashboard = workflow
-          this.rebuildViewModel()
-          done()
-        },
-        error: () => {
-          done()
-        },
-      })
-
-    this.ambientService.overview().pipe(
+        catchError(() => {
+          failedLoads.push('workflow')
+          return of(undefined)
+        })
+      ),
+      ambient: this.ambientService.overview().pipe(
         timeout(2500),
-        catchError(() => of(undefined))
-      ).subscribe({
-        next: (ambient) => {
-          this.ambientOverview = ambient
-          this.rebuildViewModel()
-          done()
-        },
-        error: () => {
-          done()
-        },
-      })
-
-    this.pursuitService.dashboard().pipe(
+        catchError(() => {
+          failedLoads.push('ambient priorities')
+          return of(undefined)
+        })
+      ),
+      pursuits: this.pursuitService.dashboard().pipe(
         timeout(1800),
-        catchError(() => of(undefined))
-      ).subscribe({
-        next: (pursuits) => {
+        catchError(() => {
+          failedLoads.push('pursuits')
+          return of(undefined)
+        })
+      ),
+    }).subscribe({
+      next: ({ workflow, ambient, pursuits }) => {
+        if (workflow !== undefined) {
+          this.workflowDashboard = workflow
+        }
+        if (ambient !== undefined) {
+          this.ambientOverview = ambient
+        }
+        if (pursuits !== undefined) {
           this.pursuitDashboard = pursuits
-          this.rebuildViewModel()
-          done()
-        },
-        error: () => {
-          done()
-        },
-      })
+        }
+        if (failedLoads.length) {
+          this.overviewLoadError = `Unable to refresh ${failedLoads.join(', ')}. Some information may be unavailable; retry when the service is ready.`
+        }
+        this.rebuildViewModel()
+        this.loading = false
+      },
+      error: () => {
+        this.overviewLoadError = 'The command center could not be refreshed. Check system status, then try again.'
+        this.loading = false
+      },
+    })
   }
 
   loadMemories(force = false): void {
@@ -275,26 +277,44 @@ export class ControlCenterComponent implements OnInit {
       return
     }
     this.diagnosticsListLoading = true
+    this.diagnosticsLoadError = ''
+    const failedLoads: string[] = []
     forkJoin({
       automations: this.automationsService.getAutomations().pipe(
-        catchError(() => of([] as IAutomationModel[]))
+        catchError(() => {
+          failedLoads.push('automations')
+          return of(undefined)
+        })
       ),
       summary: this.automationsService.getHealthSummary().pipe(
-        catchError(() => of(undefined))
+        catchError(() => {
+          failedLoads.push('automation health')
+          return of(undefined)
+        })
       ),
       runtimes: this.agentRuntimeService.overview().pipe(
         timeout(2500),
-        catchError(() => of({ runtimes: [] as IAgentRuntimeInfo[], health: [] as IAgentRuntimeHealth[] }))
+        catchError(() => {
+          failedLoads.push('runtime health')
+          return of(undefined)
+        })
       ),
     }).subscribe({
       next: (result) => {
-        this.automations = result.automations.sort(
-          (a, b) => a.position - b.position
-        )
-        this.summary = result.summary
-        this.runtimes = result.runtimes.runtimes
-        this.runtimeHealth = result.runtimes.health
-        this.diagnosticsLoaded = true
+        if (result.automations) {
+          this.automations = result.automations.sort(
+            (a, b) => a.position - b.position
+          )
+        }
+        if (result.summary) this.summary = result.summary
+        if (result.runtimes) {
+          this.runtimes = result.runtimes.runtimes
+          this.runtimeHealth = result.runtimes.health
+        }
+        if (failedLoads.length) {
+          this.diagnosticsLoadError = `Could not load ${failedLoads.join(' or ')}. Existing diagnostic data is retained and may be incomplete.`
+        }
+        this.diagnosticsLoaded = this.diagnosticsLoaded || !!result.automations || !!result.summary || !!result.runtimes
         this.diagnosticsListLoading = false
         this.rebuildViewModel()
       },

@@ -98,6 +98,8 @@ describe('RuntimeControlComponent role boundaries', () => {
       'readiness',
       'pause',
       'resume',
+	  'requestResumeApproval',
+	  'approveAndResume',
       'setMode',
       'verifyEmergencyStop',
       'recover',
@@ -109,12 +111,19 @@ describe('RuntimeControlComponent role boundaries', () => {
       'success',
       'warning',
       'error',
+	  'info',
     ])
 
     runtimeService.status.and.returnValue(of(activeStatus))
     runtimeService.readiness.and.returnValue(of(readiness))
     runtimeService.pause.and.returnValue(of({ emergencyStop: activeStatus.emergencyStop }))
     runtimeService.resume.and.returnValue(of({ emergencyStop: activeStatus.emergencyStop }))
+	    runtimeService.requestResumeApproval.and.returnValue(of({
+	      reviewItemId: 'review-1',
+	      approvalSourceId: 'opscontrol-review:review-1',
+	      approvalBindingDigest: 'a'.repeat(64),
+	    }))
+	    runtimeService.approveAndResume.and.returnValue(of({ emergencyStop: activeStatus.emergencyStop }))
     runtimeService.setMode.and.returnValue(of({ mode: 'read_only' }))
     runtimeService.verifyEmergencyStop.and.returnValue(of({
       engagedDuringTest: true,
@@ -153,7 +162,7 @@ describe('RuntimeControlComponent role boundaries', () => {
     }).compileComponents()
   })
 
-  it('renders owner controls and permits resume and autonomy changes', () => {
+  it('requires a durable owner review before resuming and then consumes it', () => {
     authSessionService.session.and.returnValue(of(ownerSession))
     runtimeService.status.and.returnValue(of({
       ...activeStatus,
@@ -166,12 +175,18 @@ describe('RuntimeControlComponent role boundaries', () => {
     createComponent()
 
     expect(text()).toContain('Owner authority')
-    expect(button('Resume').disabled).toBeFalse()
+    expect(button('Prepare resume review').disabled).toBeFalse()
 
-    button('Resume').click()
+    button('Prepare resume review').click()
+    fixture.detectChanges()
+    expect(text()).toContain('Review prepared for the current emergency stop')
+    expect(button('Confirm and resume').disabled).toBeFalse()
+    button('Confirm and resume').click()
     component.setMode('read_only')
 
-    expect(runtimeService.resume).toHaveBeenCalled()
+    expect(runtimeService.requestResumeApproval).toHaveBeenCalled()
+    expect(runtimeService.approveAndResume).toHaveBeenCalledWith('review-1')
+    expect(runtimeService.resume).not.toHaveBeenCalled()
     expect(runtimeService.setMode).toHaveBeenCalledWith('read_only')
     expect(component.canAdministerRuntime).toBeTrue()
   })
@@ -205,7 +220,7 @@ describe('RuntimeControlComponent role boundaries', () => {
     }
     fixture.detectChanges()
 
-    expect(button('Resume').disabled).toBeTrue()
+    expect(button('Prepare resume review').disabled).toBeTrue()
     component.resume()
     expect(runtimeService.resume).not.toHaveBeenCalled()
     expect(text()).toContain('Only the owner can resume processing')

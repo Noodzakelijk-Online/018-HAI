@@ -156,6 +156,54 @@ type ConnectionHealthService interface {
 	ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error)
 }
 
+// ConnectionHealthSummaryService calculates health from records already loaded
+// for the current owner. It avoids a redundant source lookup per row in the
+// dashboard summary while preserving the per-source health rules.
+type ConnectionHealthSummaryService interface {
+	ConnectionHealthForSources(sources []models.ConnectedSource) []ConnectionHealth
+}
+
+// HistoryPageRequest bounds source-history reads. History grows continuously
+// once account connectors are enabled, so callers must opt into an explicit
+// window rather than loading an entire personal ledger into memory.
+type HistoryPageRequest struct {
+	Limit  int
+	Offset int
+}
+
+type ExtractionPage struct {
+	Items   []models.SourceExtraction `json:"items"`
+	Total   int                       `json:"total"`
+	Limit   int                       `json:"limit"`
+	Offset  int                       `json:"offset"`
+	HasMore bool                      `json:"hasMore"`
+}
+
+type SyncJobPage struct {
+	Items   []models.SourceSyncJob `json:"items"`
+	Total   int                    `json:"total"`
+	Limit   int                    `json:"limit"`
+	Offset  int                    `json:"offset"`
+	HasMore bool                   `json:"hasMore"`
+}
+
+type AuditLogPage struct {
+	Items   []models.SourceAuditLog `json:"items"`
+	Total   int                     `json:"total"`
+	Limit   int                     `json:"limit"`
+	Offset  int                     `json:"offset"`
+	HasMore bool                    `json:"hasMore"`
+}
+
+// PagedHistoryService is deliberately additive to Service so existing
+// integration stubs remain compatible while the production path can use
+// owner-filtered database pagination.
+type PagedHistoryService interface {
+	SyncJobsForOwnerPage(ownerIdentity string, sourceID *uuid.UUID, page HistoryPageRequest) (*SyncJobPage, error)
+	ExtractionsForOwnerPage(ownerIdentity, projectKey string, includeArchived bool, page HistoryPageRequest) (*ExtractionPage, error)
+	AuditLogsForOwnerPage(ownerIdentity string, sourceID *uuid.UUID, page HistoryPageRequest) (*AuditLogPage, error)
+}
+
 type Service interface {
 	Connectors() ([]models.SourceConnector, error)
 	CreateSource(request CreateSourceRequest) (*models.ConnectedSource, error)
@@ -163,6 +211,7 @@ type Service interface {
 	Sources(includeDisabled bool) ([]models.ConnectedSource, error)
 	SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
 	Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
+	SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
 	// DueSources lists enabled sources whose schedule is due at now. The durable
 	// scheduler uses it to enqueue one retryable job per source.
 	DueSources(now time.Time) ([]models.ConnectedSource, error)
@@ -180,6 +229,10 @@ type Service interface {
 	AuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error)
 	StartGoogleOAuth(sourceID uuid.UUID) (string, error)
 	CompleteGoogleOAuth(ctx context.Context, code, state string) (uuid.UUID, error)
+}
+
+type ownerScopedSourceRepository interface {
+	FindSourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error)
 }
 
 type service struct {
@@ -209,6 +262,8 @@ type pursuitWorkflowIntakeRouter interface {
 
 var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
 var ErrSyncInProgress = errors.New("source sync is already in progress")
+var ErrSourceNotEnabled = errors.New("source is not enabled for sync")
+var ErrSyncExecutionFailed = errors.New("source sync execution failed")
 
 const maxSyncErrorDetails = 20
 const maxSyncPursuitOutcomes = 20
@@ -271,7 +326,7 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 	if !googleOAuthReady() {
 		for i := range connectors {
 			if isGoogleOAuthConnector(connectors[i].ConnectorKey) {
-				connectors[i].AdapterStatus = AdapterNotImplemented
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
 				connectors[i].StatusReason = "real read-only Google OAuth adapter is implemented but GOOGLE_OAUTH_* or the dedicated HAI OAuth encryption/signing keys are not set"
 			}
 		}
@@ -281,7 +336,7 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 	if !trelloConfigured() {
 		for i := range connectors {
 			if connectors[i].ConnectorKey == trelloConnectorKey {
-				connectors[i].AdapterStatus = AdapterNotImplemented
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
 				connectors[i].StatusReason = "real read-only Trello REST adapter is implemented but TRELLO_API_KEY/TRELLO_READ_TOKEN are not set, so it cannot connect yet"
 			}
 		}
@@ -426,6 +481,20 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 			return nil, fmt.Errorf("OpenSpec project folder is not allowed: %w", err)
 		}
 	}
+	if connectorKey == "docling-documents" {
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("Docling documents must use the cloud_document category")
+		}
+		if !request.LocalOnly {
+			return nil, fmt.Errorf("Docling documents are local-only; localOnly must be true")
+		}
+		if strings.TrimSpace(request.SyncTarget) == "" {
+			return nil, fmt.Errorf("Docling documents require a selected folder under CONNECTED_SOURCE_LOCAL_ROOT")
+		}
+		if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), request.SyncTarget); err != nil {
+			return nil, fmt.Errorf("Docling document folder is not allowed: %w", err)
+		}
+	}
 	if connectorKey == projectInstructionsConnectorKey || connectorKey == fabricPatternsConnectorKey {
 		label := "project instructions"
 		if connectorKey == fabricPatternsConnectorKey {
@@ -445,7 +514,7 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 		}
 	}
 	if !connector.Enabled || !adapterIsUsable(connector.AdapterStatus) {
-		return nil, fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", connectorKey)
+		return nil, connectorUnavailableError(connector)
 	}
 	category := firstNonEmpty(request.Category, connector.Category)
 	if category == "" {
@@ -598,6 +667,27 @@ func (s *service) Sources(includeDisabled bool) ([]models.ConnectedSource, error
 	return s.repo.FindSources(includeDisabled)
 }
 
+// SourcesForOwner avoids loading unrelated users' source records when the
+// repository supports an owner-scoped query. The fallback preserves legacy
+// repository compatibility and applies the same visibility rule in memory.
+func (s *service) SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if scoped, ok := s.repo.(ownerScopedSourceRepository); ok {
+		return scoped.FindSourcesForOwner(ownerIdentity, includeDisabled)
+	}
+	sources, err := s.repo.FindSources(includeDisabled)
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]models.ConnectedSource, 0, len(sources))
+	for _, item := range sources {
+		if ownerIdentity == "" || item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity {
+			visible = append(visible, item)
+		}
+	}
+	return visible, nil
+}
+
 func (s *service) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
 	return s.repo.FindSyncJobs(sourceID)
 }
@@ -607,6 +697,26 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 	if err != nil {
 		return nil, err
 	}
+	return s.connectionHealthForSource(*source)
+}
+
+func (s *service) ConnectionHealthForSources(sources []models.ConnectedSource) []ConnectionHealth {
+	result := make([]ConnectionHealth, 0, len(sources))
+	for _, source := range sources {
+		health, err := s.connectionHealthForSource(source)
+		if err != nil {
+			result = append(result, ConnectionHealth{
+				SourceID: source.ID, ConnectorKey: source.ConnectorKey,
+				Status: "error", Reason: "connection status could not be determined",
+			})
+			continue
+		}
+		result = append(result, *health)
+	}
+	return result
+}
+
+func (s *service) connectionHealthForSource(source models.ConnectedSource) (*ConnectionHealth, error) {
 	health := &ConnectionHealth{
 		SourceID: source.ID, ConnectorKey: source.ConnectorKey,
 		Status: source.Status, Configured: true, LastSyncedAt: source.LastSyncedAt,
@@ -614,6 +724,30 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 	if source.Status == "revoked" || source.RevokedAt != nil {
 		health.Status = "revoked"
 		health.Reason = "source access was revoked"
+		return health, nil
+	}
+	if source.ConnectorKey == trelloConnectorKey {
+		if !trelloConfigured() {
+			health.Status = "configuration_required"
+			health.Configured = false
+			health.Authorized = false
+			health.Reason = "set TRELLO_API_KEY and a least-privilege TRELLO_READ_TOKEN before a read-only board sync can run"
+			return health, nil
+		}
+		if _, err := trelloBoardID(source.SyncTarget); err != nil {
+			health.Status = "configuration_required"
+			health.Configured = false
+			health.Authorized = false
+			health.Reason = err.Error()
+			return health, nil
+		}
+		health.Status = "ready"
+		health.Configured = true
+		// The API key/token scheme cannot be verified without performing the
+		// first read-only provider request. Do not mark it authorized from the
+		// mere presence of environment variables.
+		health.Authorized = false
+		health.Reason = "read-only credentials and board target are configured; provider authorization will be verified by the next sync"
 		return health, nil
 	}
 	if !isGoogleOAuthConnector(source.ConnectorKey) {
@@ -627,7 +761,7 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 		health.Reason = "Google OAuth client, token encryption key, or state signing key is not configured"
 		return health, nil
 	}
-	token, err := s.repo.FindOAuthToken(sourceID)
+	token, err := s.repo.FindOAuthToken(source.ID)
 	if err != nil {
 		health.Status = "disconnected"
 		health.Reason = "no Google account grant is stored for this source"
@@ -668,6 +802,19 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 }
 
 func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
+	return s.SyncContext(context.Background(), sourceID, request)
+}
+
+// SyncContext preserves request and worker cancellation through the connector
+// fetches. Sync remains for compatibility with in-process callers that do not
+// own a lifecycle context.
+func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !s.beginSync(sourceID) {
 		return nil, ErrSyncInProgress
 	}
@@ -678,7 +825,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		return nil, err
 	}
 	if !source.Enabled || source.Status == "paused" || source.Status == "revoked" {
-		return nil, fmt.Errorf("source is not enabled for sync")
+		return nil, ErrSourceNotEnabled
 	}
 	if source.ConnectorKey == "whisper-audio" && !request.controlledTranscription {
 		return nil, fmt.Errorf("whisper-audio sources must use the controlled transcription route")
@@ -772,216 +919,131 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	items := request.Items
 	adapterCursor := ""
 	if len(items) == 0 && sourceUsesLocalFolder(source.ConnectorKey) {
-		items, err = s.localFolderItems(source, request)
+		items, err = s.localFolderItemsContext(ctx, source, request)
 		items = filterConnectorLocalItems(items, source.ConnectorKey)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == "json-feed" {
-		items, adapterCursor, err = fetchJSONFeed(source)
+		items, adapterCursor, err = fetchJSONFeedContext(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == "github" {
-		items, adapterCursor, err = fetchGitHubSource(source)
+		items, adapterCursor, err = fetchGitHubSourceContext(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == gmailConnectorKey {
-		items, adapterCursor, err = s.fetchGmailSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchGmailSource(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == driveConnectorKey {
-		items, adapterCursor, err = s.fetchDriveSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchDriveSource(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == contactsConnectorKey {
-		items, adapterCursor, err = s.fetchContactsSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchContactsSource(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == calendarConnectorKey {
-		items, adapterCursor, err = s.fetchCalendarSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchCalendarSource(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == trelloConnectorKey {
-		items, adapterCursor, err = fetchTrelloSource(source)
+		items, adapterCursor, err = fetchTrelloSourceContext(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == odooJSON2ConnectorKey {
-		items, adapterCursor, err = fetchOdooJSON2Source(context.Background(), source)
+		items, adapterCursor, err = fetchOdooJSON2Source(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.odoo_json2_read", fmt.Sprintf("read %d bounded Odoo JSON-2 record(s) through the configured model allowlist", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == shareTConnectorKey {
-		items, adapterCursor, err = fetchShareTSource(context.Background(), source)
+		items, adapterCursor, err = fetchShareTSource(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.sharet_read", fmt.Sprintf("read %d bounded ShareT link record(s) through a read-only connector credential", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == cloudQuerySummaryConnectorKey {
-		items, adapterCursor, err = fetchCloudQuerySummary(source)
+		items, adapterCursor, err = fetchCloudQuerySummaryContext(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.cloudquery_summary_read", fmt.Sprintf("read %d bounded CloudQuery sync summary record(s) from the configured local summary file", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == airbyteInventoryConnectorKey {
-		items, adapterCursor, err = fetchAirbyteInventory(context.Background(), source)
+		items, adapterCursor, err = fetchAirbyteInventory(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.airbyte_inventory_read", fmt.Sprintf("read %d bounded Airbyte source and connection inventory record(s) from approved workspaces", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == laroConnectorKey {
-		items, adapterCursor, err = fetchLAROSource(context.Background(), source)
+		items, adapterCursor, err = fetchLAROSource(ctx, source)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.laro_read", fmt.Sprintf("read %d bounded, owner-scoped LARO legal record(s)", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == openSpecArtifactConnectorKey {
-		items, err = s.openSpecArtifactItems(source, request)
+		items, err = s.openSpecArtifactItemsContext(ctx, source, request)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.openspec_artifacts_read", fmt.Sprintf("read %d bounded OpenSpec change artifact bundle(s) from the selected local project", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == projectInstructionsConnectorKey {
-		items, err = s.projectInstructionItems(source, request)
+		items, err = s.projectInstructionItemsContext(ctx, source, request)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.project_instructions_read", fmt.Sprintf("read %d untrusted project instruction file(s) from the selected local project", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == fabricPatternsConnectorKey {
-		items, err = s.fabricPatternItems(source, request)
+		items, err = s.fabricPatternItemsContext(ctx, source, request)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 		s.audit(sourceID, "source.fabric_patterns_read", fmt.Sprintf("read %d bounded untrusted Fabric prompt pattern(s) from the selected local folder", len(items)))
 	}
 	if source.ConnectorKey == "whatsapp-export" {
-		items, err = s.whatsAppExportItems(source, request)
+		items, err = s.whatsAppExportItemsContext(ctx, source, request)
 		if err != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = err.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
-			return nil, err
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(err)
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == "odoo-herp" {
@@ -991,13 +1053,8 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	if source.ConnectorKey == calendarConnectorKey {
 		existingItems, errExisting := s.repo.FindRawItems(source.ID)
 		if errExisting != nil {
-			now := time.Now().UTC()
-			job.Status = "failed"
-			job.Message = "calendar conflict planning could not read cached event records: " + errExisting.Error()
-			job.CompletedAt = &now
-			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", job.Message)
-			return nil, errExisting
+			s.markSyncFailure(job, sourceID)
+			return nil, syncExecutionFailure(errExisting)
 		}
 		items = appendCalendarConflictItems(existingItems, items, time.Now().UTC())
 		for index := range items {
@@ -1007,6 +1064,15 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	for index, item := range items {
+		if err := ctx.Err(); err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = "sync cancelled before the remaining source items could be processed"
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_cancelled", job.Message)
+			return nil, err
+		}
 		if shouldExclude(source.ExcludePatterns, item.Title+" "+item.SourceURI) {
 			continue
 		}
@@ -1025,11 +1091,11 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			recordFailure(item, "extraction failed", errExtract)
 			continue
 		}
-		if errIndex := s.indexExtraction(extraction); errIndex != nil {
+		if errIndex := s.indexExtractionContext(ctx, extraction); errIndex != nil {
 			recordFailure(item, "index update failed", errIndex)
 			continue
 		}
-		projection, errProjection := s.projectExtractionToLifeGraph(context.Background(), source, extraction)
+		projection, errProjection := s.projectExtractionToLifeGraph(ctx, source, extraction)
 		if errProjection != nil {
 			warning := itemFailure(item, "life graph projection failed", errProjection)
 			if len(warnings) < maxSyncErrorDetails {
@@ -1100,7 +1166,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		job.CursorAfter = job.CursorBefore
 		job.Message = "sync result could not update source state; cursor was not confirmed"
 		if len(itemErrors) < maxSyncErrorDetails {
-			itemErrors = append(itemErrors, "source state update failed: "+compact(errSource.Error(), 220))
+			itemErrors = append(itemErrors, "source state update failed; inspect the source audit and retry")
 		}
 	}
 	job.CompletedAt = &now
@@ -1179,11 +1245,11 @@ func (s *service) runDueScheduledSyncs(now time.Time, sources []models.Connected
 		if errSync != nil {
 			if errors.Is(errSync, ErrSyncInProgress) {
 				run.Skipped++
-				run.Messages = append(run.Messages, fmt.Sprintf("%s skipped: sync already in progress", source.Name))
+				run.Messages = append(run.Messages, fmt.Sprintf("%s skipped: sync already in progress", scheduledSourceLabel(source)))
 				continue
 			}
 			run.Failed++
-			run.Messages = append(run.Messages, fmt.Sprintf("%s failed: %s", source.Name, errSync.Error()))
+			run.Messages = append(run.Messages, fmt.Sprintf("%s failed; inspect connector configuration and retry", scheduledSourceLabel(source)))
 			s.createSyncFailureWorkflow(source, errSync.Error())
 			continue
 		}
@@ -1194,12 +1260,36 @@ func (s *service) runDueScheduledSyncs(now time.Time, sources []models.Connected
 			continue
 		}
 		run.Completed++
-		run.Messages = append(run.Messages, fmt.Sprintf("%s synced: %d seen, %d added, %d updated", source.Name, result.Job.ItemsSeen, result.Job.ItemsAdded, result.Job.ItemsUpdated))
+		run.Messages = append(run.Messages, fmt.Sprintf("%s synced: %d seen, %d added, %d updated", scheduledSourceLabel(source), result.Job.ItemsSeen, result.Job.ItemsAdded, result.Job.ItemsUpdated))
 	}
 	return run, nil
 }
 
+func scheduledSourceLabel(source models.ConnectedSource) string {
+	label := compact(safety.RedactSecrets(source.Name), 120)
+	if label == "" {
+		return "connected source"
+	}
+	return label
+}
+
 func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reason string) {
+	s.createSyncFailureWorkflowForTrigger(source, reason, "scheduled_source_sync_failed")
+}
+
+// ReportScheduledSyncTerminalFailure turns a durable-job dead letter into an
+// operator-review workflow. Retries are intentionally kept in the queue; only
+// the terminal outcome needs to interrupt the owner through HAI.
+func (s *service) ReportScheduledSyncTerminalFailure(sourceID uuid.UUID, reason string) {
+	source, err := s.repo.FindSource(sourceID)
+	if err != nil {
+		return
+	}
+	s.audit(sourceID, "source.sync_dead_lettered", compact(safety.RedactSecrets(reason), 320))
+	s.createSyncFailureWorkflowForTrigger(*source, reason, "scheduled_source_sync_dead_lettered")
+}
+
+func (s *service) createSyncFailureWorkflowForTrigger(source models.ConnectedSource, reason, trigger string) {
 	if s.workflowService == nil {
 		return
 	}
@@ -1217,7 +1307,7 @@ func (s *service) createSyncFailureWorkflow(source models.ConnectedSource, reaso
 		SourceURI:      safety.RedactURL(source.SyncTarget),
 		SourceLabel:    source.Name,
 		ContentType:    "operational_failure",
-		Trigger:        "scheduled_source_sync_failed",
+		Trigger:        trigger,
 		Actor:          "source-scheduler",
 		RequiresReview: true,
 		ReviewReason:   "background source ingestion failed and requires operator review",
@@ -1315,6 +1405,18 @@ func (s *service) RevokeAuthorized(
 }
 
 func (s *service) Search(request SearchRequest) (*SearchResult, error) {
+	return s.SearchContext(context.Background(), request)
+}
+
+// SearchContext keeps optional semantic retrieval tied to the requesting
+// browser/API operation. Keyword search remains the bounded local fallback.
+func (s *service) SearchContext(ctx context.Context, request SearchRequest) (*SearchResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	limit := request.Limit
 	if limit <= 0 || limit > 20 {
 		limit = 8
@@ -1324,7 +1426,7 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 		return nil, err
 	}
 	if len(request.ExcludeConnectorKeys) == 0 && s.semanticService != nil && s.semanticService.Enabled() {
-		matches, semanticErr := s.semanticService.Search(context.Background(), semantic.SearchRequest{
+		matches, semanticErr := s.semanticService.Search(ctx, semantic.SearchRequest{
 			OwnerIdentity: request.OwnerIdentity, Query: request.Query, ProjectKey: request.ProjectKey,
 			Limit: limit, IncludeSensitive: request.IncludeSensitive,
 		})
@@ -1356,6 +1458,9 @@ func (s *service) Search(request SearchRequest) (*SearchResult, error) {
 	}
 	ranked := []RankedExtraction{}
 	for _, extraction := range extractions {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !visibleSourceIDs[extraction.SourceID] {
 			continue
 		}
@@ -1435,6 +1540,19 @@ func (s *service) ExtractionsForOwner(ownerIdentity, projectKey string, includeA
 		return nil, err
 	}
 	return s.repo.FindExtractionsForSources(sourceIDsFromSet(visibleSourceIDs), projectKey, includeArchived)
+}
+
+func (s *service) ExtractionsForOwnerPage(ownerIdentity, projectKey string, includeArchived bool, page HistoryPageRequest) (*ExtractionPage, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	limit, offset := normalizedHistoryPage(page)
+	items, total, err := s.repo.FindExtractionsPageForSources(sourceIDsFromSet(visibleSourceIDs), projectKey, includeArchived, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &ExtractionPage{Items: items, Total: total, Limit: limit, Offset: offset, HasMore: offset+len(items) < total}, nil
 }
 
 func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error) {
@@ -1559,7 +1677,70 @@ func (s *service) AuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error
 	return s.repo.FindAuditLogs(sourceID)
 }
 
+func (s *service) SyncJobsForOwnerPage(ownerIdentity string, sourceID *uuid.UUID, page HistoryPageRequest) (*SyncJobPage, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	if sourceID != nil {
+		if !visibleSourceIDs[*sourceID] {
+			return &SyncJobPage{Items: []models.SourceSyncJob{}}, nil
+		}
+		visibleSourceIDs = map[uuid.UUID]bool{*sourceID: true}
+	}
+	limit, offset := normalizedHistoryPage(page)
+	items, total, err := s.repo.FindSyncJobsForSources(sourceIDsFromSet(visibleSourceIDs), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &SyncJobPage{Items: items, Total: total, Limit: limit, Offset: offset, HasMore: offset+len(items) < total}, nil
+}
+
+func (s *service) AuditLogsForOwnerPage(ownerIdentity string, sourceID *uuid.UUID, page HistoryPageRequest) (*AuditLogPage, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	if sourceID != nil {
+		if !visibleSourceIDs[*sourceID] {
+			return &AuditLogPage{Items: []models.SourceAuditLog{}}, nil
+		}
+		visibleSourceIDs = map[uuid.UUID]bool{*sourceID: true}
+	}
+	limit, offset := normalizedHistoryPage(page)
+	items, total, err := s.repo.FindAuditLogsForSources(sourceIDsFromSet(visibleSourceIDs), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &AuditLogPage{Items: items, Total: total, Limit: limit, Offset: offset, HasMore: offset+len(items) < total}, nil
+}
+
+func normalizedHistoryPage(page HistoryPageRequest) (int, int) {
+	limit := page.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 250 {
+		limit = 250
+	}
+	offset := page.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+
 func (s *service) localFolderItems(source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {
+	return s.localFolderItemsContext(context.Background(), source, request)
+}
+
+func (s *service) localFolderItemsContext(ctx context.Context, source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	root := firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources")
 	folder, err := resolveAllowedFolder(root, request.FolderPath)
 	if err != nil {
@@ -1579,6 +1760,9 @@ func (s *service) localFolderItems(source *models.ConnectedSource, request Impor
 	}
 	items := []ImportItem{}
 	err = filepath.WalkDir(folder, func(path string, entry os.DirEntry, errWalk error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if errWalk != nil {
 			return nil
 		}
@@ -1630,6 +1814,16 @@ func (s *service) localFolderItems(source *models.ConnectedSource, request Impor
 }
 
 func (s *service) whatsAppExportItems(source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {
+	return s.whatsAppExportItemsContext(context.Background(), source, request)
+}
+
+func (s *service) whatsAppExportItemsContext(ctx context.Context, source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	projectKey := firstNonEmpty(request.ProjectKey, source.DefaultProjectKey)
 	if len(request.Items) > 0 {
 		return expandWhatsAppImportItems(request.Items, projectKey, source.Name, firstPositiveInt(request.Limit, envInt("WHATSAPP_EXPORT_CHUNK_MESSAGES", defaultWhatsAppChunkMessages))), nil
@@ -1651,6 +1845,9 @@ func (s *service) whatsAppExportItems(source *models.ConnectedSource, request Im
 
 	baseItems := []ImportItem{}
 	err = filepath.WalkDir(folder, func(path string, entry os.DirEntry, errWalk error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if errWalk != nil {
 			return nil
 		}
@@ -1846,7 +2043,7 @@ func (s *service) ensureConnectors() error {
 }
 
 func (s *service) connectorByKey(connectorKey string) (models.SourceConnector, error) {
-	connectors, err := s.repo.FindConnectors()
+	connectors, err := s.Connectors()
 	if err != nil {
 		return models.SourceConnector{}, err
 	}
@@ -1856,6 +2053,22 @@ func (s *service) connectorByKey(connectorKey string) (models.SourceConnector, e
 		}
 	}
 	return models.SourceConnector{}, fmt.Errorf("connector %s is not registered", connectorKey)
+}
+
+func connectorUnavailableError(connector models.SourceConnector) error {
+	key := strings.TrimSpace(connector.ConnectorKey)
+	if !connector.Enabled {
+		return fmt.Errorf("connector %s is disabled", key)
+	}
+
+	switch strings.TrimSpace(connector.AdapterStatus) {
+	case AdapterConfigurationRequired:
+		return fmt.Errorf("connector %s configuration is required: %s", key, strings.TrimSpace(connector.StatusReason))
+	case AdapterNotImplemented, "":
+		return fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", key)
+	default:
+		return fmt.Errorf("connector %s is unavailable (status %s): %s", key, connector.AdapterStatus, strings.TrimSpace(connector.StatusReason))
+	}
 }
 
 func (s *service) upsertRawItem(source *models.ConnectedSource, item ImportItem, index int) (*models.SourceRawItem, bool, error) {
@@ -2301,6 +2514,19 @@ func (s *service) retractWorkflowForExtraction(extraction *models.SourceExtracti
 }
 
 func (s *service) indexExtraction(extraction *models.SourceExtraction) error {
+	return s.indexExtractionContext(context.Background(), extraction)
+}
+
+// indexExtractionContext keeps optional semantic enrichment tied to the work
+// that requested it. A cancelled sync must not continue consuming local model
+// or database resources after the HTTP request or worker lease has ended.
+func (s *service) indexExtractionContext(ctx context.Context, extraction *models.SourceExtraction) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	keywords := strings.Join(mapKeys(tokenSet(extraction.Text+" "+extraction.Summary+" "+extraction.Entities+" "+extraction.Tasks)), ",")
 	if _, err := s.repo.SaveIndexEntry(&models.SourceIndexEntry{
 		SourceID:     extraction.SourceID,
@@ -2317,7 +2543,13 @@ func (s *service) indexExtraction(extraction *models.SourceExtraction) error {
 	if s.semanticService == nil || !s.semanticService.Enabled() {
 		return nil
 	}
-	if err := s.semanticService.Index(context.Background(), extraction); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.semanticService.Index(ctx, extraction); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		// Semantic indexing is optional enrichment. Preserve the extracted record
 		// and keyword index, then expose the degraded state in the source audit.
 		s.audit(extraction.SourceID, "semantic.index_failed", "local semantic index was not updated: "+compact(err.Error(), 240))
@@ -2349,16 +2581,30 @@ func (s *service) endSync(sourceID uuid.UUID) {
 	delete(s.activeSyncs, sourceID)
 }
 
-func itemFailure(item ImportItem, stage string, err error) string {
-	label := firstNonEmpty(item.ExternalID, item.Title, "unknown item")
-	return compact(fmt.Sprintf("%s: %s: %v", label, stage, err), 320)
+func (s *service) markSyncFailure(job *models.SourceSyncJob, sourceID uuid.UUID) {
+	now := time.Now().UTC()
+	job.Status = "failed"
+	job.Message = "source sync could not complete; inspect the connector configuration and retry"
+	job.CompletedAt = &now
+	_, _ = s.repo.UpdateSyncJob(job)
+	s.audit(sourceID, "source.sync_failed", job.Message)
+}
+
+func syncExecutionFailure(err error) error {
+	return fmt.Errorf("%w: %v", ErrSyncExecutionFailed, err)
+}
+
+func itemFailure(item ImportItem, stage string, _ error) string {
+	label := compact(safety.RedactSecrets(firstNonEmpty(item.ExternalID, item.Title, "source item")), 160)
+	stage = compact(safety.RedactSecrets(stage), 120)
+	return fmt.Sprintf("%s: %s; inspect the source audit and retry", label, stage)
 }
 
 func (s *service) audit(sourceID uuid.UUID, action, message string) {
 	_, _ = s.repo.SaveAuditLog(&models.SourceAuditLog{
 		SourceID: sourceID,
 		Action:   action,
-		Message:  message,
+		Message:  safety.RedactSecrets(message),
 	})
 }
 
@@ -2412,6 +2658,7 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live scheduled and incremental fetch of a normalized JSON feed over HTTP, with host allowlisting and bounded responses"},
 		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "parses local WhatsApp .txt export files into bounded, sensitive, review-gated records; does not connect to WhatsApp"},
 		{ConnectorKey: "whisper-audio", Name: "Selected audio folders (whisper.cpp)", Category: "audio", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-audio-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local transcription from an explicit selected folder through whisper.cpp; no microphone capture, cloud upload, scheduled scan, or raw-audio retention"},
+		{ConnectorKey: "docling-documents", Name: "Selected documents (Docling)", Category: "cloud_document", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-document-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local text extraction from an explicit selected document folder through Docling; originals remain local and HAI never uploads files or selects parsers"},
 		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterModeled, StatusReason: "generates built-in Odoo app-domain models from manual selection; no live Odoo connection; write-back disabled by default"},
 		{ConnectorKey: odooJSON2ConnectorKey, Name: "Odoo JSON-2 (read only)", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "odoo-api-key,read-only-model-access", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Odoo JSON-2 sync for a fixed model and field allowlist; requires HAI_ODOO_* configuration and never writes back"},
 		{ConnectorKey: shareTConnectorKey, Name: "ShareT links (read only)", Category: "project_board", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "connector:read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only ShareT link inventory through a scoped connector token; fetches every page within an explicit completeness limit, excludes participant email addresses, and never creates, changes, comments on, or revokes links"},
@@ -2485,7 +2732,7 @@ func minimalPermissions(category string, requested []string) []string {
 	if len(requested) == 0 {
 		return []string{"metadata:read", category + ":read"}
 	}
-	allowed := map[string]bool{"metadata:read": true, category + ":read": true, "selected-folder-read": true, "selected-chat-export-read": true, "selected-audio-folder-read": true, "explicit-consent": true, "herp:read": true, "odoo:read": true}
+	allowed := map[string]bool{"metadata:read": true, category + ":read": true, "selected-folder-read": true, "selected-chat-export-read": true, "selected-audio-folder-read": true, "selected-document-folder-read": true, "explicit-consent": true, "herp:read": true, "odoo:read": true}
 	result := []string{}
 	for _, value := range requested {
 		value = strings.TrimSpace(value)
@@ -2527,6 +2774,9 @@ func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, str
 	if source.ConnectorKey == "whisper-audio" {
 		return false, "whisper-audio transcription is operator-triggered only"
 	}
+	if ready, reason := scheduledConnectorReady(source.ConnectorKey); !ready {
+		return false, reason
+	}
 	if !sourceHasNativeAdapter(source.ConnectorKey) {
 		return false, "scheduled adapter is not implemented for connector " + source.ConnectorKey
 	}
@@ -2543,12 +2793,55 @@ func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, str
 	return false, "not due yet"
 }
 
+// scheduledConnectorReady prevents a source that was connected before a
+// credential/configuration change from repeatedly creating failed scheduled
+// jobs. It deliberately checks only configuration that is global to the
+// connector; per-source authorization and target errors still surface through
+// the normal sync path when an actual scheduled run is possible.
+func scheduledConnectorReady(connectorKey string) (bool, string) {
+	switch strings.TrimSpace(connectorKey) {
+	case trelloConnectorKey:
+		if !trelloConfigured() {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	case gmailConnectorKey, driveConnectorKey, contactsConnectorKey, calendarConnectorKey:
+		if !googleOAuthReady() {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	case odooJSON2ConnectorKey:
+		if _, err := odooJSON2ConfigFromEnv(); err != nil {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	case shareTConnectorKey:
+		if _, err := shareTConfigFromEnv(); err != nil {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	case cloudQuerySummaryConnectorKey:
+		if _, err := cloudQuerySummaryConfigFromEnv(); err != nil {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	case airbyteInventoryConnectorKey:
+		if _, err := airbyteInventoryConfigFromEnv(); err != nil {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	case laroConnectorKey:
+		if _, err := laroConfigFromEnv(); err != nil {
+			return false, "connector configuration is required before scheduled sync"
+		}
+	}
+	return true, ""
+}
+
 type jsonFeedEnvelope struct {
 	Items      []ImportItem `json:"items"`
 	NextCursor string       `json:"nextCursor,omitempty"`
 }
 
 func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error) {
+	return fetchJSONFeedContext(context.Background(), source)
+}
+
+func fetchJSONFeedContext(ctx context.Context, source *models.ConnectedSource) ([]ImportItem, string, error) {
 	if source == nil {
 		return nil, "", fmt.Errorf("source is required")
 	}
@@ -2559,7 +2852,7 @@ func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error)
 	if target.Scheme != "http" && target.Scheme != "https" {
 		return nil, "", fmt.Errorf("json-feed sync target must use HTTP or HTTPS")
 	}
-	if target.User != nil {
+	if sourceHTTPURLHasCredentials(target) {
 		return nil, "", fmt.Errorf("json-feed credentials must not be embedded in syncTarget")
 	}
 	if !sourceHTTPHostAllowed(target.Hostname()) {
@@ -2573,7 +2866,7 @@ func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error)
 		query.Set("cursor", source.Cursor)
 		target.RawQuery = query.Encode()
 	}
-	request, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("create json-feed request: %w", err)
 	}
@@ -2620,6 +2913,10 @@ func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error)
 }
 
 func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, error) {
+	return fetchGitHubSourceContext(context.Background(), source)
+}
+
+func fetchGitHubSourceContext(ctx context.Context, source *models.ConnectedSource) ([]ImportItem, string, error) {
 	if source == nil {
 		return nil, "", fmt.Errorf("source is required")
 	}
@@ -2632,6 +2929,9 @@ func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, er
 	parsedBase, err := url.Parse(base)
 	if err != nil || (parsedBase.Scheme != "http" && parsedBase.Scheme != "https") || parsedBase.Hostname() == "" {
 		return nil, "", fmt.Errorf("GITHUB_SOURCE_API_BASE_URL must be an absolute HTTP(S) URL")
+	}
+	if sourceHTTPURLHasCredentials(parsedBase) {
+		return nil, "", fmt.Errorf("GITHUB_SOURCE_API_BASE_URL must not contain credentials")
 	}
 	if !sourceHTTPHostAllowed(parsedBase.Hostname()) || sourceHTTPAddressBlocked(parsedBase.Hostname()) {
 		return nil, "", fmt.Errorf("github API host %s is not allowlisted", parsedBase.Hostname())
@@ -2649,7 +2949,7 @@ func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, er
 	items := []ImportItem{}
 	latest := strings.TrimSpace(source.Cursor)
 	for _, endpoint := range endpoints {
-		value, err := fetchGitHubJSON(parsedBase, endpoint.path, source.Cursor)
+		value, err := fetchGitHubJSONContext(ctx, parsedBase, endpoint.path, source.Cursor)
 		if err != nil {
 			return nil, "", fmt.Errorf("fetch github %s: %w", endpoint.kind, err)
 		}
@@ -2669,6 +2969,10 @@ func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, er
 }
 
 func fetchGitHubJSON(base *url.URL, resourcePath, cursor string) (any, error) {
+	return fetchGitHubJSONContext(context.Background(), base, resourcePath, cursor)
+}
+
+func fetchGitHubJSONContext(ctx context.Context, base *url.URL, resourcePath, cursor string) (any, error) {
 	target := *base
 	target.Path = strings.TrimRight(base.Path, "/") + resourcePath
 	query := target.Query()
@@ -2682,7 +2986,7 @@ func fetchGitHubJSON(base *url.URL, resourcePath, cursor string) (any, error) {
 		}
 	}
 	target.RawQuery = query.Encode()
-	request, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2806,6 +3110,22 @@ func sourceHTTPHostAllowed(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	for _, allowed := range strings.Split(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS"), defaultHTTPFeedAllowedHosts), ",") {
 		if host == strings.ToLower(strings.TrimSpace(allowed)) {
+			return true
+		}
+	}
+	return false
+}
+
+func sourceHTTPURLHasCredentials(target *url.URL) bool {
+	if target == nil || target.User != nil {
+		return true
+	}
+	for key := range target.Query() {
+		clean := strings.ToLower(strings.TrimSpace(key))
+		if clean == "key" || clean == "apikey" || strings.Contains(clean, "api_key") ||
+			strings.Contains(clean, "password") || strings.Contains(clean, "passwd") ||
+			strings.Contains(clean, "secret") || strings.Contains(clean, "token") ||
+			strings.Contains(clean, "authorization") {
 			return true
 		}
 	}

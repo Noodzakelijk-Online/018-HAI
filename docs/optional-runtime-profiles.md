@@ -51,8 +51,10 @@ upgraded.
 
 ## Safe Activation
 
-Copy `.env.example` to `.env.local`, generate unique runner tokens, and enable
-only one reviewed profile at a time.
+Create `.env.local` with `scripts\initialize-windows.ps1`, generate unique
+runner tokens, and enable only one reviewed profile at a time. The template is
+not directly runnable because it deliberately contains a rejected sample
+first-run owner password.
 
 For a security snapshot named `review-snapshot`:
 

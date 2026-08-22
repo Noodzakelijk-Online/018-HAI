@@ -23,6 +23,27 @@ def location_block(marker: str) -> str:
 
 
 class GatewayAuthContractTest(unittest.TestCase):
+    def test_local_a2a_peer_route_preserves_its_token_and_rejects_tunnel_traffic(self) -> None:
+        for marker in (
+            "location = /api/v1/a2a",
+            "location = /.well-known/agent-card.json",
+        ):
+            with self.subTest(marker=marker):
+                block = location_block(marker)
+                self.assertNotIn("auth_request /auth-verify;", block)
+                self.assertIn("proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};", block)
+                self.assertIn("if ($hai_a2a_ngrok_request) { return 404; }", block)
+
+        a2a = location_block("location = /api/v1/a2a")
+        self.assertIn("proxy_set_header Authorization $http_authorization;", a2a)
+
+        self.assertIn(
+            'map $http_x_forwarded_for $hai_a2a_ngrok_request',
+            NGINX_TEMPLATE,
+        )
+        self.assertIn('default 1;', NGINX_TEMPLATE)
+        self.assertIn('""      0;', NGINX_TEMPLATE)
+
     def test_backend_routes_use_authenticated_catch_all(self) -> None:
         backend = location_block("location /api/v1 {")
         self.assertIn("auth_request /auth-verify;", backend)
@@ -55,6 +76,16 @@ class GatewayAuthContractTest(unittest.TestCase):
                     "add_header Set-Cookie $hai_refreshed_access_cookie always;",
                     block,
                 )
+
+    def test_automation_uploads_match_the_documented_backend_image_limit(self) -> None:
+        block = location_block("location ^~ /api/v1/automation/")
+        self.assertIn("client_max_body_size 6m;", block)
+        self.assertIn("auth_request /auth-verify;", block)
+        self.assertIn("proxy_pass http://$backend_upstream;", block)
+        self.assertIn(
+            'proxy_set_header Authorization "Bearer $hai_verified_access_token";',
+            block,
+        )
 
     def test_auth_subrequest_is_internal_and_marks_itself(self) -> None:
         block = location_block("location /auth-verify")

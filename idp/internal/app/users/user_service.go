@@ -22,6 +22,7 @@ type userServiceImpl struct {
 var (
 	ErrUserAlreadyExists = errors.New("user already exists")
 	ErrUserNotFound      = errors.New("user not found")
+	ErrPasswordWeak      = errors.New("password must contain at least 12 characters")
 )
 
 func NewUserService(repo irepository.UserRepository, logger iservice.Logger, hasher utils.PasswordHasher) UserService {
@@ -32,10 +33,16 @@ func NewUserService(repo irepository.UserRepository, logger iservice.Logger, has
 	}
 }
 
-func GetDefaultUserService() (UserService, error) {
-	logger, err := services.NewKafkaLogger(config.KafkaConfig.BrokersAddr, config.KafkaConfig.LoggerTopic)
-	if err != nil {
-		return nil, err
+func GetDefaultUserService(existingLogger ...iservice.Logger) (UserService, error) {
+	var logger iservice.Logger
+	if len(existingLogger) > 0 && existingLogger[0] != nil {
+		logger = existingLogger[0]
+	} else {
+		var err error
+		logger, err = services.NewDefaultLogger()
+		if err != nil {
+			return nil, err
+		}
 	}
 	database, err := infra.GetDefaultDB()
 	if err != nil {
@@ -105,6 +112,10 @@ func (s *userServiceImpl) DeleteUser(id uuid.UUID) error {
 }
 
 func (s *userServiceImpl) UpdatePassword(id uuid.UUID, newPassword string) error {
+	if len(newPassword) < 12 {
+		return ErrPasswordWeak
+	}
+
 	user, err := s.userRepo.FindByID(id)
 	if err != nil {
 		s.logger.Error("Error fetching user with ID: %s, %v", id, err)
@@ -148,7 +159,7 @@ func (s *userServiceImpl) GetUserByEmail(email string) (*models.User, error) {
 func (s *userServiceImpl) GetUserByResetToken(token string) (*models.User, error) {
 	user, err := s.userRepo.FindByResetToken(token)
 	if err != nil {
-		s.logger.Error("Failed to fetch user with reset token: %s, %v", token, err)
+		s.logger.Error("Failed to fetch user with reset token: %v", err)
 		if errors.Is(err, irepository.ErrUserNotFound) {
 			return nil, ErrUserNotFound
 		}
@@ -156,7 +167,7 @@ func (s *userServiceImpl) GetUserByResetToken(token string) (*models.User, error
 	}
 
 	if user == nil {
-		s.logger.Error("User not found with reset token: %s", token)
+		s.logger.Error("User not found with reset token")
 		return nil, errors.New("user not found")
 	}
 

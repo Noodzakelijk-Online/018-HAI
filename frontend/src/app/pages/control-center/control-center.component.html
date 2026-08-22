@@ -136,6 +136,15 @@
         </button>
       </div>
 
+      <nz-alert
+        *ngIf="overviewLoadError"
+        nzType="warning"
+        nzShowIcon
+        nzMessage="Some command-center data is unavailable"
+        [nzDescription]="overviewLoadError"
+        class="command-center-load-alert"
+      ></nz-alert>
+
       <section class="command-board" aria-label="Primary actions">
         <button
           type="button"
@@ -650,6 +659,14 @@
           </div>
         </div>
 
+        <nz-alert
+          *ngIf="diagnosticsLoadError"
+          nzType="warning"
+          [nzMessage]="diagnosticsLoadError"
+          nzShowIcon
+          class="panel-alert"
+        ></nz-alert>
+
         <div class="health-strip" *ngIf="summary as health">
           <span><strong>{{ health.total }}</strong> registered</span>
           <span class="healthy"><strong>{{ health.healthy }}</strong> healthy</span>
@@ -773,7 +790,7 @@
           </article>
         </div>
 
-        <div class="empty-state compact" *ngIf="!diagnosticsListLoading && !automations.length">
+        <div class="empty-state compact" *ngIf="!diagnosticsListLoading && !automations.length && !diagnosticsLoadError">
           <i nz-icon nzType="tool" nzTheme="outline"></i>
           <div>
             <strong>No automations registered</strong>

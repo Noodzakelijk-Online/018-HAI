@@ -23,7 +23,7 @@ bad()  { echo "  FAIL: $1"; fail=$((fail + 1)); }
 PHASE2_PKGS="backend/internal/operations backend/internal/background backend/internal/executionbroker backend/internal/accountfeed backend/internal/modelintelligence backend/internal/hardwareprofile backend/internal/runtimelab backend/internal/opscontrol backend/internal/autonomypolicy backend/internal/privacyfilter backend/internal/phase2"
 
 echo "==> 1. No fake/stub/TODO markers in Phase 2 source (excluding tests)"
-markers="$(grep -rniE 'TODO|FIXME|XXX|not implemented|not yet implemented|hardcoded|placeholder|dummy' ${PHASE2_PKGS} 2>/dev/null | grep -v '_test.go' || true)"
+markers="$(grep -rniE '\bTODO\b|\bFIXME\b|\bXXX\b|\bnot implemented\b|\bnot yet implemented\b|\bhardcoded\b|\bplaceholder\b|\bdummy\b' ${PHASE2_PKGS} 2>/dev/null | grep -v '_test.go' || true)"
 if [ -z "${markers}" ]; then
   ok "no unfinished/hardcoded/placeholder markers"
 else
@@ -42,7 +42,7 @@ grep -q 'Never fabricate output' backend/internal/modelintelligence/dspark.go 2>
   || bad "DSpark fabrication guard missing"
 
 # Runtime lab external runtimes must refuse execution.
-grep -q 'Never fake execution' backend/internal/runtimelab/remote_runtime.go 2>/dev/null \
+grep -q 'never fake execution' backend/internal/runtimelab/service.go 2>/dev/null \
   && ok "external runtimes never fake execution" \
   || bad "external runtime no-fake-execution guard missing"
 

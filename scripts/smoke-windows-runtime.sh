@@ -69,10 +69,10 @@ createdb -h 127.0.0.1 -p "${PG_PORT}" automation
 
 echo "==> Building and starting backend on :${API_PORT}"
 mkdir -p "${IMAGES}"
-( cd "${ROOT}/backend" && go build -o "${BIN}" ./cmd )
+( cd "${ROOT}/backend" && go build -buildvcs=false -o "${BIN}" ./cmd )
 
 start_backend() {
-  DB_HOST=127.0.0.1 DB_PORT="${PG_PORT}" DB_USER="$(whoami)" DB_PASSWORD=postgres \
+  DB_HOST=127.0.0.1 DB_PORT="${PG_PORT}" DB_USER="$(whoami)" DB_PASSWORD=smoke-local-postgres-password \
     DB_NAME=automation SERVER_PORT="${API_PORT}" BASE_URL=/api \
     BACKEND_API_SHARED_KEY="${API_KEY}" IMAGE_SAVE_DIR="${IMAGES}" \
     RUN_MODE=production KAFKA_BROKERS="" JWT_SECRET="${JWT_SECRET}" \
@@ -105,6 +105,11 @@ hdr=("${key_hdr[@]}" -H "Authorization: Bearer ${owner_jwt}")
 echo "==> Authentication boundary"
 check "API key alone is rejected" '401' \
   "$(curl -sS -o /dev/null -w '%{http_code}' "${key_hdr[@]}" "${BASE}/windows-runtime/readiness")"
+
+echo "==> Owner activates the durable local execution baseline"
+hai_smoke_activate_baseline_constitution "${BASE}" "${API_KEY}" "${owner_jwt}"
+kill "${BACKEND_PID}" 2>/dev/null; wait "${BACKEND_PID}" 2>/dev/null || true
+start_backend; wait_live
 
 echo "==> Windows-runtime readiness is truthful"
 rd="$(curl -sS "${hdr[@]}" "${BASE}/windows-runtime/readiness")"
@@ -141,13 +146,14 @@ start_backend; wait_live
 check "emergency stop still engaged after restart" 'true' \
   "$(curl -sS "${hdr[@]}" "${BASE}/background/status" | jq -r '.emergencyStop.engaged==true')"
 
-echo "==> Resume re-enables processing"
-curl -sS "${hdr[@]}" -X POST "${BASE}/background/resume" >/dev/null
-check "processing active after resume" 'true' \
-  "$(curl -sS "${hdr[@]}" "${BASE}/background/status" | jq -r '.backgroundProcessingActive==true')"
-run_resumed="$(curl -sS "${hdr[@]}" -X POST "${BASE}/background/run")"
-check "background run processes work after resume" 'true' \
-  "$(echo "${run_resumed}" | jq -r '.classified>=1')"
+echo "==> Resume remains approval-gated"
+check "resume without exact approval is refused" '403' \
+  "$(curl -sS -o /dev/null -w '%{http_code}' "${hdr[@]}" -X POST "${BASE}/background/resume" -d '{}')"
+check "processing remains inactive without approval" 'true' \
+  "$(curl -sS "${hdr[@]}" "${BASE}/background/status" | jq -r '.backgroundProcessingActive==false')"
+run_blocked="$(curl -sS "${hdr[@]}" -X POST "${BASE}/background/run")"
+check "background run remains halted without approval" 'true' \
+  "$(echo "${run_blocked}" | jq -r '(.classified==0) and (.autoExecuted==0)')"
 
 echo "==> Mode change is validated + effective"
 check "invalid mode rejected" '400' \

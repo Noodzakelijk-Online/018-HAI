@@ -112,7 +112,7 @@ func sourceFakeLeaseOwned(job *models.DurableJob, workerID string, leaseGenerati
 		job.LeaseGeneration == leaseGeneration
 }
 
-func (f *fakeJobRepo) ReapExpiredLeases(now time.Time, lease time.Duration) (int, error) {
+func (f *fakeJobRepo) ReapExpiredLeases(queue string, now time.Time, lease time.Duration) (int, error) {
 	return 0, nil
 }
 
@@ -192,6 +192,49 @@ func TestDurableScanEnqueuesOneSyncPerDueSourceAndReschedulesItself(t *testing.T
 	}
 }
 
+func (f *fakeJobRepo) EnqueueIfNoActiveByPayload(job *models.DurableJob) (bool, error) {
+	if job.Queue == "" {
+		job.Queue = "default"
+	}
+	for _, existing := range f.jobs {
+		if existing.Queue == job.Queue && existing.Kind == job.Kind && existing.Payload == job.Payload &&
+			(existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
+			return false, nil
+		}
+	}
+	_, err := f.Enqueue(job)
+	return err == nil, err
+}
+
+func TestDurableScanDoesNotDuplicateAnActiveSyncForTheSameSource(t *testing.T) {
+	source, _ := localFolderSource(t, "alice")
+	repo := newFakeSourceRepo(source)
+	service := NewService(repo, &fakeSourceMemoryService{})
+	jobs := newFakeJobRepo()
+	runner := durablejob.NewRunner(jobs, durablejob.Options{WorkerID: "w1"})
+
+	if err := RegisterDurableScheduling(runner, service, time.Minute); err != nil {
+		t.Fatalf("RegisterDurableScheduling: %v", err)
+	}
+	if err := scanWork(runner, service)(context.Background()); err != nil {
+		t.Fatalf("run first scan: %v", err)
+	}
+	if got := len(jobs.byKind(JobKindSync)); got != 1 {
+		t.Fatalf("sync jobs after first scan = %d, want 1", got)
+	}
+
+	// A source remains due until a successful sync updates LastSyncedAt. Its
+	// display name can change in that window, but that must not change the
+	// payload-based identity or create a second retry chain.
+	repo.sources[source.ID].Name = "Alice renamed source"
+	if err := scanWork(runner, service)(context.Background()); err != nil {
+		t.Fatalf("run second scan: %v", err)
+	}
+	if got := len(jobs.byKind(JobKindSync)); got != 1 {
+		t.Fatalf("duplicate active sync jobs = %d, want 1", got)
+	}
+}
+
 func TestDurableSyncJobActuallySyncsTheSource(t *testing.T) {
 	source, _ := localFolderSource(t, "alice")
 	repo := newFakeSourceRepo(source)
@@ -263,5 +306,92 @@ func TestDurableSyncHandlerTreatsInProgressAsSuccess(t *testing.T) {
 	payload := `{"sourceId":"` + src.ID.String() + `"}`
 	if err := syncHandler(svc)(context.Background(), durablejob.Job{Payload: payload}); err != nil {
 		t.Fatalf("in-progress sync should not fail the job (it would retry-storm): %v", err)
+	}
+}
+
+func TestDurableSyncHandlerTreatsPausedSourceAsComplete(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "local-folder",
+		Name: "Paused folder", Category: "local_folder", Enabled: false,
+		Status: "paused", SyncFrequency: "15m", SyncTarget: ".",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+	payload := `{"sourceId":"` + sourceID.String() + `"}`
+
+	if err := syncHandler(service)(context.Background(), durablejob.Job{Payload: payload}); err != nil {
+		t.Fatalf("paused source must retire an already queued durable job without retries: %v", err)
+	}
+}
+
+func TestDurableSyncHandlerRoutesTerminalFailureToWorkflowReview(t *testing.T) {
+	t.Setenv(trelloAPIKeyEnv, "")
+	t.Setenv(trelloReadTokenEnv, "")
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: trelloConnectorKey,
+		Name: "Client delivery board", Category: "project_board", Enabled: true,
+		Status: "active", SyncFrequency: "15m", SyncTarget: "abc123XY",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	payload := `{"sourceId":"` + sourceID.String() + `"}`
+
+	err := syncHandler(service)(context.Background(), durablejob.Job{
+		Payload: payload, Attempts: syncMaxAttempts - 1, MaxAttempts: syncMaxAttempts,
+	})
+	if err == nil {
+		t.Fatal("terminal Trello configuration failure must remain a failed durable job")
+	}
+	if len(workflowSpy.requests) != 1 {
+		t.Fatalf("workflow review requests = %d, want 1 for a terminal source sync failure", len(workflowSpy.requests))
+	}
+	request := workflowSpy.requests[0]
+	if request.SourceType != "source_sync" || !request.RequiresReview || request.Trigger != "scheduled_source_sync_dead_lettered" {
+		t.Fatalf("terminal failure workflow = %#v, want review-gated source_sync dead-letter workflow", request)
+	}
+}
+
+func TestDurableRunnerDeadLettersTerminalSyncFailureAndCreatesReview(t *testing.T) {
+	t.Setenv(trelloAPIKeyEnv, "")
+	t.Setenv(trelloReadTokenEnv, "")
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: trelloConnectorKey,
+		Name: "Client delivery board", Category: "project_board", Enabled: true,
+		Status: "active", SyncFrequency: "15m", SyncTarget: "abc123XY",
+	})
+	workflowSpy := &fakeSourceWorkflowService{}
+	service := NewServiceWithWorkflow(repo, &fakeSourceMemoryService{}, workflowSpy)
+	jobs := newFakeJobRepo()
+	runner := durablejob.NewRunner(jobs, durablejob.Options{WorkerID: "w1"})
+	if err := RegisterDurableScheduling(runner, service, time.Minute); err != nil {
+		t.Fatalf("RegisterDurableScheduling: %v", err)
+	}
+
+	payload := `{"sourceId":"` + sourceID.String() + `"}`
+	job, err := runner.Enqueue(JobKindSync, payload, time.Time{}, 1)
+	if err != nil {
+		t.Fatalf("enqueue terminal sync job: %v", err)
+	}
+	processed, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("run terminal sync job: %v", err)
+	}
+	if processed != 2 {
+		t.Fatalf("processed jobs = %d, want scan and terminal sync", processed)
+	}
+	stored, err := jobs.Find(job.ID)
+	if err != nil {
+		t.Fatalf("find terminal sync job: %v", err)
+	}
+	if stored.Status != models.DurableJobDead {
+		t.Fatalf("terminal sync job status = %q, want dead", stored.Status)
+	}
+	if len(workflowSpy.requests) != 1 {
+		t.Fatalf("workflow review requests = %d, want 1", len(workflowSpy.requests))
+	}
+	if trigger := workflowSpy.requests[0].Trigger; trigger != "scheduled_source_sync_dead_lettered" {
+		t.Fatalf("workflow trigger = %q, want scheduled_source_sync_dead_lettered", trigger)
 	}
 }

@@ -23,3 +23,23 @@ export interface ISystemReadiness {
   summary: ISystemReadinessSummary;
   checks: ISystemCheck[];
 }
+
+export interface ISystemBuildInfo {
+  version: string;
+  commit: string;
+  buildTime: string;
+  goVersion: string;
+}
+
+export interface ISystemInfo {
+  build: ISystemBuildInfo;
+  runMode: string;
+  allowsRealSideEffects: boolean;
+  languages: string[];
+  readiness: {
+    ready: boolean;
+    ok: number;
+    warn: number;
+    fail: number;
+  };
+}

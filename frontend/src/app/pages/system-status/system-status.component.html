@@ -50,6 +50,13 @@
       <span class="updated" *ngIf="lastUpdated">
         Updated {{ lastUpdated | date: 'HH:mm:ss' }}
       </span>
+      <span
+        class="build-info"
+        *ngIf="systemInfo"
+        [title]="'Build ' + systemInfo.build.version + ', committed ' + systemInfo.build.commit + ' at ' + systemInfo.build.buildTime"
+      >
+        Build {{ systemInfo.build.version }} · {{ systemInfo.build.commit }}
+      </span>
     </div>
 
     <div

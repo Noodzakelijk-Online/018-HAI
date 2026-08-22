@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const defaultSMTPTimeout = 15 * time.Second
+
 // SMTPPasswordResetSender delivers short-lived reset codes over a standard
 // STARTTLS SMTP connection. It deliberately supports port 587-style STARTTLS;
 // implicit TLS (usually port 465) is not silently downgraded to plaintext.
@@ -22,6 +24,7 @@ type SMTPPasswordResetSender struct {
 	password        string
 	from            string
 	requireStartTLS bool
+	timeout         time.Duration
 }
 
 func NewSMTPPasswordResetSender(host, port, username, password, from string, requireStartTLS bool) *SMTPPasswordResetSender {
@@ -32,6 +35,7 @@ func NewSMTPPasswordResetSender(host, port, username, password, from string, req
 		password:        strings.TrimSpace(password),
 		from:            strings.TrimSpace(from),
 		requireStartTLS: requireStartTLS,
+		timeout:         defaultSMTPTimeout,
 	}
 }
 
@@ -58,8 +62,17 @@ func (s *SMTPPasswordResetSender) SendPasswordReset(email, resetToken string, ex
 		return errors.New("invalid recipient email")
 	}
 
-	client, err := smtp.Dial(net.JoinHostPort(s.host, s.port))
+	connection, err := net.DialTimeout("tcp", net.JoinHostPort(s.host, s.port), s.timeout)
 	if err != nil {
+		return fmt.Errorf("connect to smtp server: %w", err)
+	}
+	if err := connection.SetDeadline(time.Now().Add(s.timeout)); err != nil {
+		_ = connection.Close()
+		return fmt.Errorf("set smtp deadline: %w", err)
+	}
+	client, err := smtp.NewClient(connection, s.host)
+	if err != nil {
+		_ = connection.Close()
 		return fmt.Errorf("connect to smtp server: %w", err)
 	}
 	defer client.Quit() //nolint:errcheck // The message result is decided before QUIT.

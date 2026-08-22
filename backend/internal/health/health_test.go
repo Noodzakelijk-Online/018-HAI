@@ -4,7 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"automation-hub-backend/internal/config"
 )
 
 func TestLLMProviderProbeUsesConfiguredLocalAIEndpoint(t *testing.T) {
@@ -64,5 +67,15 @@ func TestLLMProviderProbeUsesConfiguredMistralRSEndpoint(t *testing.T) {
 
 	if err := LLMProviderProbe().Run(context.Background()); err != nil {
 		t.Fatalf("mistral.rs health probe failed: %v", err)
+	}
+}
+
+func TestRedisProbeExplainsInProcessFallbackWhenSharedRateLimitIsEnabled(t *testing.T) {
+	err := RedisProbe(config.Configuration{RateLimitPerMinute: 60}).Run(context.Background())
+	if err == nil {
+		t.Fatal("RedisProbe error = nil, want an explicit local-rate-limit diagnostic")
+	}
+	if !strings.Contains(err.Error(), "per-process in-memory") {
+		t.Fatalf("RedisProbe error = %q, want a per-process fallback explanation", err)
 	}
 }

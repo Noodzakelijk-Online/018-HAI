@@ -57,3 +57,32 @@ func TestHandlerRejectsUnauthenticatedGlobalCycle(t *testing.T) {
 		t.Fatalf("unauthenticated route started work: %v", calls)
 	}
 }
+
+func TestHandlerRejectsMalformedRequestWithoutRunningCycle(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	calls := []string{}
+	handler := NewHandler(NewServiceWithPursuits(
+		fakeSourceSyncer{calls: &calls},
+		fakeWorkflowCoordinator{calls: &calls},
+		fakeAmbientScanner{calls: &calls},
+		fakePursuitBriefProvider{calls: &calls},
+	))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.POST("/agent-cycle/run", handler.Run)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/agent-cycle/run", strings.NewReader(`{"limit":`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("malformed request status = %d, want %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if len(calls) != 0 {
+		t.Fatalf("malformed request started work: %v", calls)
+	}
+}

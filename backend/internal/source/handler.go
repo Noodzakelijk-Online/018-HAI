@@ -1,10 +1,14 @@
 package source
 
 import (
+	"automation-hub-backend/internal/docling"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/whispercpp"
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -19,6 +23,11 @@ import (
 type Handler struct {
 	service     Service
 	transcriber whispercpp.Service
+	documents   docling.Service
+}
+
+type ownerScopedSourceLister interface {
+	SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error)
 }
 
 func NewHandler(service Service, transcribers ...whispercpp.Service) *Handler {
@@ -26,7 +35,17 @@ func NewHandler(service Service, transcribers ...whispercpp.Service) *Handler {
 	if len(transcribers) > 0 && transcribers[0] != nil {
 		transcriber = transcribers[0]
 	}
-	return &Handler{service: service, transcriber: transcriber}
+	return NewHandlerWithDocling(service, transcriber, docling.DefaultService())
+}
+
+func NewHandlerWithDocling(service Service, transcriber whispercpp.Service, documents docling.Service) *Handler {
+	if transcriber == nil {
+		transcriber = whispercpp.DefaultService()
+	}
+	if documents == nil {
+		documents = docling.DefaultService()
+	}
+	return &Handler{service: service, transcriber: transcriber, documents: documents}
 }
 
 func DefaultHandler() *Handler {
@@ -36,7 +55,7 @@ func DefaultHandler() *Handler {
 func (h *Handler) Connectors(c *gin.Context) {
 	connectors, err := h.service.Connectors()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "source connector lookup", err)
 		return
 	}
 	c.JSON(http.StatusOK, connectors)
@@ -95,12 +114,12 @@ func (h *Handler) CreateSource(c *gin.Context) {
 
 func (h *Handler) Sources(c *gin.Context) {
 	includeDisabled, _ := strconv.ParseBool(c.Query("includeDisabled"))
-	sources, err := h.service.Sources(includeDisabled)
+	sources, err := h.ownerSources(sourceOwner(c), includeDisabled)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "connected source lookup", err)
 		return
 	}
-	c.JSON(http.StatusOK, filterVisibleSources(sources, sourceOwner(c)))
+	c.JSON(http.StatusOK, sources)
 }
 
 func (h *Handler) SyncJobs(c *gin.Context) {
@@ -116,15 +135,32 @@ func (h *Handler) SyncJobs(c *gin.Context) {
 			return
 		}
 	}
+	if page, requested, err := historyPageFromQuery(c); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	} else if requested {
+		paged, ok := h.service.(PagedHistoryService)
+		if !ok {
+			c.JSON(http.StatusNotImplemented, gin.H{"error": "paged source history is not available"})
+			return
+		}
+		result, err := paged.SyncJobsForOwnerPage(sourceOwner(c), sourceID, page)
+		if err != nil {
+			writeSourceInternalError(c, "source sync-job lookup", err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+		return
+	}
 	jobs, err := h.service.SyncJobs(sourceID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "source sync-job lookup", err)
 		return
 	}
 	if sourceID == nil {
 		visibleSourceIDs, err := h.visibleSourceIDs(c)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			writeSourceInternalError(c, "connected source access check", err)
 			return
 		}
 		jobs = filterVisibleSyncJobs(jobs, visibleSourceIDs)
@@ -151,6 +187,43 @@ func (h *Handler) ConnectionHealth(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, health)
+}
+
+// ConnectionHealthSummary returns connection state for every source visible to
+// the current owner. It avoids the client issuing one health request per source
+// on every page load while preserving the same per-source authorization checks.
+func (h *Handler) ConnectionHealthSummary(c *gin.Context) {
+	sources, err := h.ownerSources(sourceOwner(c), true)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "connected sources are temporarily unavailable"})
+		return
+	}
+	visible := sources
+	if summaryService, ok := h.service.(ConnectionHealthSummaryService); ok {
+		c.JSON(http.StatusOK, summaryService.ConnectionHealthForSources(visible))
+		return
+	}
+	healthService, ok := h.service.(ConnectionHealthService)
+	if !ok {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "connection health is not available"})
+		return
+	}
+	result := make([]ConnectionHealth, 0, len(visible))
+	for _, source := range visible {
+		health, healthErr := healthService.ConnectionHealth(source.ID)
+		if healthErr != nil {
+			// A single malformed legacy record must not make every other
+			// connection disappear from the dashboard. Do not disclose the raw
+			// error because it may contain provider-specific context.
+			result = append(result, ConnectionHealth{
+				SourceID: source.ID, ConnectorKey: source.ConnectorKey,
+				Status: "error", Reason: "connection status could not be determined",
+			})
+			continue
+		}
+		result = append(result, *health)
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 func (h *Handler) UpdateSource(c *gin.Context) {
@@ -187,10 +260,14 @@ func (h *Handler) Sync(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	result, err := h.service.Sync(id, request)
+	result, err := h.service.SyncContext(c.Request.Context(), id, request)
 	if err != nil {
 		if errors.Is(err, ErrSyncInProgress) {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, ErrSyncExecutionFailed) {
+			writeSourceInternalError(c, "source sync", err)
 			return
 		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -251,9 +328,79 @@ func (h *Handler) Transcribe(c *gin.Context) {
 			Metadata:   "engine=whisper.cpp;model=" + transcript.ModelID + ";language=" + transcript.Language + ";audio_retained=false;consent=source_owner",
 		})
 	}
-	result, err := h.service.Sync(id, ImportRequest{Mode: ModeManualImport, Items: items, ProjectKey: source.DefaultProjectKey, controlledTranscription: true})
+	result, err := h.service.SyncContext(c.Request.Context(), id, ImportRequest{Mode: ModeManualImport, Items: items, ProjectKey: source.DefaultProjectKey, controlledTranscription: true})
 	if errors.Is(err, ErrSyncInProgress) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, ErrSyncExecutionFailed) {
+		writeSourceInternalError(c, "source transcription sync", err)
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// ExtractDocuments permits only operator-triggered extraction from the
+// registered relative folder of a local-only Docling source. The runner output
+// is re-ingested as ordinary source evidence, preserving provenance and review.
+func (h *Handler) ExtractDocuments(c *gin.Context) {
+	if c.Request.ContentLength != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "document extraction uses the source's configured selected folder and accepts no caller-provided files, model, parser, or folder"})
+		return
+	}
+	id, ok := parseUUID(c)
+	if !ok {
+		return
+	}
+	if !h.requireMutableSource(c, id) {
+		return
+	}
+	source, err := h.sourceByID(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "connected source not found"})
+		return
+	}
+	if source.ConnectorKey != "docling-documents" || !source.LocalOnly {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "document extraction requires an enabled local-only docling-documents source"})
+		return
+	}
+	folder, err := selectedDocumentFolder(source.SyncTarget)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	documents, err := h.documents.Extract(c.Request.Context(), folder)
+	if errors.Is(err, docling.ErrNotConfigured) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "local Docling document extractor is not configured"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "local Docling document extractor could not complete"})
+		return
+	}
+	items := make([]ImportItem, 0, len(documents))
+	for _, document := range documents {
+		items = append(items, ImportItem{
+			ExternalID: "docling:" + document.ContentDigest,
+			Title:      filepath.Base(document.Path),
+			Content:    document.Text,
+			SourceURI:  "document://selected-source/" + id.String() + "/" + document.Path,
+			ItemType:   "document_extraction",
+			ProjectKey: source.DefaultProjectKey,
+			Metadata:   "engine=docling;format=" + document.Format + ";pages=" + strconv.Itoa(document.PageCount) + ";digest=" + document.ContentDigest + ";original_retained=true;consent=source_owner",
+		})
+	}
+	result, err := h.service.SyncContext(c.Request.Context(), id, ImportRequest{Mode: ModeManualImport, Items: items, ProjectKey: source.DefaultProjectKey})
+	if errors.Is(err, ErrSyncInProgress) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, ErrSyncExecutionFailed) {
+		writeSourceInternalError(c, "document extraction sync", err)
 		return
 	}
 	if err != nil {
@@ -294,10 +441,25 @@ func (h *Handler) RunDueScheduledSyncs(c *gin.Context) {
 	}
 	result, err := h.service.RunDueScheduledSyncsForOwner(time.Now().UTC(), ownerIdentity)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "scheduled source sync", err)
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+// writeSourceInternalError keeps unexpected connector, storage, and provider
+// failures out of browser responses. The opaque ID links the operator-visible
+// response to separately redacted server telemetry without disclosing secrets
+// or local machine paths to the client.
+func writeSourceInternalError(c *gin.Context, operation string, err error) {
+	errorID := uuid.NewString()
+	if err != nil {
+		_ = c.Error(fmt.Errorf("%s failed (%s): %s", operation, errorID, safety.RedactSecrets(err.Error())))
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{
+		"error":   operation + " could not complete",
+		"errorId": errorID,
+	})
 }
 
 func (h *Handler) Pause(c *gin.Context) {
@@ -364,19 +526,47 @@ func (h *Handler) Search(c *gin.Context) {
 		return
 	}
 	request.OwnerIdentity = sourceOwner(c)
-	result, err := h.service.Search(request)
+	result, err := h.search(c.Request.Context(), request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "connected-source search", err)
 		return
 	}
 	c.JSON(http.StatusOK, result)
 }
 
+// search keeps cancellation available to the concrete source service without
+// forcing older service stubs or external integrations to change immediately.
+func (h *Handler) search(ctx context.Context, request SearchRequest) (*SearchResult, error) {
+	if contextual, ok := h.service.(interface {
+		SearchContext(context.Context, SearchRequest) (*SearchResult, error)
+	}); ok {
+		return contextual.SearchContext(ctx, request)
+	}
+	return h.service.Search(request)
+}
+
 func (h *Handler) Extractions(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
+	if page, requested, err := historyPageFromQuery(c); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	} else if requested {
+		paged, ok := h.service.(PagedHistoryService)
+		if !ok {
+			c.JSON(http.StatusNotImplemented, gin.H{"error": "paged source history is not available"})
+			return
+		}
+		result, err := paged.ExtractionsForOwnerPage(sourceOwner(c), c.Query("projectKey"), includeArchived, page)
+		if err != nil {
+			writeSourceInternalError(c, "source extraction lookup", err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+		return
+	}
 	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), c.Query("projectKey"), includeArchived)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "source extraction lookup", err)
 		return
 	}
 	c.JSON(http.StatusOK, extractions)
@@ -456,15 +646,32 @@ func (h *Handler) AuditLogs(c *gin.Context) {
 			return
 		}
 	}
+	if page, requested, err := historyPageFromQuery(c); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	} else if requested {
+		paged, ok := h.service.(PagedHistoryService)
+		if !ok {
+			c.JSON(http.StatusNotImplemented, gin.H{"error": "paged source history is not available"})
+			return
+		}
+		result, err := paged.AuditLogsForOwnerPage(sourceOwner(c), sourceID, page)
+		if err != nil {
+			writeSourceInternalError(c, "source audit lookup", err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+		return
+	}
 	logs, err := h.service.AuditLogs(sourceID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "source audit lookup", err)
 		return
 	}
 	if sourceID == nil {
 		visibleSourceIDs, err := h.visibleSourceIDs(c)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			writeSourceInternalError(c, "connected source access check", err)
 			return
 		}
 		logs = filterVisibleAuditLogs(logs, visibleSourceIDs)
@@ -479,6 +686,30 @@ func sourceOwner(c *gin.Context) string {
 		}
 	}
 	return ""
+}
+
+func historyPageFromQuery(c *gin.Context) (HistoryPageRequest, bool, error) {
+	limitRaw, limitRequested := c.GetQuery("limit")
+	offsetRaw, offsetRequested := c.GetQuery("offset")
+	if !limitRequested && !offsetRequested {
+		return HistoryPageRequest{}, false, nil
+	}
+	page := HistoryPageRequest{Limit: 100}
+	if limitRequested {
+		limit, err := strconv.Atoi(limitRaw)
+		if err != nil || limit < 1 || limit > 250 {
+			return HistoryPageRequest{}, true, fmt.Errorf("limit must be between 1 and 250")
+		}
+		page.Limit = limit
+	}
+	if offsetRequested {
+		offset, err := strconv.Atoi(offsetRaw)
+		if err != nil || offset < 0 {
+			return HistoryPageRequest{}, true, fmt.Errorf("offset must be zero or greater")
+		}
+		page.Offset = offset
+	}
+	return page, true, nil
 }
 
 func destructiveAuthorization(c *gin.Context) DestructiveEffectAuthorization {
@@ -506,7 +737,7 @@ func writeDestructiveEffectError(c *gin.Context, err error) {
 	case errors.Is(err, ErrSourceEmergencyStopActive):
 		c.JSON(http.StatusLocked, gin.H{"error": err.Error()})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "connected-source destructive action", err)
 	}
 }
 
@@ -534,15 +765,26 @@ func filterVisibleSources(sources []models.ConnectedSource, owner string) []mode
 }
 
 func (h *Handler) visibleSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
-	sources, err := h.service.Sources(true)
+	sources, err := h.ownerSources(sourceOwner(c), true)
 	if err != nil {
 		return nil, err
 	}
 	visible := make(map[uuid.UUID]bool, len(sources))
-	for _, source := range filterVisibleSources(sources, sourceOwner(c)) {
+	for _, source := range sources {
 		visible[source.ID] = true
 	}
 	return visible, nil
+}
+
+func (h *Handler) ownerSources(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	if scoped, ok := h.service.(ownerScopedSourceLister); ok {
+		return scoped.SourcesForOwner(ownerIdentity, includeDisabled)
+	}
+	sources, err := h.service.Sources(includeDisabled)
+	if err != nil {
+		return nil, err
+	}
+	return filterVisibleSources(sources, ownerIdentity), nil
 }
 
 func (h *Handler) sourceByID(id uuid.UUID) (*models.ConnectedSource, error) {
@@ -570,10 +812,22 @@ func selectedAudioFolder(value string) (string, error) {
 	return cleaned, nil
 }
 
+func selectedDocumentFolder(value string) (string, error) {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	if value == "" || value == "." || strings.HasPrefix(value, "/") || strings.Contains(value, "//") {
+		return "", errors.New("an explicit relative selected document folder is required")
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(value))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || len(cleaned) > 400 {
+		return "", errors.New("document folder must stay inside the selected intake root")
+	}
+	return cleaned, nil
+}
+
 func (h *Handler) requireSourceAccess(c *gin.Context, id uuid.UUID) bool {
 	visibleSourceIDs, err := h.visibleSourceIDs(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "connected source access check", err)
 		return false
 	}
 	if visibleSourceIDs[id] {
@@ -601,7 +855,7 @@ func (h *Handler) mutableSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
 func (h *Handler) requireMutableSource(c *gin.Context, id uuid.UUID) bool {
 	mutableSourceIDs, err := h.mutableSourceIDs(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "connected source access check", err)
 		return false
 	}
 	if mutableSourceIDs[id] {
@@ -614,12 +868,12 @@ func (h *Handler) requireMutableSource(c *gin.Context, id uuid.UUID) bool {
 func (h *Handler) requireMutableExtraction(c *gin.Context, id uuid.UUID) bool {
 	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), "", true)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "source extraction access check", err)
 		return false
 	}
 	mutableSourceIDs, err := h.mutableSourceIDs(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeSourceInternalError(c, "connected source access check", err)
 		return false
 	}
 	for _, extraction := range extractions {

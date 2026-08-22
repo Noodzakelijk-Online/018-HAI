@@ -23,20 +23,23 @@ against a real local Postgres instance.
 
 ```powershell
 cd 018-HAI
-Copy-Item .env.example .env.local
+.\scripts\initialize-windows.ps1
 docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
 docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps
-curl.exe -i http://localhost/
-curl.exe -i http://localhost/healthz
-curl.exe -i http://localhost/readyz
-curl.exe -i http://localhost/api/v1/llm/policy
+curl.exe -i http://127.0.0.1:8088/
+curl.exe -i http://127.0.0.1:8088/healthz
+curl.exe -i http://127.0.0.1:8088/readyz
+curl.exe -i http://127.0.0.1:8088/api/v1/llm/policy
 ```
 
 Expected result:
 
-- Backend, frontend, gateway, Postgres, Redis, Kafka, and their required
-  dependencies are running; services that define health checks report healthy.
+- Backend, frontend, gateway, Postgres, and Redis are running; services that
+  define health checks report healthy. Kafka, ZooKeeper, and the Kafka-driven
+  nginx configuration manager are intentionally absent from the default
+  resource-efficient stack. Start the optional `event-bus` profile only when
+  an installation explicitly requires it.
 - `GET /` returns the Angular dashboard shell.
 - `GET /healthz` returns the backend health JSON, and `GET /readyz` returns a
   ready response through the nginx gateway.

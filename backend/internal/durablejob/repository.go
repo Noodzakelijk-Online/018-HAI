@@ -24,6 +24,11 @@ type Repository interface {
 	// EnqueueIfNoActive atomically creates a job only when no pending or
 	// running job of the same kind exists.
 	EnqueueIfNoActive(job *models.DurableJob) (bool, error)
+	// EnqueueIfNoActiveByPayload atomically creates a job only when no pending
+	// or running job with the same kind and payload exists. It allows a worker
+	// to keep one active retry chain per resource while still processing other
+	// resources of the same job kind concurrently.
+	EnqueueIfNoActiveByPayload(job *models.DurableJob) (bool, error)
 	// ClaimDue atomically leases up to limit jobs that are due at now.
 	ClaimDue(workerID, queue string, now time.Time, limit int) ([]models.DurableJob, error)
 	MarkSucceeded(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error)
@@ -33,8 +38,10 @@ type Repository interface {
 	// ExtendLease heartbeats a running job only while the caller still owns its
 	// current lease generation.
 	ExtendLease(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error)
-	// ReapExpiredLeases returns jobs whose worker died back to pending.
-	ReapExpiredLeases(now time.Time, lease time.Duration) (int, error)
+	// ReapExpiredLeases returns expired jobs from one queue to pending. A worker
+	// only reaps its own queue so independent runners do not repeatedly scan or
+	// mutate one another's leases.
+	ReapExpiredLeases(queue string, now time.Time, lease time.Duration) (int, error)
 	Find(id uuid.UUID) (*models.DurableJob, error)
 	// CountActiveByKind counts jobs of a kind that are still pending or running.
 	// Used to keep recurring work singleton across restarts.
@@ -82,20 +89,35 @@ func normalizeJob(job *models.DurableJob) {
 }
 
 func (r *gormRepository) EnqueueIfNoActive(job *models.DurableJob) (bool, error) {
+	return r.enqueueIfNoActive(job, false)
+}
+
+func (r *gormRepository) EnqueueIfNoActiveByPayload(job *models.DurableJob) (bool, error) {
+	return r.enqueueIfNoActive(job, true)
+}
+
+func (r *gormRepository) enqueueIfNoActive(job *models.DurableJob, matchPayload bool) (bool, error) {
 	normalizeJob(job)
 	created := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		// Serialize singleton creation per queue and kind without holding a
 		// table lock. PostgreSQL text values cannot contain NUL bytes, so use a
 		// fixed-width digest instead of the in-memory composite-key separator.
-		lockKey := fmt.Sprintf("%x", sha256.Sum256([]byte(job.Queue+"\x00"+job.Kind)))
+		lockIdentity := job.Queue + "\x00" + job.Kind
+		if matchPayload {
+			lockIdentity += "\x00" + job.Payload
+		}
+		lockKey := fmt.Sprintf("%x", sha256.Sum256([]byte(lockIdentity)))
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey).Error; err != nil {
 			return err
 		}
 		var count int64
-		if err := tx.Model(&models.DurableJob{}).
-			Where("queue = ? AND kind = ? AND status IN ?", job.Queue, job.Kind, []string{models.DurableJobPending, models.DurableJobRunning}).
-			Count(&count).Error; err != nil {
+		query := tx.Model(&models.DurableJob{}).
+			Where("queue = ? AND kind = ? AND status IN ?", job.Queue, job.Kind, []string{models.DurableJobPending, models.DurableJobRunning})
+		if matchPayload {
+			query = query.Where("payload = ?", job.Payload)
+		}
+		if err := query.Count(&count).Error; err != nil {
 			return err
 		}
 		if count > 0 {
@@ -206,10 +228,13 @@ func (r *gormRepository) ownedLease(id uuid.UUID, workerID string, leaseGenerati
 }
 
 // ReapExpiredLeases recovers jobs whose worker died while holding the lease.
-func (r *gormRepository) ReapExpiredLeases(now time.Time, lease time.Duration) (int, error) {
+func (r *gormRepository) ReapExpiredLeases(queue string, now time.Time, lease time.Duration) (int, error) {
+	if queue == "" {
+		queue = "default"
+	}
 	cutoff := now.Add(-lease)
 	result := r.db.Model(&models.DurableJob{}).
-		Where("status = ? AND locked_at IS NOT NULL AND locked_at < ?", models.DurableJobRunning, cutoff).
+		Where("queue = ? AND status = ? AND locked_at IS NOT NULL AND locked_at < ?", queue, models.DurableJobRunning, cutoff).
 		Updates(map[string]any{
 			"status":    models.DurableJobPending,
 			"locked_by": "",

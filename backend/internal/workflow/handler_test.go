@@ -129,6 +129,42 @@ func TestWorkflowHandlerKeepsUsefulBadRequestValidation(t *testing.T) {
 	}
 }
 
+func TestWorkflowHandlerRejectsMalformedRunRequestsWithoutRunningWork(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &capturingWorkflowRunService{}
+	handler := NewHandler(service)
+
+	tests := []struct {
+		name   string
+		path   string
+		invoke func(*gin.Context)
+	}{
+		{name: "run due", path: "/workflow/run-due", invoke: handler.RunDue},
+		{name: "recover stale claims", path: "/workflow/recover-stale-claims", invoke: handler.RecoverStaleClaims},
+		{name: "run due open loops", path: "/workflow/run-due-open-loops", invoke: handler.RunDueOpenLoops},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, test.path, bytes.NewBufferString(`{"limit":`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+			context.Request = request
+			context.Set(identity.ContextSubjectKey, "verified-operator")
+
+			test.invoke(context)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+			}
+			if service.calls != 0 {
+				t.Fatalf("service calls = %d, want 0", service.calls)
+			}
+		})
+	}
+}
+
 func TestReminderProposalHandlerIsBoundedOwnerScopedAndNonExecuting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeWorkflowRepo()
@@ -513,6 +549,26 @@ func (e candidatePendingHandlerError) CandidateIntakeMessage() string { return e
 type failingWorkflowHandlerService struct {
 	Service
 	err error
+}
+
+type capturingWorkflowRunService struct {
+	Service
+	calls int
+}
+
+func (s *capturingWorkflowRunService) RunDueForOwner(string, RunDueRequest) (*WorkflowRunSummary, error) {
+	s.calls++
+	return &WorkflowRunSummary{}, nil
+}
+
+func (s *capturingWorkflowRunService) RecoverStaleClaimsForOwner(string, RunDueRequest) (*ClaimRecoverySummary, error) {
+	s.calls++
+	return &ClaimRecoverySummary{}, nil
+}
+
+func (s *capturingWorkflowRunService) RunDueOpenLoopsForOwner(string, RunDueRequest) (*OpenLoopRunSummary, error) {
+	s.calls++
+	return &OpenLoopRunSummary{}, nil
 }
 
 func (s *failingWorkflowHandlerService) ItemsForOwner(string, bool) ([]models.WorkflowItem, error) {

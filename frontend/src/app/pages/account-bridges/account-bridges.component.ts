@@ -18,6 +18,7 @@ export class AccountBridgesComponent implements OnInit {
   bridges: IBridgeContract[] = []
   feeds: IFeedHealth[] = []
   loading = false
+  overviewLoadError = ''
   syncing: Record<string, boolean> = {}
 
   constructor(
@@ -32,6 +33,7 @@ export class AccountBridgesComponent implements OnInit {
 
   refresh(): void {
     this.loading = true
+    this.overviewLoadError = ''
     forkJoin({
       bridges: this.service.bridges(),
       feeds: this.service.feeds(),
@@ -43,6 +45,7 @@ export class AccountBridgesComponent implements OnInit {
       },
       error: () => {
         this.loading = false
+        this.overviewLoadError = 'Could not load account bridges. The displayed setup and feed status may be incomplete.'
         this.notification.error('Error', 'Failed to load account bridges.')
       },
     })

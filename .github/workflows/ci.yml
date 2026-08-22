@@ -6,6 +6,29 @@ on:
   pull_request:
 
 jobs:
+  windows-installer:
+    name: Windows installer build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Installer payload and safety contract
+        shell: pwsh
+        run: ./scripts/test-windows-installer-contract.ps1
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Build Windows installer
+        shell: pwsh
+        run: ./scripts/build-windows-installer.ps1 -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: hai-windows-installer
+          path: installer/release/HAI-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 14
+
   backend:
     name: Backend build and tests
     runs-on: ubuntu-latest
@@ -14,15 +37,17 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
       - run: go vet ./...
       - run: go test ./...
       - name: Execution-boundary race tests
-        run: go test -count=1 -race ./internal/automation ./internal/task
+        run: go test -count=1 -race ./internal/automation ./internal/task ./internal/durablejob ./internal/source
+      - name: A2A bridge race tests
+        run: go test -count=1 -race ./internal/a2abridge
       - run: go build ./...
       - name: Vulnerability scan
         run: |
@@ -37,10 +62,10 @@ jobs:
       run:
         working-directory: idp
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: idp/go.sum
       - run: go vet ./...
       - run: go test ./...
@@ -58,10 +83,10 @@ jobs:
       run:
         working-directory: nginx-config-manager
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: nginx-config-manager/go.sum
       - run: go vet ./...
       - run: go test ./...
@@ -79,8 +104,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22.22.3"
           cache: npm
@@ -101,12 +126,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: CI workflow contract
         run: python3 scripts/test_ci_contract.py
       - name: Gateway authentication contract
         run: python3 nginx-config/test_gateway_contract.py
       - run: docker compose --env-file .env.example -f docker-compose.local.yml config
+      - name: Docling runner boundary tests
+        working-directory: services/docling-runner
+        run: python3 -m unittest test_app.py
       - name: Nginx syntax
         run: |
           python3 - "$RUNNER_TEMP/hai-nginx.conf" <<'PY'
@@ -128,10 +156,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
       - name: Smoke authentication contract
         run: python3 scripts/test_smoke_auth_contract.py
@@ -185,10 +213,10 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
       - name: Create isolated integration databases
         env:
@@ -224,12 +252,13 @@ jobs:
           task_dsn="host=localhost user=postgres password=postgres dbname=hai_task_state_test port=5432 sslmode=disable TimeZone=UTC"
           agent_registry_dsn="host=localhost user=postgres password=postgres dbname=hai_agent_registry_test port=5432 sslmode=disable TimeZone=UTC"
           HAI_TEST_DATABASE_DSN="$migration_dsn" go test -count=1 -tags integration \
-            -run '^(TestConcurrentMigrationRunnersSerializeAndRecheck|TestLegacyBaselineRejectsDifferentExistingPrimaryKey|TestRunMigrationsAppliesAndIsIdempotent|TestRollbackMigrationReversesPostMigration)$' \
+            -run '^(TestConcurrentMigrationRunnersSerializeAndRecheck|TestLegacyBaselineRejectsDifferentExistingPrimaryKey|TestRunMigrationsAppliesAndIsIdempotent|TestRollbackMigrationReversesPostMigration|TestRuntimeRoleCanUseDataButCannotAlterSchema)$' \
             ./internal/infra/ -v | tee "$infra_log"
           grep -q -- '^--- PASS: TestConcurrentMigrationRunnersSerializeAndRecheck' "$infra_log"
           grep -q -- '^--- PASS: TestLegacyBaselineRejectsDifferentExistingPrimaryKey' "$infra_log"
           grep -q -- '^--- PASS: TestRunMigrationsAppliesAndIsIdempotent' "$infra_log"
           grep -q -- '^--- PASS: TestRollbackMigrationReversesPostMigration' "$infra_log"
+          grep -q -- '^--- PASS: TestRuntimeRoleCanUseDataButCannotAlterSchema' "$infra_log"
           HAI_TEST_DATABASE_DSN="$registry_dsn" go test -count=1 -tags integration \
             ./internal/frameworkregistry/ -v | tee "$registry_log"
           grep -q -- '^--- PASS: TestFrameworkRegistryPostgresIntegrationRequiredEnvironment' "$registry_log"
@@ -258,7 +287,7 @@ jobs:
         image: postgres:17-alpine
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ci-isolation-postgres-password
           POSTGRES_DB: automation_hub
         ports:
           - 5432:5432
@@ -277,10 +306,10 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
       - name: Build backend
         working-directory: backend
@@ -291,11 +320,16 @@ jobs:
           DB_HOST: localhost
           DB_PORT: "5432"
           DB_USER: postgres
-          DB_PASSWORD: postgres
+          DB_PASSWORD: ci-isolation-postgres-password
           DB_NAME: automation_hub
-          # Empty CI database: let the schema materialise on boot.
-          DB_AUTOMIGRATE: "true"
+          # Real-stack acceptance verifies the versioned schema exactly as an
+          # installed deployment uses it. AutoMigrate is development-only and
+          # must not reconcile migration-owned constraints here.
+          DB_AUTOMIGRATE: "false"
           JWT_SECRET: devsecret
+          # Production-mode startup requires a non-placeholder approval proof
+          # key. This test-only value never ships in an installer payload.
+          HAI_APPROVAL_PROOF_SIGNING_KEY: ci-approval-proof-signing-key-0123456789
           SERVER_PORT: "8080"
           REDIS_ADDR: localhost:6379
           # Keep the acceptance run deterministic: no background schedulers.
@@ -353,8 +387,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Python CI and authentication contracts

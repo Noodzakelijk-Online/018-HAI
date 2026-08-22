@@ -1,7 +1,7 @@
 import { HttpErrorResponse } from '@angular/common/http'
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
-import { forkJoin } from 'rxjs'
+import { finalize } from 'rxjs'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import {
   IAccountFeed,
@@ -24,14 +24,17 @@ export class BackgroundOperationsComponent implements OnInit {
   feeds: IAccountFeed[] = []
   lastReport?: IBackgroundRunReport
   lastRunError = ''
+  overviewLoadError = ''
 
   loading = false
   running = false
   statusFilter = ''
+  private refreshQueued = false
 
   selected?: IOperation
   selectedEvents: IOperationEvent[] = []
   detailVisible = false
+  private readonly pendingOperationActionIds = new Set<string>()
 
   readonly statusFilters = [
     { value: '', label: 'All' },
@@ -52,23 +55,32 @@ export class BackgroundOperationsComponent implements OnInit {
   }
 
   refresh(): void {
+    if (this.loading) {
+      this.refreshQueued = true
+      return
+    }
     this.loading = true
-    forkJoin({
-      dashboard: this.service.dashboard(),
-      operations: this.service.list(this.statusFilter ? { status: this.statusFilter } : undefined),
-      feeds: this.service.feeds(),
-    }).subscribe({
+    this.overviewLoadError = ''
+    this.service.overview(this.statusFilter ? { status: this.statusFilter } : undefined).subscribe({
       next: ({ dashboard, operations, feeds }) => {
         this.dashboard = dashboard
-        this.operations = operations.operations ?? []
-        this.feeds = feeds.feeds ?? []
-        this.loading = false
+        this.operations = operations ?? []
+        this.feeds = feeds ?? []
+        this.finishRefresh()
       },
       error: () => {
-        this.loading = false
+        this.overviewLoadError = 'Could not load the operational dashboard. The displayed queue may be incomplete.'
         this.notification.error('Error', 'Failed to load background operations.')
+        this.finishRefresh()
       },
     })
+  }
+
+  private finishRefresh(): void {
+    this.loading = false
+    if (!this.refreshQueued) return
+    this.refreshQueued = false
+    this.refresh()
   }
 
   setFilter(value: string): void {
@@ -77,6 +89,7 @@ export class BackgroundOperationsComponent implements OnInit {
   }
 
   runBackground(): void {
+    if (this.running) return
     this.running = true
     this.lastRunError = ''
     this.service.runBackground().subscribe({
@@ -99,14 +112,14 @@ export class BackgroundOperationsComponent implements OnInit {
 
   backgroundRunError(err: unknown): string {
     const response = err as HttpErrorResponse
-    const detail = response?.error?.error
-    if (typeof detail === 'string' && detail.trim()) return detail
     if (response?.status === 404) {
       return 'The background engine is not reachable. Refresh the page after the local gateway has restarted.'
     }
     if (response?.status === 409) {
       return 'A background pass is already running. Wait a moment, then refresh this page.'
     }
+    const detail = response?.error?.error
+    if (typeof detail === 'string' && detail.trim()) return detail
     return 'The background pass could not start. Your sources and existing operations were not changed.'
   }
 
@@ -132,7 +145,9 @@ export class BackgroundOperationsComponent implements OnInit {
   }
 
   approve(op: IOperation): void {
-    this.service.approve(op.id).subscribe({
+    if (!this.beginOperationAction(op)) return
+
+    this.service.approve(op.id).pipe(finalize(() => this.endOperationAction(op))).subscribe({
       next: () => {
         this.notification.success('Approved', `${op.title} approved.`)
         this.refresh()
@@ -142,7 +157,9 @@ export class BackgroundOperationsComponent implements OnInit {
   }
 
   run(op: IOperation): void {
-    this.service.run(op.id).subscribe({
+    if (!this.beginOperationAction(op)) return
+
+    this.service.run(op.id).pipe(finalize(() => this.endOperationAction(op))).subscribe({
       next: (res) => {
         if (res.verified) {
           this.notification.success('Verified', `${op.title} executed and verified.`)
@@ -158,6 +175,20 @@ export class BackgroundOperationsComponent implements OnInit {
 
   canApprove(op: IOperation): boolean {
     return op.status === 'awaiting_approval'
+  }
+
+  isOperationActionPending(op: IOperation): boolean {
+    return this.pendingOperationActionIds.has(op.id)
+  }
+
+  private beginOperationAction(op: IOperation): boolean {
+    if (this.isOperationActionPending(op)) return false
+    this.pendingOperationActionIds.add(op.id)
+    return true
+  }
+
+  private endOperationAction(op: IOperation): void {
+    this.pendingOperationActionIds.delete(op.id)
   }
 
   canRun(op: IOperation): boolean {

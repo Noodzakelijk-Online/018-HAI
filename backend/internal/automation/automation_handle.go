@@ -1,18 +1,34 @@
 package automation
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 
+	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+const (
+	maxAutomationUpdateBodyBytes     int64 = 1 << 20
+	defaultAutomationImageMaxBytes   int64 = 5 << 20
+	automationMultipartMetadataBytes int64 = 1 << 20
+)
+
+func maxAutomationCreateBodyBytes() int64 {
+	imageLimit := config.AppConfig.ImageMaxSize
+	if imageLimit <= 0 {
+		imageLimit = defaultAutomationImageMaxBytes
+	}
+	return imageLimit + automationMultipartMetadataBytes
+}
 
 type Handler struct {
 	service Service
@@ -90,6 +106,21 @@ func (h *Handler) ImageHandler(c *gin.Context) {
 // @Router /automations [post]
 func (h *Handler) Create(c *gin.Context) {
 	var automation models.Automation
+	maxBodyBytes := maxAutomationCreateBodyBytes()
+	if c.Request.ContentLength > maxBodyBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "automation create body exceeds the configured image and metadata limit"})
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
+	if err := c.Request.ParseMultipartForm(maxBodyBytes); err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "automation create body exceeds the configured image and metadata limit"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid automation form data"})
+		return
+	}
 
 	automation.Name = c.PostForm("name")
 	automation.Host = c.PostForm("host")
@@ -260,9 +291,14 @@ func (h *Handler) SwapPosition(c *gin.Context) {
 func (h *Handler) Update(c *gin.Context) {
 	var automation models.Automation
 
-	body, err := io.ReadAll(c.Request.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, maxAutomationUpdateBodyBytes))
 	defer c.Request.Body.Close()
 	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "automation update body exceeds 1 MiB"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read request body"})
 		return
 	}

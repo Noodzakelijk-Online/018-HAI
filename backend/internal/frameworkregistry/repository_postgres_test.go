@@ -3,9 +3,12 @@
 package frameworkregistry
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
+	"io/fs"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +24,27 @@ import (
 )
 
 const frameworkRegistryMigrationVersion = "pre/0003_framework_registry"
+
+func preMigrationVersionsAfter(t *testing.T, version string) []string {
+	t.Helper()
+	entries, err := fs.ReadDir(migrations.Files, "pre")
+	if err != nil {
+		t.Fatalf("read pre migrations: %v", err)
+	}
+	versions := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+		candidate := "pre/" + strings.TrimSuffix(name, ".up.sql")
+		if candidate > version {
+			versions = append(versions, candidate)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(versions)))
+	return versions
+}
 
 func openFrameworkRegistryPostgresTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -187,12 +211,7 @@ func TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun(t *testing.T) {
 		t.Fatal("rejected out-of-order rollback changed the registry schema")
 	}
 
-	for _, version := range []string{
-		"pre/0006_durable_job_fencing",
-		"pre/0005_framework_operating_contract",
-		"pre/0004_task_state_storage",
-		frameworkRegistryMigrationVersion,
-	} {
+	for _, version := range append(preMigrationVersionsAfter(t, frameworkRegistryMigrationVersion), frameworkRegistryMigrationVersion) {
 		if err := infra.RollbackMigration(
 			db,
 			migrations.Files,
@@ -240,8 +259,11 @@ func TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reapply framework registry migration: %v", err)
 	}
-	if reapplied != 4 {
-		t.Fatalf("reapplied %d migrations, want 4", reapplied)
+	// The extension and baseline migrations remain applied throughout this
+	// focused rollback. The framework registry itself plus every later
+	// migration are replayed.
+	if want := len(preMigrationVersionsAfter(t, frameworkRegistryMigrationVersion)) + 1; reapplied != want {
+		t.Fatalf("reapplied %d migrations, want %d", reapplied, want)
 	}
 	if !relationExists(t, db, "framework_selection_records") {
 		t.Fatal("framework registry schema was not restored")
@@ -253,6 +275,9 @@ func TestFrameworkRegistryPostgresOwnerScopeConstraintsAndHistory(t *testing.T) 
 	executeEmbeddedMigration(t, db, "pre/0001_extensions.up.sql")
 	executeEmbeddedMigration(t, db, "pre/0003_framework_registry.up.sql")
 	executeEmbeddedMigration(t, db, "pre/0005_framework_operating_contract.up.sql")
+	// Selection records now include the selector-v5 risk contract. Apply its
+	// migration before testing repository writes against that schema.
+	executeEmbeddedMigration(t, db, "pre/0029_framework_selector_v5_digest.up.sql")
 	repo := NewGormRepository(db)
 
 	t.Run("preferences are owner scoped and unique per owner and framework", func(t *testing.T) {

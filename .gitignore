@@ -46,6 +46,9 @@ security-snapshots/
 support-bundle-*.zip
 support-bundle-*.tar.gz
 
+# Generated Windows installer payloads and executables.
+/installer/release/
+
 # Local tooling and agent runtime state (not part of the delivered product).
 .claude/
 /agent-workspaces/*

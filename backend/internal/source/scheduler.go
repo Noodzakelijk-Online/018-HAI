@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"automation-hub-backend/internal/schedulerstatus"
 )
 
 type Scheduler struct {
@@ -27,23 +29,44 @@ func NewScheduler(service Service, interval time.Duration) *Scheduler {
 //
 // It prefers the durable path: scans and per-source syncs become persisted jobs
 // with backoff retry and crash recovery (see durable_scheduler.go). If the
-// durable queue cannot be reached — or SOURCE_SCHEDULER_DURABLE is explicitly
-// disabled — it falls back to the legacy in-process ticker and says so, rather
-// than silently running no scheduler at all.
+// durable queue cannot be reached, the default is to leave the scheduler
+// stopped and make the loss of crash recovery explicit in the logs. Operators
+// may opt into the legacy in-process ticker only for local development. An
+// explicit SOURCE_SCHEDULER_DURABLE=false remains a deliberate legacy choice.
 func StartScheduler(ctx context.Context, service Service) {
 	if !schedulerEnabled() {
+		schedulerstatus.Record(schedulerstatus.State{Name: "source", Detail: "disabled by SOURCE_SCHEDULER_ENABLED"})
 		return
 	}
 	interval := schedulerInterval()
 	if durableSchedulerEnabled() {
 		if err := startDurableScheduler(ctx, service, interval); err != nil {
-			log.Printf("source scheduler: durable queue unavailable (%v); falling back to the in-process ticker", err)
+			if !legacyFallbackEnabled() {
+				schedulerstatus.Record(schedulerstatus.State{Name: "source", Enabled: true, Durable: true, Detail: "durable queue unavailable: " + err.Error()})
+				log.Printf("source scheduler: durable queue unavailable (%v); scheduler not started; set DURABLE_SCHEDULER_LEGACY_FALLBACK_ENABLED=true only for local development", err)
+				return
+			}
+			schedulerstatus.Record(schedulerstatus.State{Name: "source", Enabled: true, Detail: "durable queue unavailable; explicitly enabled legacy fallback: " + err.Error()})
+			log.Printf("source scheduler: durable queue unavailable (%v); using the explicitly enabled in-process fallback", err)
 		} else {
+			schedulerstatus.Record(schedulerstatus.State{Name: "source", Enabled: true, Durable: true, Running: true, Detail: "durable worker attached"})
 			return
 		}
+	} else {
+		schedulerstatus.Record(schedulerstatus.State{Name: "source", Enabled: true, Detail: "legacy scheduler explicitly configured"})
+	}
+	if !durableSchedulerEnabled() {
+		schedulerstatus.Record(schedulerstatus.State{Name: "source", Enabled: true, Running: true, Detail: "legacy scheduler explicitly configured"})
+	} else if legacyFallbackEnabled() {
+		schedulerstatus.Record(schedulerstatus.State{Name: "source", Enabled: true, Running: true, Detail: "explicitly enabled legacy fallback"})
 	}
 	scheduler := NewScheduler(service, interval)
 	go scheduler.Start(ctx)
+}
+
+func legacyFallbackEnabled() bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv("DURABLE_SCHEDULER_LEGACY_FALLBACK_ENABLED")))
+	return value == "true" || value == "1" || value == "yes"
 }
 
 func durableSchedulerEnabled() bool {

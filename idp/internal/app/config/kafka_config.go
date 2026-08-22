@@ -7,10 +7,11 @@ import (
 )
 
 const (
-	loggerTopic string = "LOGGER_TOPIC"
-	mailTopic   string = "MAIL_TOPIC"
-	clientID    string = "KAFKA_CLIENT_ID"
-	brokersAddr string = "BROKERS_ADDR"
+	kafkaEnabled string = "IDP_KAFKA_ENABLED"
+	loggerTopic  string = "LOGGER_TOPIC"
+	mailTopic    string = "MAIL_TOPIC"
+	clientID     string = "KAFKA_CLIENT_ID"
+	brokersAddr  string = "BROKERS_ADDR"
 )
 
 type kafkaConfig struct {
@@ -18,6 +19,16 @@ type kafkaConfig struct {
 	MailTopic   string
 	ClientID    string
 	BrokersAddr []string
+}
+
+// newOptionalKafkaConfig keeps the local IDP operational without a broker.
+// Kafka is an opt-in event stream: authentication and persistence remain local
+// and durable when it is disabled.
+func newOptionalKafkaConfig() (*kafkaConfig, error) {
+	if !getEnvBool(kafkaEnabled, true) {
+		return nil, nil
+	}
+	return newKafkaConfig()
 }
 
 func newKafkaConfig() (*kafkaConfig, error) {

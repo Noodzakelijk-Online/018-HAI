@@ -3,7 +3,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, throwError } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 import { ISystemStatusService } from './system-status.service.interface';
-import { ISystemReadiness } from '../../models/system-status.model.interface';
+import { ISystemInfo, ISystemReadiness } from '../../models/system-status.model.interface';
 
 @Injectable({
   providedIn: 'root',
@@ -12,6 +12,7 @@ export class SystemStatusService implements ISystemStatusService {
   // Root path, not /api/v1: the readiness probe lives beside /healthz so an
   // orchestrator can reach it without knowing the API version.
   private readonly readinessUrl = '/readyz';
+  private readonly infoUrl = '/api/v1/system/info';
 
   constructor(private http: HttpClient) {}
 
@@ -34,5 +35,9 @@ export class SystemStatusService implements ISystemStatusService {
           return throwError(() => error);
         })
       );
+  }
+
+  info(): Observable<ISystemInfo> {
+    return this.http.get<ISystemInfo>(this.infoUrl, { observe: 'body' });
   }
 }

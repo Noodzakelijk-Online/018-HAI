@@ -44,12 +44,28 @@ after it has shipped; add a new numbered pair.
 ## Runner
 
 `internal/infra/migrate.go` loads the embedded files, applies each pending
-migration in its own transaction, and records it. `RunMigrations`, called by
-startup and `GetDefaultDB`, executes:
+migration in its own transaction, and records it. `RunMigrations` executes:
 
 ```text
 pre -> optional development AutoMigrate -> post
 ```
+
+### Production database roles
+
+The Windows Compose deployment separates schema authority from the backend
+runtime:
+
+- `backend-migrate` is a short-lived job using `DB_USER` and `DB_PASSWORD`.
+  It applies pending migrations, creates or rotates `DB_RUNTIME_USER`, grants
+  only DML access to current and future `public` tables and sequences, then
+  exits successfully.
+- `backend` waits for that job and uses `DB_RUNTIME_USER` and
+  `DB_RUNTIME_PASSWORD` with `DB_MIGRATIONS_ENABLED=false`.
+
+The runtime role has no `CREATE` permission on `public`, so an application
+process cannot alter the schema. The migration job remains the only Compose
+service with schema authority. Direct binary use preserves the legacy behavior
+unless `DB_MIGRATIONS_ENABLED=false` is explicitly configured.
 
 ### CLI
 

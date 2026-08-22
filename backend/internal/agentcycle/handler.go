@@ -1,9 +1,12 @@
 package agentcycle
 
 import (
-	"automation-hub-backend/internal/identity"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
+
+	"automation-hub-backend/internal/identity"
 
 	"github.com/gin-gonic/gin"
 )
@@ -27,7 +30,10 @@ func (h *Handler) Run(c *gin.Context) {
 		return
 	}
 	var request RunRequest
-	_ = c.ShouldBindJSON(&request)
+	if err := c.ShouldBindJSON(&request); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "request body must be valid JSON"})
+		return
+	}
 	request.OwnerIdentity = ownerIdentity
 	result := h.service.Run(request)
 	status := http.StatusOK

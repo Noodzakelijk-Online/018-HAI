@@ -7,15 +7,54 @@
 package infra
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
 	"automation-hub-backend/migrations"
 
+	"github.com/google/uuid"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+func TestRuntimeRoleCanUseDataButCannotAlterSchema(t *testing.T) {
+	db := integrationDB(t)
+	runtimeUser := "hai_runtime_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:20]
+	t.Setenv("DB_RUNTIME_USER", runtimeUser)
+	t.Setenv("DB_RUNTIME_PASSWORD", "runtime-role-contract-password")
+	t.Cleanup(func() {
+		if err := db.Exec("RESET ROLE").Error; err != nil {
+			t.Errorf("RESET ROLE: %v", err)
+		}
+		quotedUser := quotePostgresIdentifier(runtimeUser)
+		for _, statement := range []string{
+			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM %s", quotedUser),
+			fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE USAGE, SELECT ON SEQUENCES FROM %s", quotedUser),
+			fmt.Sprintf("DROP OWNED BY %s", quotedUser),
+			fmt.Sprintf("DROP ROLE IF EXISTS %s", quotedUser),
+		} {
+			if err := db.Exec(statement).Error; err != nil {
+				t.Errorf("clean up runtime database role: %v", err)
+			}
+		}
+	})
+
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations(): %v", err)
+	}
+	if err := db.Exec("SET ROLE " + quotePostgresIdentifier(runtimeUser)).Error; err != nil {
+		t.Fatalf("SET ROLE runtime user: %v", err)
+	}
+	if err := db.Exec("SELECT count(*) FROM automations").Error; err != nil {
+		t.Fatalf("runtime role cannot read application table: %v", err)
+	}
+	if err := db.Exec("CREATE TABLE runtime_role_must_not_create (id integer)").Error; err == nil {
+		t.Fatal("runtime role unexpectedly created a table")
+	}
+}
 
 func integrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -144,6 +183,7 @@ func TestRollbackMigrationReversesPostMigration(t *testing.T) {
 		t.Fatalf("RunMigrations: %v", err)
 	}
 	for _, version := range []string{
+		"post/0004_durable_jobs_queue_lease_index",
 		"post/0003_durable_jobs_queue_index",
 		"post/0002_durable_jobs_indexes",
 		"post/0001_conversation_owner_identity",
@@ -168,13 +208,16 @@ func TestRollbackMigrationReversesPostMigration(t *testing.T) {
 	if applied["post/0003_durable_jobs_queue_index"] {
 		t.Fatal("queue-index migration should not remain recorded")
 	}
+	if applied["post/0004_durable_jobs_queue_lease_index"] {
+		t.Fatal("queue-lease-index migration should not remain recorded")
+	}
 	// Re-apply cleanly.
 	count, err := ApplyMigrations(db, migrations.Files, "post")
 	if err != nil {
 		t.Fatalf("re-apply post: %v", err)
 	}
-	if count != 3 {
-		t.Fatalf("re-applied %d post migrations, want 3", count)
+	if count != 4 {
+		t.Fatalf("re-applied %d post migrations, want 4", count)
 	}
 	if !indexExists(t, db, "idx_ai_conversation_owner_identity") {
 		t.Fatal("index should be restored after re-apply")

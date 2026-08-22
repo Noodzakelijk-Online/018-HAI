@@ -23,6 +23,11 @@ type Handler func(ctx context.Context, job Job) error
 // allowed to assume the holder died and reclaim it.
 const DefaultLease = 5 * time.Minute
 
+// maxImmediateCycles bounds cascading job handoffs before the worker returns
+// to its regular polling cadence. It keeps a scan -> per-resource sync chain
+// responsive without allowing an unbounded producer to monopolize a worker.
+const maxImmediateCycles = 4
+
 // Runner claims due jobs, executes their handler, and applies the retry policy.
 // It is safe to run several Runners (in one process or many) against the same
 // queue: claiming uses FOR UPDATE SKIP LOCKED.
@@ -133,6 +138,28 @@ func (r *Runner) EnsureScheduled(kind, payload string, runAt time.Time, maxAttem
 	return created, nil
 }
 
+// EnsureScheduledForPayload schedules one active job for this exact payload.
+// Use this for resource-scoped work such as a source sync: a pending retry for
+// one source must not suppress other sources, and repeated scans must not add
+// duplicate retry chains for the same source.
+func (r *Runner) EnsureScheduledForPayload(kind, payload string, runAt time.Time, maxAttempts int) (bool, error) {
+	if runAt.IsZero() {
+		runAt = r.now()
+	}
+	created, err := r.repo.EnqueueIfNoActiveByPayload(&models.DurableJob{
+		Queue:       r.queue,
+		Kind:        kind,
+		Payload:     payload,
+		RunAt:       runAt.UTC(),
+		MaxAttempts: maxAttempts,
+		Status:      models.DurableJobPending,
+	})
+	if err != nil {
+		return false, fmt.Errorf("ensure resource job %s: %w", kind, err)
+	}
+	return created, nil
+}
+
 // RegisterRecurring turns a periodic task into a durable, self-rescheduling
 // singleton job — the replacement for an in-process ticker. The work survives
 // restarts and gets bounded retry with backoff.
@@ -171,7 +198,7 @@ func (r *Runner) RegisterRecurring(kind string, interval time.Duration, maxAttem
 // returned, so one bad job cannot stall the queue.
 func (r *Runner) RunOnce(ctx context.Context) (int, error) {
 	now := r.now()
-	if _, err := r.repo.ReapExpiredLeases(now, r.lease); err != nil {
+	if _, err := r.repo.ReapExpiredLeases(r.queue, now, r.lease); err != nil {
 		return 0, fmt.Errorf("reap expired leases: %w", err)
 	}
 	jobs, err := r.repo.ClaimDue(r.workerID, r.queue, now, r.batch)
@@ -274,6 +301,12 @@ func (r *Runner) Start(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
+	// Claim already-due persisted work immediately after startup. Waiting for
+	// the first ticker interval delays recovery and newly queued work without
+	// reducing idle polling; subsequent passes stay bounded by interval.
+	if ctx.Err() == nil {
+		r.runAvailable(ctx)
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -281,10 +314,20 @@ func (r *Runner) Start(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := r.RunOnce(ctx); err != nil {
-				// A repository error is transient (e.g. DB blip); the next tick retries.
-				continue
-			}
+			r.runAvailable(ctx)
+		}
+	}
+}
+
+// runAvailable processes a bounded chain of immediately due jobs. Handlers
+// commonly enqueue the next durable step (for example source.scan ->
+// source.sync); draining that chain avoids an artificial poll-interval delay.
+// Repository failures remain transient and are retried on the next tick.
+func (r *Runner) runAvailable(ctx context.Context) {
+	for cycle := 0; cycle < maxImmediateCycles && ctx.Err() == nil; cycle++ {
+		processed, err := r.RunOnce(ctx)
+		if err != nil || processed == 0 {
+			return
 		}
 	}
 }

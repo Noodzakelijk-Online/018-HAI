@@ -1784,6 +1784,9 @@ func providerRuntimeReadiness(provider Provider) providerReadiness {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return providerReadiness{configured: false, status: "invalid_endpoint", reason: "provider endpoint must be an absolute http or https URL"}
 	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return providerReadiness{configured: false, status: "invalid_endpoint", reason: "provider endpoint must not contain credentials, query parameters, or fragments"}
+	}
 	host := parsed.Hostname()
 	if unsafeEndpointHost(host) && strings.ToLower(strings.TrimSpace(os.Getenv("LLM_ALLOW_LINK_LOCAL_ENDPOINTS"))) != "true" {
 		return providerReadiness{configured: false, status: "blocked_endpoint", reason: "provider endpoint uses link-local, metadata, or unspecified address space"}
@@ -2263,15 +2266,15 @@ func defaultPolicy() Policy {
 			},
 			{
 				ID:             "paid-provider",
-				Name:           "Paid provider placeholder",
+				Name:           "Unconfigured paid provider",
 				Enabled:        false,
 				Local:          false,
 				Paid:           true,
 				QuotaRemaining: 0,
 				DailyBudgetEUR: 0,
 				Models: []Model{
-					{ID: "paid-high-capability", Name: "Paid high capability model", Tier: TierExpensive, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", EstimatedCostEUR: 0.05, RequiresApproval: true, Enabled: true},
-					{ID: "expensive-frontier", Name: "Expensive frontier model", Tier: TierExpensive, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", EstimatedCostEUR: 0.08, RequiresApproval: true, Enabled: true},
+					{ID: "paid-high-capability", Name: "Paid high-capability model (configure provider)", Tier: TierExpensive, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", EstimatedCostEUR: 0.05, RequiresApproval: true, Enabled: true},
+					{ID: "expensive-frontier", Name: "Expensive frontier model (configure provider)", Tier: TierExpensive, Capabilities: []string{"general", "coding", "planning", "verification", "extraction"}, MaxDifficulty: 5, MaxReasoning: "very_high", EstimatedCostEUR: 0.08, RequiresApproval: true, Enabled: true},
 				},
 			},
 		},

@@ -140,7 +140,7 @@ func monitorSweepInterval() time.Duration {
 }
 
 func monitorPollInterval() time.Duration {
-	return envSeconds("OUTCOME_MONITOR_POLL_SECONDS", 15, 1, 300)
+	return envSeconds("OUTCOME_MONITOR_POLL_SECONDS", 60, 1, 300)
 }
 
 func monitorLeaseDuration() time.Duration {

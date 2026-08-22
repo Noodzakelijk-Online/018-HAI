@@ -1,32 +1,5 @@
-version: '3.5'
-services:
-  nginx:
-    image: nginx:alpine
-    container_name: gateway
-    restart: always
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx-config:/etc/nginx
-    networks:
-      - service-hub
-
-  nginxconfigmanager:
-    image: jacksonbarreto/automation-hub-nginxconfigmanager:latest
-    restart: always
-    env_file:
-      - .env
-    volumes:
-      - ./nginx-config/sites-enabled:/app/sites-enabled
-    networks:
-      - service-hub
-
-volumes:
-  nginx-config:
-
-networks:
-  gate_network:
-    driver: bridge
-  service-hub:
-    driver: bridge
-    name: service-hub
+# Compatibility entry point. The local HAI stack is source-built at the repository root.
+# Use `docker compose --env-file .env.local -f docker-compose.local.yml up --build`
+# for the documented command; this file keeps older gateway-local invocations safe.
+include:
+  - path: ../docker-compose.local.yml

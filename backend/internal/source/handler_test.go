@@ -1,11 +1,13 @@
 package source
 
 import (
+	"automation-hub-backend/internal/docling"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/whispercpp"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +21,39 @@ type sourceTranscriberStub struct {
 	transcripts []whispercpp.Transcript
 	err         error
 	folder      string
+}
+
+type sourceDocumentExtractorStub struct {
+	documents []docling.Document
+	err       error
+	folder    string
+}
+
+type ownerScopedSourceListStub struct {
+	Service
+	sources []models.ConnectedSource
+	calls   int
+}
+
+func (s *ownerScopedSourceListStub) Sources(bool) ([]models.ConnectedSource, error) {
+	return nil, errors.New("global source listing must not be used for an owner-scoped request")
+}
+
+func (s *ownerScopedSourceListStub) SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	s.calls++
+	if ownerIdentity != "alice" || includeDisabled {
+		return nil, errors.New("unexpected owner-scoped source query")
+	}
+	return s.sources, nil
+}
+
+func (s *sourceDocumentExtractorStub) Status() docling.Status { return docling.Status{} }
+func (s *sourceDocumentExtractorStub) Probe(context.Context) (*docling.ProbeResult, error) {
+	return &docling.ProbeResult{Reachable: true}, nil
+}
+func (s *sourceDocumentExtractorStub) Extract(_ context.Context, folder string) ([]docling.Document, error) {
+	s.folder = folder
+	return s.documents, s.err
 }
 
 func (s *sourceTranscriberStub) Status() whispercpp.Status { return whispercpp.Status{} }
@@ -68,6 +103,83 @@ func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 	}
 }
 
+func TestHandlerUsesOwnerScopedSourceListingWhenAvailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	service := &ownerScopedSourceListStub{sources: []models.ConnectedSource{{
+		ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active",
+	}}}
+	handler := NewHandler(service)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources", handler.Sources)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if service.calls != 1 {
+		t.Fatalf("owner-scoped list calls = %d, want 1", service.calls)
+	}
+	var sources []models.ConnectedSource
+	if err := json.Unmarshal(response.Body.Bytes(), &sources); err != nil {
+		t.Fatalf("decode sources: %v", err)
+	}
+	if len(sources) != 1 || sources[0].ID != aliceID {
+		t.Fatalf("sources = %#v, want only Alice source", sources)
+	}
+}
+
+func TestHandlerReturnsOwnerScopedConnectionHealthSummary(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	handler := NewHandler(NewService(newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", ConnectorKey: "local-folder", Name: "Bob source", Enabled: true, Status: "active"},
+	), nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/health", handler.ConnectionHealthSummary)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/health", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("health summary status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var health []ConnectionHealth
+	if err := json.Unmarshal(response.Body.Bytes(), &health); err != nil {
+		t.Fatalf("decode health summary: %v", err)
+	}
+	if len(health) != 1 || health[0].SourceID != aliceID {
+		t.Fatalf("health summary = %#v, want only Alice source", health)
+	}
+}
+
+func TestHandlerConnectionHealthSummaryReusesVisibleSources(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "First", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: uuid.New(), OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Second", Enabled: true, Status: "active"},
+	)
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/health", handler.ConnectionHealthSummary)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/health", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("health summary status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if repo.findSourceCalls != 0 {
+		t.Fatalf("per-source lookups = %d, want 0 after the visible sources were loaded", repo.findSourceCalls)
+	}
+}
+
 func TestGoogleOAuthStartRejectsForeignSourceBeforeConfigurationLookup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	foreignID := uuid.New()
@@ -110,6 +222,65 @@ func TestHandlerRunsDueSyncsOnlyForAuthenticatedOwner(t *testing.T) {
 	}
 }
 
+func TestHandlerDoesNotExposeScheduledSyncFailureDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeSourceRepo()
+	repo.findSourcesErr = errors.New("provider rejected Authorization: Bearer secret-token-value while reading C:\\Users\\NO\\private-source")
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+	})
+	router.POST("/sources/sync-due", handler.RunDueScheduledSyncs)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/sources/sync-due", nil))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("sync due status = %d, want 500: %s", response.Code, response.Body.String())
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if payload["error"] != "scheduled source sync could not complete" {
+		t.Fatalf("public error = %q", payload["error"])
+	}
+	if payload["errorId"] == "" {
+		t.Fatalf("expected opaque error ID: %#v", payload)
+	}
+	for _, leaked := range []string{"secret-token-value", "C:\\Users\\NO\\private-source", "Authorization"} {
+		if strings.Contains(response.Body.String(), leaked) {
+			t.Fatalf("response leaked %q: %s", leaked, response.Body.String())
+		}
+	}
+}
+
+func TestHandlerDoesNotExposeSourceSyncExecutionFailureDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root := t.TempDir()
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+	sourceID := uuid.New()
+	handler := NewHandler(NewService(newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Private local source",
+		Category: "local_folder", Enabled: true, LocalOnly: true, Status: "active",
+	}), nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.POST("/sources/:id/sync", handler.Sync)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/sync", strings.NewReader(`{"folderPath":".."}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("sync status = %d, want 500: %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), root) || strings.Contains(response.Body.String(), "allowlisted root") {
+		t.Fatalf("sync response exposed execution detail: %s", response.Body.String())
+	}
+}
+
 func TestHandlerListsOnlyOwnerScopedExtractionsFromRepository(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	aliceID := uuid.New()
@@ -147,6 +318,46 @@ func TestHandlerListsOnlyOwnerScopedExtractionsFromRepository(t *testing.T) {
 		if sourceID == bobID {
 			t.Fatalf("handler repository query included Bob's private source")
 		}
+	}
+}
+
+func TestHandlerPagesOwnerScopedHistoryWithoutLeakingOtherOwners(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
+	)
+	for _, sourceID := range []uuid.UUID{aliceID, aliceID, bobID} {
+		if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: uuid.New(), SourceID: sourceID, Summary: "Private context"}); err != nil {
+			t.Fatalf("SaveExtraction: %v", err)
+		}
+	}
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+	})
+	router.GET("/sources/extractions", handler.Extractions)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/extractions?limit=1&offset=0", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("paged extractions status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var page ExtractionPage
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode extraction page: %v", err)
+	}
+	if page.Total != 2 || len(page.Items) != 1 || !page.HasMore || page.Items[0].SourceID != aliceID {
+		t.Fatalf("page = %#v, want one of two Alice-only extraction records", page)
+	}
+
+	invalidResponse := httptest.NewRecorder()
+	router.ServeHTTP(invalidResponse, httptest.NewRequest(http.MethodGet, "/sources/extractions?limit=251", nil))
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("invalid page limit status = %d, body=%s", invalidResponse.Code, invalidResponse.Body.String())
 	}
 }
 
@@ -232,6 +443,30 @@ func TestHandlerTranscribesOnlyAnOwnedExplicitAudioSource(t *testing.T) {
 	}
 	if !strings.HasPrefix(raw.SourceURI, "audio://selected-source/") {
 		t.Fatalf("source uri = %q", raw.SourceURI)
+	}
+}
+
+func TestHandlerExtractsOwnedDoclingSourceThroughNormalIngestion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "docling-documents", Name: "Case evidence", Category: "cloud_document",
+		Enabled: true, LocalOnly: true, Status: "active", SyncTarget: "legal/vivare", DefaultProjectKey: "Robert-life-os",
+	})
+	digest := strings.Repeat("a", 64)
+	extractor := &sourceDocumentExtractorStub{documents: []docling.Document{{Path: "legal/vivare/evidence.docx", Text: "Follow up: review the evidence bundle.", Format: "docx", PageCount: 2, ContentDigest: digest}}}
+	handler := NewHandlerWithDocling(NewService(repo, nil), nil, extractor)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.POST("/sources/:id/extract-documents", handler.ExtractDocuments)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/extract-documents", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("extract status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if extractor.folder != "legal/vivare" || len(repo.rawItems) != 1 {
+		t.Fatalf("folder=%q rawItems=%#v", extractor.folder, repo.rawItems)
 	}
 }
 

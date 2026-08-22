@@ -1,4 +1,4 @@
-import { Component, Inject, OnInit } from '@angular/core';
+import { AfterViewInit, Component, Inject, OnInit, ViewChild } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
@@ -26,6 +26,7 @@ import {
 } from '../../models/pursuit.model.interface';
 import { PursuitService } from '../../services/pursuit.service';
 import { WorkflowService } from '../../services/workflow/workflow.service';
+import { HaiProgressiveSectionComponent } from '../../control-room/progressive-section.component';
 
 type CommandActionKey = 'manage-pursuits' | 'plan-next' | 'clear-blockers' | 'run-cycle' | 'run-safe';
 
@@ -53,7 +54,7 @@ interface RuntimeSurfaceGroup {
   templateUrl: './command-dashboard.component.html',
   styleUrls: ['./command-dashboard.component.scss'],
 })
-export class CommandDashboardComponent implements OnInit {
+export class CommandDashboardComponent implements OnInit, AfterViewInit {
   private readonly openClawArchiveMaxBytes = 750 * 1024 * 1024;
   dashboard?: ICommandDashboard;
   pursuitDashboard?: IPursuitDashboard;
@@ -61,6 +62,7 @@ export class CommandDashboardComponent implements OnInit {
   searchResult?: IMemoryEngineSearchResult;
   loading = false;
   pursuitsLoading = false;
+  pursuitLoadError = '';
   searching = false;
   runtimeLoading = false;
   commandLoading = '';
@@ -77,6 +79,8 @@ export class CommandDashboardComponent implements OnInit {
   selectedRuntimeSurface?: IAgentRuntimeEcosystemSurface;
   commandLogs: IAssistantCommandResult[] = [];
   lastCommand?: IAssistantCommandResult;
+  commandHistoryLoaded = false;
+  @ViewChild('commandHistorySection') commandHistorySection?: HaiProgressiveSectionComponent;
 
   actions: DashboardAction[] = [
     {
@@ -150,9 +154,13 @@ export class CommandDashboardComponent implements OnInit {
 
   ngOnInit(): void {
     this.refresh();
-    this.refreshPursuits();
     this.refreshRuntimes();
-    this.loadCommandLogs();
+  }
+
+  ngAfterViewInit(): void {
+    if (this.commandHistorySection?.open) {
+      this.loadCommandLogs();
+    }
   }
 
   refreshRuntimes(): void {
@@ -505,27 +513,34 @@ export class CommandDashboardComponent implements OnInit {
 
   refreshPursuits(): void {
     this.pursuitsLoading = true;
-    this.pursuits.dashboard().subscribe({
-      next: (dashboard) => {
-        this.pursuitDashboard = dashboard;
+    this.pursuitLoadError = '';
+    this.pursuits.overview().subscribe({
+      next: (overview) => {
+        this.pursuitDashboard = overview.dashboard;
+        this.pursuitBrief = overview.brief;
         this.pursuitsLoading = false;
       },
-      error: () => {
+      error: (error) => {
         this.pursuitsLoading = false;
-        this.pursuitDashboard = undefined;
-      },
-    });
-    this.pursuits.brief().subscribe({
-      next: (brief) => {
-        this.pursuitBrief = brief;
-      },
-      error: () => {
-        this.pursuitBrief = undefined;
+        const detail = error?.error?.error;
+        this.pursuitLoadError = typeof detail === 'string' && detail.trim()
+          ? detail
+          : 'Could not refresh pursuits. Existing pursuit context is retained and may be incomplete.';
       },
     });
   }
 
+  onCommandHistoryOpen(open: boolean): void {
+    if (open) {
+      this.loadCommandLogs();
+    }
+  }
+
   loadCommandLogs(): void {
+    if (this.commandHistoryLoaded) {
+      return;
+    }
+    this.commandHistoryLoaded = true;
     this.assistantCommands.logs().subscribe({
       next: (logs) => {
         this.commandLogs = logs || [];
@@ -533,6 +548,7 @@ export class CommandDashboardComponent implements OnInit {
       },
       error: () => {
         this.commandLogs = [];
+        this.commandHistoryLoaded = false;
       },
     });
   }

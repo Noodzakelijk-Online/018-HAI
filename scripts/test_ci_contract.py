@@ -56,6 +56,23 @@ class CIWorkflowContractTest(unittest.TestCase):
             with self.subTest(path=relative_path):
                 self.assertTrue((ROOT / relative_path).is_file())
 
+    def test_running_stack_isolation_acceptance_covers_source_to_governed_work_routing(
+        self,
+    ) -> None:
+        script = (ROOT / "scripts" / "two-account-isolation-test.sh").read_text(
+            encoding="utf-8"
+        )
+        for contract in (
+            'source_sync=',
+            '"source sync persisted an extraction"',
+            '"source sync creates a governed pursuit/workflow outcome"',
+            'pursuitOutcomes',
+            'candidate_pending',
+            'pursuit_routed',
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, script)
+
     def test_execution_boundary_race_tests_are_not_served_from_test_cache(
         self,
     ) -> None:
@@ -64,6 +81,16 @@ class CIWorkflowContractTest(unittest.TestCase):
             "go test -count=1 -race ./internal/automation ./internal/task",
             backend,
         )
+
+    def test_production_isolation_fixture_never_uses_the_shipped_database_password(
+        self,
+    ) -> None:
+        isolation = job_block("isolation-acceptance")
+        fixture_password = "ci-isolation-postgres-password"
+
+        self.assertNotRegex(isolation, r"(?m)^\s+(?:POSTGRES_PASSWORD|DB_PASSWORD): postgres$")
+        self.assertEqual(isolation.count(f"POSTGRES_PASSWORD: {fixture_password}"), 1)
+        self.assertEqual(isolation.count(f"DB_PASSWORD: {fixture_password}"), 1)
 
     def test_backend_vulnerability_scan_is_pinned_and_blocking(self) -> None:
         backend = job_block("backend")
@@ -147,6 +174,10 @@ class CIWorkflowContractTest(unittest.TestCase):
         frontend = job_block("frontend")
 
         self.assertIn('"packageManager": "npm@10.9.8"', package)
+        self.assertIn(
+            '"node": "^22.22.3 || ^24.15.0 || >=26.0.0"',
+            package,
+        )
         self.assertIn('"@angular/core": "22.1.1"', package)
         self.assertIn('"@angular/build": "22.1.3"', package)
         self.assertIn('"builder": "@angular/build:application"', angular)
@@ -187,6 +218,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "LOCAL_LOGIN_BYPASS_ENABLED",
             "IDP_COOKIE_SECURE",
             "GATEWAY_HOST_BIND",
+            "HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED",
             "NGROK_AUTHTOKEN",
             "HAI_NGROK_URL",
             "GOOGLE_LOGIN_REDIRECT_URL",
@@ -200,6 +232,18 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn(secured_up, preflight)
         self.assertIn(tunnel_up, preflight)
         self.assertLess(preflight.index(secured_up), preflight.index(tunnel_up))
+        for contract in (
+            "Wait-ForPublicGateway",
+            '"$PublicUrl/readyz"',
+            "The public ngrok gateway did not become ready",
+            "stop ngrok",
+        ):
+            with self.subTest(public_gateway_contract=contract):
+                self.assertIn(contract, preflight)
+        self.assertIn(
+            "HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED must remain false",
+            preflight,
+        )
         self.assertIn("remote_management: false", config)
         self.assertIn("update_check: false", config)
         self.assertIn("inspect_db_size: -1", config)
@@ -215,6 +259,170 @@ class CIWorkflowContractTest(unittest.TestCase):
         ):
             with self.subTest(entrypoint_required=required):
                 self.assertIn(required, entrypoint)
+
+    def test_legacy_generic_auto_is_not_part_of_the_default_local_stack(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        start = compose.index("  generic-auto:\n")
+        end = compose.index("\nnetworks:\n", start)
+        service = compose[start:end]
+
+        self.assertIn('profiles: ["legacy-compatibility"]', service)
+        self.assertIn("Legacy compatibility server", service)
+
+    def test_core_local_services_have_explicit_resource_ceilings(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        for name in (
+            "postgres-idp",
+            "postgres-automation",
+            "redis",
+            "backend-migrate",
+            "idp",
+            "backend",
+            "frontend",
+            "nginx",
+        ):
+            with self.subTest(service=name):
+                match = re.search(
+                    rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|^networks:)",
+                    compose,
+                )
+                self.assertIsNotNone(match)
+                self.assertRegex(match.group(1), r"(?m)^    mem_limit: \S+")
+                self.assertRegex(match.group(1), r"(?m)^    cpus: \S+")
+
+    def test_backend_uses_the_proven_base_stack_memory_ceiling(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        start = compose.index("\n  backend:\n") + 1
+        end = compose.index("\n  frontend:\n", start)
+        backend = compose[start:end]
+
+        self.assertIn("    mem_limit: 512m", backend)
+
+    def test_local_model_profile_exposes_a_private_ollama_service(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        match = re.search(
+            r"(?ms)^  ollama-local:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|^networks:)",
+            compose,
+        )
+        self.assertIsNotNone(match)
+        service = match.group(1) if match else ""
+
+        self.assertIn('profiles: ["local-model"]', service)
+        self.assertIn("ollama/ollama:0.32.11@sha256:", service)
+        self.assertIn("ollama-local-data:/root/.ollama", service)
+        self.assertIn("mem_limit: 2g", service)
+        self.assertIn("cpus: 2.0", service)
+        self.assertNotIn("ports:", service)
+
+    def test_core_local_service_images_are_digest_pinned(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+
+        for service, image in (
+            ("nginx", "nginx:alpine"),
+            ("postgres-idp", "postgres:17-alpine"),
+            ("redis", "redis:7-alpine"),
+        ):
+            with self.subTest(service=service):
+                match = re.search(
+                    rf"(?ms)^  {re.escape(service)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|^networks:)",
+                    compose,
+                )
+                self.assertIsNotNone(match)
+                self.assertRegex(
+                    match.group(1),
+                    rf"(?m)^    image: {re.escape(image)}@sha256:[0-9a-f]{{64}}$",
+                )
+
+    def test_redis_has_a_bounded_fail_closed_memory_budget(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        env_template = (ROOT / ".env.example").read_text(encoding="utf-8")
+        start = compose.index("\n  redis:\n") + 1
+        end = compose.index("\n  zookeeper:\n", start)
+        redis = compose[start:end]
+
+        self.assertIn("REDIS_MAXMEMORY=128mb", env_template)
+        self.assertIn("REDIS_MAXMEMORY_POLICY=noeviction", env_template)
+        self.assertIn('"--maxmemory", "${REDIS_MAXMEMORY:-128mb}"', redis)
+        self.assertIn('"--maxmemory-policy", "${REDIS_MAXMEMORY_POLICY:-noeviction}"', redis)
+
+    def test_default_compose_entrypoint_uses_the_canonical_source_stack(self) -> None:
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("include:", compose)
+        self.assertIn("./docker-compose.local.yml", compose)
+        self.assertNotIn("jacksonbarreto/", compose)
+        self.assertNotIn(":latest", compose)
+
+    def test_legacy_compose_entrypoints_delegate_to_the_canonical_source_stack(
+        self,
+    ) -> None:
+        for relative_path in (
+            "backend/docker-compose.yml",
+            "idp/docker-compose.yml",
+            "gate/docker-compose.yml",
+        ):
+            with self.subTest(path=relative_path):
+                compose = (ROOT / relative_path).read_text(encoding="utf-8")
+                self.assertIn("include:", compose)
+                self.assertIn("../docker-compose.local.yml", compose)
+                self.assertNotIn("jacksonbarreto/", compose)
+                self.assertNotIn("env_file:", compose)
+
+    def test_development_compose_overlay_keeps_the_canonical_private_topology(
+        self,
+    ) -> None:
+        compose = (ROOT / "docker-compose.dev.yml").read_text(encoding="utf-8")
+        self.assertNotIn("version:", compose)
+        self.assertNotIn("adminer:", compose)
+        self.assertNotIn("idp_network", compose)
+        self.assertNotIn("automation_hub_network", compose)
+        self.assertIn("backend:", compose)
+        self.assertIn("GIN_MODE: debug", compose)
+        self.assertNotIn("ports:", compose)
+
+    def test_trello_read_only_connector_is_wired_to_the_runtime(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        backend_start = compose.index("  backend:\n")
+        backend_end = compose.index("\n  frontend:\n", backend_start)
+        backend = compose[backend_start:backend_end]
+        env_template = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+        self.assertIn("TRELLO_API_KEY: ${TRELLO_API_KEY:-}", backend)
+        self.assertIn("TRELLO_READ_TOKEN: ${TRELLO_READ_TOKEN:-}", backend)
+        self.assertIn("TRELLO_API_BASE_URL: ${TRELLO_API_BASE_URL:-https://api.trello.com}", backend)
+        self.assertIn("TRELLO_API_KEY=", env_template)
+        self.assertIn("TRELLO_READ_TOKEN=", env_template)
+        self.assertIn("TRELLO_LIVE_BOARD=", env_template)
+        self.assertIn(
+            "CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS=localhost,127.0.0.1,::1,host.docker.internal,api.github.com,api.trello.com",
+            env_template,
+        )
+
+    def test_durable_scheduler_controls_reach_the_backend_runtime(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        backend_start = compose.index("  backend:\n")
+        backend_end = compose.index("\n  frontend:\n", backend_start)
+        backend = compose[backend_start:backend_end]
+        env_template = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+        for name, default in (
+            ("SOURCE_SCHEDULER_DURABLE", "true"),
+            ("SOURCE_WORKER_POLL_SECONDS", "60"),
+            ("WORKFLOW_SCHEDULER_DURABLE", "true"),
+            ("WORKFLOW_WORKER_POLL_SECONDS", "60"),
+            ("WORKFLOW_REMINDER_DELIVERY_ENABLED", "true"),
+            ("AMBIENT_SCHEDULER_DURABLE", "true"),
+            ("AMBIENT_WORKER_POLL_SECONDS", "60"),
+        ):
+            with self.subTest(name=name):
+                self.assertIn(f"{name}={default}", env_template)
+                self.assertIn(f"{name}: ${{{name}:-{default}}}", backend)
+
+    def test_a2a_bridge_fallback_matches_the_loopback_gateway(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            "HAI_A2A_BRIDGE_URL: ${HAI_A2A_BRIDGE_URL:-http://127.0.0.1:8088/api/v1/a2a}",
+            compose,
+        )
 
     def test_idp_toolchain_matches_ci_and_container(self) -> None:
         go_mod = (ROOT / "idp" / "go.mod").read_text(encoding="utf-8")
@@ -308,6 +516,12 @@ class CIWorkflowContractTest(unittest.TestCase):
             smoke,
         )
 
+    def test_docling_runner_boundary_tests_run_in_compose_ci(self) -> None:
+        compose = job_block("compose")
+        self.assertIn("Docling runner boundary tests", compose)
+        self.assertIn("working-directory: services/docling-runner", compose)
+        self.assertIn("python3 -m unittest test_app.py", compose)
+
     def test_postgres_jobs_cannot_silently_skip_or_match_no_tests(self) -> None:
         migrations = job_block("migrations-integration")
         for contract in (
@@ -325,6 +539,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "^--- PASS: TestRollbackMigrationReversesPostMigration",
             "^--- PASS: TestConcurrentMigrationRunnersSerializeAndRecheck",
             "^--- PASS: TestLegacyBaselineRejectsDifferentExistingPrimaryKey",
+            "^--- PASS: TestRuntimeRoleCanUseDataButCannotAlterSchema",
             "^--- PASS: TestFrameworkRegistryPostgresIntegrationRequiredEnvironment",
             "^--- PASS: TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun",
             "^--- PASS: TestFrameworkRegistryPostgresConstraintsAndImmutability",
@@ -408,11 +623,28 @@ class CIWorkflowContractTest(unittest.TestCase):
         )
 
     def test_ci_never_uploads_generated_runtime_or_secret_artifacts(self) -> None:
-        self.assertNotIn("actions/upload-artifact", WORKFLOW)
+        self.assertIn("actions/upload-artifact@v6", WORKFLOW)
+        self.assertIn("name: hai-windows-installer", WORKFLOW)
+        self.assertIn("path: installer/release/HAI-Setup-*.exe", WORKFLOW)
+        self.assertNotIn("installer/release/payload", WORKFLOW)
+        self.assertNotIn("payload-manifest.json", WORKFLOW)
         self.assertNotRegex(WORKFLOW, r"(?i)\bupload[\w -]*(?:log|env|secret)")
+
+    def test_windows_installer_ci_compiles_the_distributable(self) -> None:
+        installer = job_block("windows-installer")
+        for contract in (
+            "runs-on: windows-latest",
+            "choco install innosetup --yes --no-progress",
+            "build-windows-installer.ps1 -Version",
+            "actions/upload-artifact@v6",
+            "retention-days: 14",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, installer)
 
     def test_every_job_has_an_explicit_timeout(self) -> None:
         for job_id in (
+            "windows-installer",
             "backend",
             "idp",
             "nginx-config-manager",

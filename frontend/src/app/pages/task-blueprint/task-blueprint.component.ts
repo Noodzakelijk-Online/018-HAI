@@ -1,9 +1,10 @@
-import { Component, Inject, OnInit } from '@angular/core';
+import { Component, Inject, OnDestroy, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { NzModalService } from 'ng-zorro-antd/modal';
 import { timeout } from 'rxjs/operators';
+import { Subscription } from 'rxjs';
 import {
   ICompletionPlan,
 	IApprovedReviewReconciliationResult,
@@ -51,7 +52,7 @@ interface SuggestedPrompt {
   templateUrl: './task-blueprint.component.html',
   styleUrls: ['./task-blueprint.component.scss'],
 })
-export class TaskBlueprintComponent implements OnInit {
+export class TaskBlueprintComponent implements OnInit, OnDestroy {
 	private readonly taskOperationRetryConfirmation = 'RETRY UNCERTAIN OPERATION';
   plan?: ICompletionPlan;
   lastCommand?: IAssistantCommandResult;
@@ -76,6 +77,7 @@ export class TaskBlueprintComponent implements OnInit {
   crewProposal?: ICrewAIResponse;
   crewProposalLoading = false;
   themeMode: ThemeMode = 'light';
+  private routeSubscription?: Subscription;
   private readonly loadTimeoutMs = 6000;
   private readonly operationTimeoutMs = 20000;
 
@@ -163,7 +165,7 @@ export class TaskBlueprintComponent implements OnInit {
 
   ngOnInit(): void {
     this.themeMode = this.themeService.mode();
-    this.route.queryParamMap.subscribe((params) => {
+    this.routeSubscription = this.route.queryParamMap.subscribe((params) => {
       const pursuitId = params.get('pursuitId') || '';
       this.planForm.patchValue({
         pursuitId,
@@ -177,6 +179,10 @@ export class TaskBlueprintComponent implements OnInit {
     });
     this.loadLogs();
     this.loadReviewQueue();
+  }
+
+  ngOnDestroy(): void {
+    this.routeSubscription?.unsubscribe();
   }
 
   createPlan(): void {
