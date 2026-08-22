@@ -3,6 +3,7 @@ import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { Subscription, interval } from 'rxjs';
 import {
   ISystemCheck,
+  ISystemInfo,
   ISystemReadiness,
   SystemCheckSeverity,
 } from '../../models/system-status.model.interface';
@@ -36,6 +37,7 @@ const GROUP_TITLES: Record<string, string> = {
 })
 export class SystemStatusComponent implements OnInit, OnDestroy {
   readiness?: ISystemReadiness;
+  systemInfo?: ISystemInfo;
   groups: CheckGroup[] = [];
   recommendedActions: string[] = [];
   loading = false;
@@ -44,6 +46,7 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
 
   private pollSub?: Subscription;
   private readinessRequestInFlight = false;
+  private systemInfoRequestInFlight = false;
   private readonly visibilityHandler = () => {
     // A hidden tab has no operator who can act on a readiness change. Refresh
     // immediately on return instead of polling while backgrounded.
@@ -59,6 +62,7 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit(): void {
+    this.loadSystemInfo();
     this.refresh();
     // Readiness is a live signal; poll it so the page reflects a dependency
     // going down without the operator reloading. Hidden tabs are paused and
@@ -104,6 +108,25 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
             'Could not reach the readiness probe. You may need to sign in again.'
           );
         }
+      },
+    });
+  }
+
+  private loadSystemInfo(): void {
+    if (this.systemInfoRequestInFlight) {
+      return;
+    }
+    this.systemInfoRequestInFlight = true;
+    this.systemStatusService.info().subscribe({
+      next: (info) => {
+        this.systemInfo = info;
+        this.systemInfoRequestInFlight = false;
+      },
+      error: () => {
+        // Readiness remains useful even when the authenticated metadata route
+        // is temporarily unavailable. Do not turn provenance into a noisy
+        // second failure state or poll it in the background.
+        this.systemInfoRequestInFlight = false;
       },
     });
   }
