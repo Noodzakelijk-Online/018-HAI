@@ -213,9 +213,18 @@ export class HomeComponent implements OnInit {
     if (!id1 || !id2 || id1 === id2) {
       return
     }
+    const previousOrder = [...this.automations]
     moveItemInArray(this.automations, event.previousIndex, event.currentIndex)
 
-    this.automationsService.swapAutomations(id1, id2).subscribe()
+    this.automationsService.swapAutomations(id1, id2).subscribe({
+      error: () => {
+        this.automations = previousOrder
+        this.notification.error(
+          'Order was not saved',
+          'The automation list was restored. Check the connection and try again.'
+        )
+      },
+    })
   }
 
   handleFormDataAutomationSubmitted(automation: IAutomationModel) {
@@ -332,13 +341,21 @@ export class HomeComponent implements OnInit {
       nzOkText: 'Yes',
       nzOkType: 'primary',
       nzOnOk: () => {
-        this.automationsService.deleteAutomation(automationId).subscribe(() => {
-          this.loadAutomations()
-          this.notification.create(
-            'success',
-            'Automation deleted',
-            'Automation deleted successfully.'
-          )
+        this.automationsService.deleteAutomation(automationId).subscribe({
+          next: () => {
+            this.loadAutomations()
+            this.notification.create(
+              'success',
+              'Automation deleted',
+              'Automation deleted successfully.'
+            )
+          },
+          error: () => {
+            this.notification.error(
+              'Automation was not deleted',
+              'The automation remains unchanged. Check the connection and try again.'
+            )
+          },
         })
       },
       nzCancelText: 'No',
