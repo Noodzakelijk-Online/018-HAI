@@ -181,6 +181,19 @@ func (r *GormRepository) FindSources(includeDisabled bool) ([]models.ConnectedSo
 	return sources, err
 }
 
+// FindSourcesForOwner returns sources belonging to one owner plus ownerless
+// legacy records, which remain visible for local-install compatibility.
+func (r *GormRepository) FindSourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	var sources []models.ConnectedSource
+	query := r.DB.Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity).
+		Order("updated_at desc")
+	if !includeDisabled {
+		query = query.Where("enabled = ? AND status <> ?", true, "revoked")
+	}
+	err := query.Find(&sources).Error
+	return sources, err
+}
+
 func (r *GormRepository) FindSource(id uuid.UUID) (*models.ConnectedSource, error) {
 	var source models.ConnectedSource
 	if err := r.DB.First(&source, "id = ?", id).Error; err != nil {

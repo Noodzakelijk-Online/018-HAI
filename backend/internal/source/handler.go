@@ -26,6 +26,10 @@ type Handler struct {
 	documents   docling.Service
 }
 
+type ownerScopedSourceLister interface {
+	SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error)
+}
+
 func NewHandler(service Service, transcribers ...whispercpp.Service) *Handler {
 	transcriber := whispercpp.DefaultService()
 	if len(transcribers) > 0 && transcribers[0] != nil {
@@ -110,12 +114,12 @@ func (h *Handler) CreateSource(c *gin.Context) {
 
 func (h *Handler) Sources(c *gin.Context) {
 	includeDisabled, _ := strconv.ParseBool(c.Query("includeDisabled"))
-	sources, err := h.service.Sources(includeDisabled)
+	sources, err := h.ownerSources(sourceOwner(c), includeDisabled)
 	if err != nil {
 		writeSourceInternalError(c, "connected source lookup", err)
 		return
 	}
-	c.JSON(http.StatusOK, filterVisibleSources(sources, sourceOwner(c)))
+	c.JSON(http.StatusOK, sources)
 }
 
 func (h *Handler) SyncJobs(c *gin.Context) {
@@ -189,12 +193,12 @@ func (h *Handler) ConnectionHealth(c *gin.Context) {
 // the current owner. It avoids the client issuing one health request per source
 // on every page load while preserving the same per-source authorization checks.
 func (h *Handler) ConnectionHealthSummary(c *gin.Context) {
-	sources, err := h.service.Sources(true)
+	sources, err := h.ownerSources(sourceOwner(c), true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "connected sources are temporarily unavailable"})
 		return
 	}
-	visible := filterVisibleSources(sources, sourceOwner(c))
+	visible := sources
 	if summaryService, ok := h.service.(ConnectionHealthSummaryService); ok {
 		c.JSON(http.StatusOK, summaryService.ConnectionHealthForSources(visible))
 		return
@@ -761,15 +765,26 @@ func filterVisibleSources(sources []models.ConnectedSource, owner string) []mode
 }
 
 func (h *Handler) visibleSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
-	sources, err := h.service.Sources(true)
+	sources, err := h.ownerSources(sourceOwner(c), true)
 	if err != nil {
 		return nil, err
 	}
 	visible := make(map[uuid.UUID]bool, len(sources))
-	for _, source := range filterVisibleSources(sources, sourceOwner(c)) {
+	for _, source := range sources {
 		visible[source.ID] = true
 	}
 	return visible, nil
+}
+
+func (h *Handler) ownerSources(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	if scoped, ok := h.service.(ownerScopedSourceLister); ok {
+		return scoped.SourcesForOwner(ownerIdentity, includeDisabled)
+	}
+	sources, err := h.service.Sources(includeDisabled)
+	if err != nil {
+		return nil, err
+	}
+	return filterVisibleSources(sources, ownerIdentity), nil
 }
 
 func (h *Handler) sourceByID(id uuid.UUID) (*models.ConnectedSource, error) {

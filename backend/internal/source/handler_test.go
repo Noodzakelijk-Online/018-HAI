@@ -29,6 +29,24 @@ type sourceDocumentExtractorStub struct {
 	folder    string
 }
 
+type ownerScopedSourceListStub struct {
+	Service
+	sources []models.ConnectedSource
+	calls   int
+}
+
+func (s *ownerScopedSourceListStub) Sources(bool) ([]models.ConnectedSource, error) {
+	return nil, errors.New("global source listing must not be used for an owner-scoped request")
+}
+
+func (s *ownerScopedSourceListStub) SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	s.calls++
+	if ownerIdentity != "alice" || includeDisabled {
+		return nil, errors.New("unexpected owner-scoped source query")
+	}
+	return s.sources, nil
+}
+
 func (s *sourceDocumentExtractorStub) Status() docling.Status { return docling.Status{} }
 func (s *sourceDocumentExtractorStub) Probe(context.Context) (*docling.ProbeResult, error) {
 	return &docling.ProbeResult{Reachable: true}, nil
@@ -82,6 +100,34 @@ func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 	router.ServeHTTP(foreignResponse, foreignRequest)
 	if foreignResponse.Code != http.StatusNotFound {
 		t.Fatalf("foreign pause status = %d, body=%s", foreignResponse.Code, foreignResponse.Body.String())
+	}
+}
+
+func TestHandlerUsesOwnerScopedSourceListingWhenAvailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	service := &ownerScopedSourceListStub{sources: []models.ConnectedSource{{
+		ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active",
+	}}}
+	handler := NewHandler(service)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources", handler.Sources)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if service.calls != 1 {
+		t.Fatalf("owner-scoped list calls = %d, want 1", service.calls)
+	}
+	var sources []models.ConnectedSource
+	if err := json.Unmarshal(response.Body.Bytes(), &sources); err != nil {
+		t.Fatalf("decode sources: %v", err)
+	}
+	if len(sources) != 1 || sources[0].ID != aliceID {
+		t.Fatalf("sources = %#v, want only Alice source", sources)
 	}
 }
 

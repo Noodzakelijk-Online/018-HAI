@@ -231,6 +231,10 @@ type Service interface {
 	CompleteGoogleOAuth(ctx context.Context, code, state string) (uuid.UUID, error)
 }
 
+type ownerScopedSourceRepository interface {
+	FindSourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error)
+}
+
 type service struct {
 	repo                  Repository
 	memoryService         memory.Service
@@ -661,6 +665,27 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 
 func (s *service) Sources(includeDisabled bool) ([]models.ConnectedSource, error) {
 	return s.repo.FindSources(includeDisabled)
+}
+
+// SourcesForOwner avoids loading unrelated users' source records when the
+// repository supports an owner-scoped query. The fallback preserves legacy
+// repository compatibility and applies the same visibility rule in memory.
+func (s *service) SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if scoped, ok := s.repo.(ownerScopedSourceRepository); ok {
+		return scoped.FindSourcesForOwner(ownerIdentity, includeDisabled)
+	}
+	sources, err := s.repo.FindSources(includeDisabled)
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]models.ConnectedSource, 0, len(sources))
+	for _, item := range sources {
+		if ownerIdentity == "" || item.OwnerIdentity == "" || item.OwnerIdentity == ownerIdentity {
+			visible = append(visible, item)
+		}
+	}
+	return visible, nil
 }
 
 func (s *service) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
