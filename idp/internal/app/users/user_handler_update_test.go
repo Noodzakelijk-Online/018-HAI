@@ -42,6 +42,30 @@ func TestUpdateRejectsInvalidEmail(t *testing.T) {
 	require.Empty(t, service.password)
 }
 
+func TestUserHandlersRejectInvalidIdentityContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &recordingUserService{}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", "not-a-uuid")
+		c.Next()
+	})
+	handler := NewHandler(service)
+	router.PATCH("/users", handler.Update)
+	router.GET("/user", handler.GetCurrentUser)
+
+	updateRequest := httptest.NewRequest(http.MethodPatch, "/users", bytes.NewBufferString(`{"email":"operator@example.com"}`))
+	updateRequest.Header.Set("Content-Type", "application/json")
+	updateRecorder := httptest.NewRecorder()
+	router.ServeHTTP(updateRecorder, updateRequest)
+	require.Equal(t, http.StatusUnauthorized, updateRecorder.Code)
+
+	currentRequest := httptest.NewRequest(http.MethodGet, "/user", nil)
+	currentRecorder := httptest.NewRecorder()
+	router.ServeHTTP(currentRecorder, currentRequest)
+	require.Equal(t, http.StatusUnauthorized, currentRecorder.Code)
+}
+
 func performUserUpdate(t *testing.T, userID uuid.UUID, service UserService, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	gin.SetMode(gin.TestMode)

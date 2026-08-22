@@ -65,7 +65,13 @@ func (h *Handler) Update(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, errorResponse)
 		return
 	}
-	userID := temp.(uuid.UUID)
+	userID, ok := temp.(uuid.UUID)
+	if !ok {
+		errorResponse.Message = "Unauthorized"
+		errorResponse.ErrorCode = http.StatusUnauthorized
+		c.JSON(http.StatusUnauthorized, errorResponse)
+		return
+	}
 
 	// check if userRequest.password is not empty
 	if user.Password != "" {
@@ -128,7 +134,13 @@ func (h *Handler) GetCurrentUser(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, errorResponse)
 		return
 	}
-	userID := temp.(uuid.UUID)
+	userID, ok := temp.(uuid.UUID)
+	if !ok {
+		errorResponse.Message = "Unauthorized"
+		errorResponse.ErrorCode = http.StatusUnauthorized
+		c.JSON(http.StatusUnauthorized, errorResponse)
+		return
+	}
 
 	user, err := h.userService.GetUserByID(userID)
 	if err != nil {
