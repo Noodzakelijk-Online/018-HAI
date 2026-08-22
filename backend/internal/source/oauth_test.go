@@ -135,3 +135,30 @@ func TestGoogleConnectionHealthDistinguishesDisconnectedAndReady(t *testing.T) {
 		t.Fatalf("ready health = %#v, %v", health, err)
 	}
 }
+
+func TestTrelloConnectionHealthRequiresCredentialsAndValidBoardTarget(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: trelloConnectorKey, Enabled: true, Status: "active",
+		SyncTarget: "https://trello.com/b/abc12345/example-board",
+	})
+	service := NewService(repo, nil).(*service)
+
+	health, err := service.ConnectionHealth(sourceID)
+	if err != nil || health.Status != "configuration_required" || health.Configured || health.Authorized {
+		t.Fatalf("unconfigured Trello health = %#v, %v", health, err)
+	}
+
+	t.Setenv(trelloAPIKeyEnv, "key")
+	t.Setenv(trelloReadTokenEnv, "read-token")
+	health, err = service.ConnectionHealth(sourceID)
+	if err != nil || health.Status != "ready" || !health.Configured || health.Authorized {
+		t.Fatalf("configured Trello health = %#v, %v", health, err)
+	}
+
+	repo.sources[sourceID].SyncTarget = "not a board id"
+	health, err = service.ConnectionHealth(sourceID)
+	if err != nil || health.Status != "configuration_required" || health.Configured {
+		t.Fatalf("invalid Trello target health = %#v, %v", health, err)
+	}
+}

@@ -616,6 +616,30 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 		health.Reason = "source access was revoked"
 		return health, nil
 	}
+	if source.ConnectorKey == trelloConnectorKey {
+		if !trelloConfigured() {
+			health.Status = "configuration_required"
+			health.Configured = false
+			health.Authorized = false
+			health.Reason = "set TRELLO_API_KEY and a least-privilege TRELLO_READ_TOKEN before a read-only board sync can run"
+			return health, nil
+		}
+		if _, err := trelloBoardID(source.SyncTarget); err != nil {
+			health.Status = "configuration_required"
+			health.Configured = false
+			health.Authorized = false
+			health.Reason = err.Error()
+			return health, nil
+		}
+		health.Status = "ready"
+		health.Configured = true
+		// The API key/token scheme cannot be verified without performing the
+		// first read-only provider request. Do not mark it authorized from the
+		// mere presence of environment variables.
+		health.Authorized = false
+		health.Reason = "read-only credentials and board target are configured; provider authorization will be verified by the next sync"
+		return health, nil
+	}
 	if !isGoogleOAuthConnector(source.ConnectorKey) {
 		health.Authorized = source.Enabled
 		health.Reason = "connector health is derived from its enabled and synchronization state"

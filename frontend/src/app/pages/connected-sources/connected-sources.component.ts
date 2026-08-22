@@ -486,6 +486,8 @@ export class ConnectedSourcesComponent implements OnInit {
       case 'running':
       case 'pending':
       case 'not_configured':
+      case 'configuration_required':
+      case 'reconnect_required':
       case 'local_only':
       case 'modeled':
         return 'watch';
@@ -693,6 +695,9 @@ export class ConnectedSourcesComponent implements OnInit {
     }
     if (this.sourceForm.value.connectorKey === 'github') {
       return 'GitHub owner/repository, e.g. Noodzakelijk-Online/018-HAI';
+    }
+    if (this.sourceForm.value.connectorKey === 'trello') {
+      return 'Trello board ID, short link, or https://trello.com/b/... board URL';
     }
     if (this.sourceForm.value.connectorKey === 'odoo-herp') {
       return 'Odoo URL or app list, e.g. https://.../odoo?apps=CRM,Sales';
