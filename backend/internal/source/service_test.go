@@ -109,6 +109,23 @@ func TestFetchJSONFeedContextStopsBeforeOpeningRemoteRequestWhenCancelled(t *tes
 	}
 }
 
+func TestIndexExtractionContextStopsBeforePersistingWhenCallerIsCancelled(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := (&service{repo: repo, semanticService: &fakeSemanticService{}}).indexExtractionContext(ctx, &models.SourceExtraction{
+		ID: uuid.New(), SourceID: sourceID, Text: "Do not index cancelled work",
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("indexExtractionContext error = %v, want context.Canceled", err)
+	}
+	if len(repo.index) != 0 {
+		t.Fatalf("cancelled index write created %d index entries", len(repo.index))
+	}
+}
+
 func TestSyncWhisperAudioRequiresControlledTranscriptionRoute(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{

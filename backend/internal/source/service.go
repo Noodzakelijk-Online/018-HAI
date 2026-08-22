@@ -1072,7 +1072,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 			recordFailure(item, "extraction failed", errExtract)
 			continue
 		}
-		if errIndex := s.indexExtraction(extraction); errIndex != nil {
+		if errIndex := s.indexExtractionContext(ctx, extraction); errIndex != nil {
 			recordFailure(item, "index update failed", errIndex)
 			continue
 		}
@@ -2348,6 +2348,19 @@ func (s *service) retractWorkflowForExtraction(extraction *models.SourceExtracti
 }
 
 func (s *service) indexExtraction(extraction *models.SourceExtraction) error {
+	return s.indexExtractionContext(context.Background(), extraction)
+}
+
+// indexExtractionContext keeps optional semantic enrichment tied to the work
+// that requested it. A cancelled sync must not continue consuming local model
+// or database resources after the HTTP request or worker lease has ended.
+func (s *service) indexExtractionContext(ctx context.Context, extraction *models.SourceExtraction) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	keywords := strings.Join(mapKeys(tokenSet(extraction.Text+" "+extraction.Summary+" "+extraction.Entities+" "+extraction.Tasks)), ",")
 	if _, err := s.repo.SaveIndexEntry(&models.SourceIndexEntry{
 		SourceID:     extraction.SourceID,
@@ -2364,7 +2377,13 @@ func (s *service) indexExtraction(extraction *models.SourceExtraction) error {
 	if s.semanticService == nil || !s.semanticService.Enabled() {
 		return nil
 	}
-	if err := s.semanticService.Index(context.Background(), extraction); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.semanticService.Index(ctx, extraction); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		// Semantic indexing is optional enrichment. Preserve the extracted record
 		// and keyword index, then expose the degraded state in the source audit.
 		s.audit(extraction.SourceID, "semantic.index_failed", "local semantic index was not updated: "+compact(err.Error(), 240))
