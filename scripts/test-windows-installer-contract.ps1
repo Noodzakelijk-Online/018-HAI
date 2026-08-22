@@ -202,6 +202,23 @@ try {
     Copy-Item -LiteralPath $environmentTemplatePath -Destination (Join-Path $testDataRoot "hai.env")
 
     . $supportScript
+
+    $unsafeEnvironmentRejected = $false
+    try {
+        Assert-HaiLocalEnvironment
+    } catch {
+        $unsafeEnvironmentRejected = $_.Exception.Message -match "not initialized safely"
+    }
+    if (-not $unsafeEnvironmentRejected) {
+        throw "Windows startup must reject an existing sample environment before Docker Compose runs."
+    }
+
+    & $initializerScript -EnvFile (Get-HaiEnvironmentFile) -AdminEmail "operator@example.com" -AdminPasswordPlainText "installer-contract-password" -Force
+    if (-not (Test-Path -LiteralPath (Get-HaiEnvironmentFile) -PathType Leaf)) {
+        throw "The Windows initializer could not replace an isolated sample environment during the installer contract."
+    }
+    Assert-HaiLocalEnvironment
+
     Set-HaiEventBusEnabled
     $enabledEnvironment = [IO.File]::ReadAllText((Get-HaiEnvironmentFile))
     foreach ($required in @('IDP_KAFKA_ENABLED=true', 'KAFKA_BROKERS=kafka:9092', 'BROKERS_ADDR=kafka:9092')) {

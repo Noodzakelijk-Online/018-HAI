@@ -14,6 +14,7 @@ $ErrorActionPreference = "Stop"
 Assert-HaiDockerReady
 Assert-HaiSingleInstallation
 Initialize-HaiLocalEnvironment -GatewayPort $GatewayPort
+Assert-HaiLocalEnvironment
 if ($EnableEventBus) {
     Set-HaiEventBusEnabled
 } else {
