@@ -688,6 +688,10 @@
               <i nz-icon nzType="unordered-list" nzTheme="outline"></i>
               Load records
             </button>
+            <button *ngIf="recordHistoryHasMore()" type="button" nz-button nzType="default" (click)="loadOlderRecordHistory()" [nzLoading]="recordHistoryLoading" title="Load the next bounded page of older source records, jobs, and audit entries">
+              <i nz-icon nzType="more" nzTheme="outline"></i>
+              Load older
+            </button>
             <label nz-checkbox [(ngModel)]="includeArchived" (ngModelChange)="loadRecordHistory(true)" title="Include archived extraction records">Show archived</label>
           </div>
         </div>

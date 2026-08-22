@@ -6,6 +6,7 @@ import (
 	"automation-hub-backend/internal/whispercpp"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -116,6 +117,23 @@ func (h *Handler) SyncJobs(c *gin.Context) {
 		if !h.requireSourceAccess(c, parsed) {
 			return
 		}
+	}
+	if page, requested, err := historyPageFromQuery(c); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	} else if requested {
+		paged, ok := h.service.(PagedHistoryService)
+		if !ok {
+			c.JSON(http.StatusNotImplemented, gin.H{"error": "paged source history is not available"})
+			return
+		}
+		result, err := paged.SyncJobsForOwnerPage(sourceOwner(c), sourceID, page)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, result)
+		return
 	}
 	jobs, err := h.service.SyncJobs(sourceID)
 	if err != nil {
@@ -419,6 +437,23 @@ func (h *Handler) search(ctx context.Context, request SearchRequest) (*SearchRes
 
 func (h *Handler) Extractions(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
+	if page, requested, err := historyPageFromQuery(c); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	} else if requested {
+		paged, ok := h.service.(PagedHistoryService)
+		if !ok {
+			c.JSON(http.StatusNotImplemented, gin.H{"error": "paged source history is not available"})
+			return
+		}
+		result, err := paged.ExtractionsForOwnerPage(sourceOwner(c), c.Query("projectKey"), includeArchived, page)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, result)
+		return
+	}
 	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), c.Query("projectKey"), includeArchived)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -501,6 +536,23 @@ func (h *Handler) AuditLogs(c *gin.Context) {
 			return
 		}
 	}
+	if page, requested, err := historyPageFromQuery(c); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	} else if requested {
+		paged, ok := h.service.(PagedHistoryService)
+		if !ok {
+			c.JSON(http.StatusNotImplemented, gin.H{"error": "paged source history is not available"})
+			return
+		}
+		result, err := paged.AuditLogsForOwnerPage(sourceOwner(c), sourceID, page)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, result)
+		return
+	}
 	logs, err := h.service.AuditLogs(sourceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -524,6 +576,30 @@ func sourceOwner(c *gin.Context) string {
 		}
 	}
 	return ""
+}
+
+func historyPageFromQuery(c *gin.Context) (HistoryPageRequest, bool, error) {
+	limitRaw, limitRequested := c.GetQuery("limit")
+	offsetRaw, offsetRequested := c.GetQuery("offset")
+	if !limitRequested && !offsetRequested {
+		return HistoryPageRequest{}, false, nil
+	}
+	page := HistoryPageRequest{Limit: 100}
+	if limitRequested {
+		limit, err := strconv.Atoi(limitRaw)
+		if err != nil || limit < 1 || limit > 250 {
+			return HistoryPageRequest{}, true, fmt.Errorf("limit must be between 1 and 250")
+		}
+		page.Limit = limit
+	}
+	if offsetRequested {
+		offset, err := strconv.Atoi(offsetRaw)
+		if err != nil || offset < 0 {
+			return HistoryPageRequest{}, true, fmt.Errorf("offset must be zero or greater")
+		}
+		page.Offset = offset
+	}
+	return page, true, nil
 }
 
 func destructiveAuthorization(c *gin.Context) DestructiveEffectAuthorization {

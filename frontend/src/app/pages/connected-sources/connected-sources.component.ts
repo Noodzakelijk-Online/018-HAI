@@ -10,6 +10,7 @@ import {
   ISourceConnector,
   ISourceConnectionHealth,
   ISourceExtraction,
+	ISourceHistoryPage,
   IKnowledgeGraphResult,
   IKnowledgeGraphSourceRef,
   ISourcePursuitRoutingOutcome,
@@ -55,6 +56,11 @@ export class ConnectedSourcesComponent implements OnInit {
   syncJobs: ISourceSyncJob[] = [];
   recordHistoryLoaded = false;
   recordHistoryLoading = false;
+	private readonly sourceHistoryPageSize = 100;
+	private extractionHistoryTotal = 0;
+	private extractionHistoryHasMore = false;
+	private auditHistoryHasMore = false;
+	private syncJobHistoryHasMore = false;
   connectionHealth: Record<string, ISourceConnectionHealth> = {};
   searchResult?: ISourceSearchResult;
   knowledgeGraph?: IKnowledgeGraphResult;
@@ -185,26 +191,56 @@ export class ConnectedSourcesComponent implements OnInit {
     if (this.recordHistoryLoading || (this.recordHistoryLoaded && !force)) {
       return;
     }
+    this.loadRecordHistoryPage(false);
+  }
+
+  loadOlderRecordHistory(): void {
+    if (this.recordHistoryLoading || !this.recordHistoryHasMore()) {
+      return;
+    }
+    this.loadRecordHistoryPage(true);
+  }
+
+  recordHistoryHasMore(): boolean {
+    return this.extractionHistoryHasMore || this.auditHistoryHasMore || this.syncJobHistoryHasMore;
+  }
+
+  private loadRecordHistoryPage(append: boolean): void {
     this.recordHistoryLoading = true;
     forkJoin({
-      extractions: this.sourceService.extractions(this.searchForm.value.projectKey, this.includeArchived).pipe(
+      extractions: this.sourceService.pageExtractions(
+        this.searchForm.value.projectKey,
+        this.includeArchived,
+        this.sourceHistoryPageSize,
+        append ? this.extractions.length : 0
+      ).pipe(
         timeout(this.loadTimeoutMs),
-        catchError(() => of([] as ISourceExtraction[]))
+        catchError(() => of(this.emptyHistoryPage<ISourceExtraction>()))
       ),
-      auditLogs: this.sourceService.auditLogs().pipe(
+      auditLogs: this.sourceService.pageAuditLogs(
+        this.sourceHistoryPageSize,
+        append ? this.auditLogs.length : 0
+      ).pipe(
         timeout(this.loadTimeoutMs),
-        catchError(() => of([] as ISourceAuditLog[]))
+        catchError(() => of(this.emptyHistoryPage<ISourceAuditLog>()))
       ),
-      syncJobs: this.sourceService.syncJobs().pipe(
+      syncJobs: this.sourceService.pageSyncJobs(
+        this.sourceHistoryPageSize,
+        append ? this.syncJobs.length : 0
+      ).pipe(
         timeout(this.loadTimeoutMs),
-        catchError(() => of([] as ISourceSyncJob[]))
+        catchError(() => of(this.emptyHistoryPage<ISourceSyncJob>()))
       ),
     })
       .pipe(finalize(() => (this.recordHistoryLoading = false)))
       .subscribe(({ extractions, auditLogs, syncJobs }) => {
-        this.extractions = extractions;
-        this.auditLogs = auditLogs;
-        this.syncJobs = syncJobs || [];
+        this.extractions = append ? [...this.extractions, ...extractions.items] : extractions.items;
+        this.auditLogs = append ? [...this.auditLogs, ...auditLogs.items] : auditLogs.items;
+        this.syncJobs = append ? [...this.syncJobs, ...syncJobs.items] : syncJobs.items;
+		this.extractionHistoryTotal = extractions.total;
+		this.extractionHistoryHasMore = extractions.hasMore;
+		this.auditHistoryHasMore = auditLogs.hasMore;
+		this.syncJobHistoryHasMore = syncJobs.hasMore;
         this.recordHistoryLoaded = true;
         this.updateSourceActions();
       });
@@ -442,7 +478,7 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   recordHistoryMetric(): string {
-    return this.recordHistoryLoaded ? String(this.extractions.length) : 'open';
+    return this.recordHistoryLoaded ? String(this.extractionHistoryTotal) : 'open';
   }
 
   pendingJobCount(): number {
@@ -463,6 +499,10 @@ export class ConnectedSourcesComponent implements OnInit {
 
   failedJobMetric(): string {
     return this.recordHistoryLoaded ? String(this.failedJobCount()) : 'not loaded';
+  }
+
+  private emptyHistoryPage<T>(): ISourceHistoryPage<T> {
+    return { items: [], total: 0, limit: this.sourceHistoryPageSize, offset: 0, hasMore: false };
   }
 
   recentExtractions(): ISourceExtraction[] {
@@ -545,7 +585,7 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   sourceExtractionCountLabel(source: IConnectedSource): string {
-    return this.recordHistoryLoaded ? `${this.sourceExtractionCount(source)} records` : 'records on demand';
+    return this.recordHistoryLoaded ? `${this.sourceExtractionCount(source)} loaded` : 'records on demand';
   }
 
   connectorFor(source?: IConnectedSource): ISourceConnector | undefined {
@@ -1294,39 +1334,7 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   private loadExtractions(): void {
-    this.sourceService
-      .extractions(this.searchForm.value.projectKey, this.includeArchived)
-      .pipe(timeout(this.loadTimeoutMs))
-      .subscribe({
-        next: (items) => {
-          this.extractions = items;
-          this.updateSourceActions();
-        },
-        error: () => {
-          this.extractions = [];
-          this.updateSourceActions();
-        },
-      });
-  }
-
-  private loadAuditLogs(): void {
-    this.sourceService.auditLogs().pipe(timeout(this.loadTimeoutMs)).subscribe({
-      next: (logs) => (this.auditLogs = logs),
-      error: () => (this.auditLogs = []),
-    });
-  }
-
-  private loadSyncJobs(): void {
-    this.sourceService.syncJobs().pipe(timeout(this.loadTimeoutMs)).subscribe({
-      next: (jobs) => {
-        this.syncJobs = jobs || [];
-        this.updateSourceActions();
-      },
-      error: () => {
-        this.syncJobs = [];
-        this.updateSourceActions();
-      },
-    });
+    this.loadRecordHistory(true);
   }
 
   private loadConnectionHealth(sources: IConnectedSource[]): void {

@@ -127,27 +127,54 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
   it('defers record-heavy source history until the operator opens it', () => {
     const { component } = createComponent();
     const sourceService = (component as any).sourceService = jasmine.createSpyObj('ConnectedSourceService', [
-      'connectors', 'sources', 'extractions', 'auditLogs', 'syncJobs', 'connectionHealthSummary',
+      'connectors', 'sources', 'pageExtractions', 'pageAuditLogs', 'pageSyncJobs', 'connectionHealthSummary',
     ]);
     sourceService.connectors.and.returnValue(of([]));
     sourceService.sources.and.returnValue(of([]));
-    sourceService.extractions.and.returnValue(of([]));
-    sourceService.auditLogs.and.returnValue(of([]));
-    sourceService.syncJobs.and.returnValue(of([]));
+    sourceService.pageExtractions.and.returnValue(of({ items: [], total: 0, limit: 100, offset: 0, hasMore: false }));
+    sourceService.pageAuditLogs.and.returnValue(of({ items: [], total: 0, limit: 100, offset: 0, hasMore: false }));
+    sourceService.pageSyncJobs.and.returnValue(of({ items: [], total: 0, limit: 100, offset: 0, hasMore: false }));
     sourceService.connectionHealthSummary.and.returnValue(of([]));
 
     component.refresh();
 
-    expect(sourceService.extractions).not.toHaveBeenCalled();
-    expect(sourceService.auditLogs).not.toHaveBeenCalled();
-    expect(sourceService.syncJobs).not.toHaveBeenCalled();
+    expect(sourceService.pageExtractions).not.toHaveBeenCalled();
+    expect(sourceService.pageAuditLogs).not.toHaveBeenCalled();
+    expect(sourceService.pageSyncJobs).not.toHaveBeenCalled();
     expect(component.recordHistoryMetric()).toBe('open');
 
     component.loadRecordHistory();
 
-    expect(sourceService.extractions).toHaveBeenCalled();
-    expect(sourceService.auditLogs).toHaveBeenCalled();
-    expect(sourceService.syncJobs).toHaveBeenCalled();
+    expect(sourceService.pageExtractions).toHaveBeenCalledWith('018-HAI', false, 100, 0);
+    expect(sourceService.pageAuditLogs).toHaveBeenCalledWith(100, 0);
+    expect(sourceService.pageSyncJobs).toHaveBeenCalledWith(100, 0);
     expect(component.recordHistoryLoaded).toBeTrue();
+  });
+
+  it('loads the next bounded history page only when older records are requested', () => {
+    const { component } = createComponent();
+    const sourceService = (component as any).sourceService = jasmine.createSpyObj('ConnectedSourceService', [
+      'pageExtractions', 'pageAuditLogs', 'pageSyncJobs',
+    ]);
+    sourceService.pageExtractions.and.returnValues(
+      of({ items: [{ id: 'first' }], total: 2, limit: 100, offset: 0, hasMore: true }),
+      of({ items: [{ id: 'second' }], total: 2, limit: 100, offset: 1, hasMore: false }),
+    );
+    sourceService.pageAuditLogs.and.returnValues(
+      of({ items: [], total: 0, limit: 100, offset: 0, hasMore: false }),
+      of({ items: [], total: 0, limit: 100, offset: 0, hasMore: false }),
+    );
+    sourceService.pageSyncJobs.and.returnValues(
+      of({ items: [], total: 0, limit: 100, offset: 0, hasMore: false }),
+      of({ items: [], total: 0, limit: 100, offset: 0, hasMore: false }),
+    );
+
+    component.loadRecordHistory();
+    component.loadOlderRecordHistory();
+
+    expect(sourceService.pageExtractions).toHaveBeenCalledWith('018-HAI', false, 100, 1);
+    expect(component.extractions.map((item) => item.id)).toEqual(['first', 'second']);
+    expect(component.recordHistoryMetric()).toBe('2');
+    expect(component.recordHistoryHasMore()).toBeFalse();
   });
 });

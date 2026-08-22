@@ -1487,6 +1487,31 @@ func TestSyncJobsReturnsPersistentHistory(t *testing.T) {
 	}
 }
 
+func TestPagedHistoryIsOwnerScopedAndReportsRemainingRecords(t *testing.T) {
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
+	)
+	for _, sourceID := range []uuid.UUID{aliceID, aliceID, bobID} {
+		if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: uuid.New(), SourceID: sourceID, Summary: "Private context"}); err != nil {
+			t.Fatalf("SaveExtraction: %v", err)
+		}
+	}
+	paged, ok := NewService(repo, nil).(PagedHistoryService)
+	if !ok {
+		t.Fatal("source service does not expose paged history")
+	}
+	page, err := paged.ExtractionsForOwnerPage("alice", "", false, HistoryPageRequest{Limit: 1})
+	if err != nil {
+		t.Fatalf("ExtractionsForOwnerPage: %v", err)
+	}
+	if page.Total != 2 || len(page.Items) != 1 || !page.HasMore || page.Items[0].SourceID != aliceID {
+		t.Fatalf("page = %#v, want a bounded page of Alice-only records", page)
+	}
+}
+
 func TestSyncRejectsOverlappingRunForSameSource(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
@@ -2295,6 +2320,18 @@ func (r *fakeSourceRepo) FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJ
 	return result, nil
 }
 
+func (r *fakeSourceRepo) FindSyncJobsForSources(sourceIDs []uuid.UUID, limit, offset int) ([]models.SourceSyncJob, int, error) {
+	allowed := sourceIDSet(sourceIDs)
+	result := []models.SourceSyncJob{}
+	for _, job := range r.jobs {
+		if allowed[job.SourceID] {
+			result = append(result, job)
+		}
+	}
+	total := len(result)
+	return sourceSyncJobWindow(result, limit, offset), total, nil
+}
+
 func (r *fakeSourceRepo) FindRawItem(sourceID uuid.UUID, externalID string) (*models.SourceRawItem, error) {
 	for _, item := range r.rawItems {
 		if item.SourceID == sourceID && item.ExternalID == externalID {
@@ -2365,6 +2402,15 @@ func (r *fakeSourceRepo) FindExtractionsForSources(sourceIDs []uuid.UUID, projec
 		allowed[id] = true
 	}
 	return r.findExtractions(allowed, projectKey, includeArchived)
+}
+
+func (r *fakeSourceRepo) FindExtractionsPageForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit, offset int) ([]models.SourceExtraction, int, error) {
+	items, err := r.FindExtractionsForSources(sourceIDs, projectKey, includeArchived)
+	if err != nil {
+		return nil, 0, err
+	}
+	total := len(items)
+	return sourceExtractionWindow(items, limit, offset), total, nil
 }
 
 func (r *fakeSourceRepo) findExtractions(sourceIDs map[uuid.UUID]bool, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
@@ -2482,6 +2528,59 @@ func (r *fakeSourceRepo) FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAudi
 		}
 	}
 	return result, nil
+}
+
+func (r *fakeSourceRepo) FindAuditLogsForSources(sourceIDs []uuid.UUID, limit, offset int) ([]models.SourceAuditLog, int, error) {
+	allowed := sourceIDSet(sourceIDs)
+	result := []models.SourceAuditLog{}
+	for _, log := range r.auditLogs {
+		if allowed[log.SourceID] {
+			result = append(result, log)
+		}
+	}
+	total := len(result)
+	return sourceAuditLogWindow(result, limit, offset), total, nil
+}
+
+func sourceIDSet(sourceIDs []uuid.UUID) map[uuid.UUID]bool {
+	allowed := make(map[uuid.UUID]bool, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		allowed[sourceID] = true
+	}
+	return allowed
+}
+
+func sourceSyncJobWindow(items []models.SourceSyncJob, limit, offset int) []models.SourceSyncJob {
+	if offset >= len(items) {
+		return []models.SourceSyncJob{}
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[offset:end]
+}
+
+func sourceExtractionWindow(items []models.SourceExtraction, limit, offset int) []models.SourceExtraction {
+	if offset >= len(items) {
+		return []models.SourceExtraction{}
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[offset:end]
+}
+
+func sourceAuditLogWindow(items []models.SourceAuditLog, limit, offset int) []models.SourceAuditLog {
+	if offset >= len(items) {
+		return []models.SourceAuditLog{}
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[offset:end]
 }
 
 func (r *fakeSourceRepo) hasAudit(action string) bool {

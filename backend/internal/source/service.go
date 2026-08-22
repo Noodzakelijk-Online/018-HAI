@@ -156,6 +156,47 @@ type ConnectionHealthService interface {
 	ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error)
 }
 
+// HistoryPageRequest bounds source-history reads. History grows continuously
+// once account connectors are enabled, so callers must opt into an explicit
+// window rather than loading an entire personal ledger into memory.
+type HistoryPageRequest struct {
+	Limit  int
+	Offset int
+}
+
+type ExtractionPage struct {
+	Items   []models.SourceExtraction `json:"items"`
+	Total   int                       `json:"total"`
+	Limit   int                       `json:"limit"`
+	Offset  int                       `json:"offset"`
+	HasMore bool                      `json:"hasMore"`
+}
+
+type SyncJobPage struct {
+	Items   []models.SourceSyncJob `json:"items"`
+	Total   int                    `json:"total"`
+	Limit   int                    `json:"limit"`
+	Offset  int                    `json:"offset"`
+	HasMore bool                   `json:"hasMore"`
+}
+
+type AuditLogPage struct {
+	Items   []models.SourceAuditLog `json:"items"`
+	Total   int                     `json:"total"`
+	Limit   int                     `json:"limit"`
+	Offset  int                     `json:"offset"`
+	HasMore bool                    `json:"hasMore"`
+}
+
+// PagedHistoryService is deliberately additive to Service so existing
+// integration stubs remain compatible while the production path can use
+// owner-filtered database pagination.
+type PagedHistoryService interface {
+	SyncJobsForOwnerPage(ownerIdentity string, sourceID *uuid.UUID, page HistoryPageRequest) (*SyncJobPage, error)
+	ExtractionsForOwnerPage(ownerIdentity, projectKey string, includeArchived bool, page HistoryPageRequest) (*ExtractionPage, error)
+	AuditLogsForOwnerPage(ownerIdentity string, sourceID *uuid.UUID, page HistoryPageRequest) (*AuditLogPage, error)
+}
+
 type Service interface {
 	Connectors() ([]models.SourceConnector, error)
 	CreateSource(request CreateSourceRequest) (*models.ConnectedSource, error)
@@ -1499,6 +1540,19 @@ func (s *service) ExtractionsForOwner(ownerIdentity, projectKey string, includeA
 	return s.repo.FindExtractionsForSources(sourceIDsFromSet(visibleSourceIDs), projectKey, includeArchived)
 }
 
+func (s *service) ExtractionsForOwnerPage(ownerIdentity, projectKey string, includeArchived bool, page HistoryPageRequest) (*ExtractionPage, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	limit, offset := normalizedHistoryPage(page)
+	items, total, err := s.repo.FindExtractionsPageForSources(sourceIDsFromSet(visibleSourceIDs), projectKey, includeArchived, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &ExtractionPage{Items: items, Total: total, Limit: limit, Offset: offset, HasMore: offset+len(items) < total}, nil
+}
+
 func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error) {
 	extraction, err := s.repo.FindExtraction(id)
 	if err != nil {
@@ -1619,6 +1673,59 @@ func (s *service) DeleteExtractionAuthorized(
 
 func (s *service) AuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error) {
 	return s.repo.FindAuditLogs(sourceID)
+}
+
+func (s *service) SyncJobsForOwnerPage(ownerIdentity string, sourceID *uuid.UUID, page HistoryPageRequest) (*SyncJobPage, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	if sourceID != nil {
+		if !visibleSourceIDs[*sourceID] {
+			return &SyncJobPage{Items: []models.SourceSyncJob{}}, nil
+		}
+		visibleSourceIDs = map[uuid.UUID]bool{*sourceID: true}
+	}
+	limit, offset := normalizedHistoryPage(page)
+	items, total, err := s.repo.FindSyncJobsForSources(sourceIDsFromSet(visibleSourceIDs), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &SyncJobPage{Items: items, Total: total, Limit: limit, Offset: offset, HasMore: offset+len(items) < total}, nil
+}
+
+func (s *service) AuditLogsForOwnerPage(ownerIdentity string, sourceID *uuid.UUID, page HistoryPageRequest) (*AuditLogPage, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	if sourceID != nil {
+		if !visibleSourceIDs[*sourceID] {
+			return &AuditLogPage{Items: []models.SourceAuditLog{}}, nil
+		}
+		visibleSourceIDs = map[uuid.UUID]bool{*sourceID: true}
+	}
+	limit, offset := normalizedHistoryPage(page)
+	items, total, err := s.repo.FindAuditLogsForSources(sourceIDsFromSet(visibleSourceIDs), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return &AuditLogPage{Items: items, Total: total, Limit: limit, Offset: offset, HasMore: offset+len(items) < total}, nil
+}
+
+func normalizedHistoryPage(page HistoryPageRequest) (int, int) {
+	limit := page.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 250 {
+		limit = 250
+	}
+	offset := page.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
 }
 
 func (s *service) localFolderItems(source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {

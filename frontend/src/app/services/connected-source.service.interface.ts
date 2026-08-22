@@ -7,6 +7,7 @@ import {
   ISourceConnector,
   ISourceConnectionHealth,
   ISourceExtraction,
+	ISourceHistoryPage,
   ISourceSearchRequest,
   ISourceSearchResult,
   ISourceSyncJob,
@@ -21,6 +22,7 @@ export interface IConnectedSourceService {
   connectionHealth(sourceId: string): Observable<ISourceConnectionHealth>;
   connectionHealthSummary(): Observable<ISourceConnectionHealth[]>;
   syncJobs(sourceId?: string): Observable<ISourceSyncJob[]>;
+	pageSyncJobs(limit: number, offset: number, sourceId?: string): Observable<ISourceHistoryPage<ISourceSyncJob>>;
   createSource(request: ICreateSourceRequest): Observable<IConnectedSource>;
   startGoogleOAuth(sourceId: string): Observable<{ authorizeUrl: string }>;
   sync(sourceId: string, request: IImportRequest): Observable<ISourceSyncResult>;
@@ -34,8 +36,10 @@ export interface IConnectedSourceService {
   search(request: ISourceSearchRequest): Observable<ISourceSearchResult>;
   knowledgeGraph(projectKey: string, includeArchived: boolean, includeSensitive: boolean): Observable<IKnowledgeGraphResult>;
   extractions(projectKey: string, includeArchived: boolean): Observable<ISourceExtraction[]>;
+	pageExtractions(projectKey: string, includeArchived: boolean, limit: number, offset: number): Observable<ISourceHistoryPage<ISourceExtraction>>;
   updateExtraction(id: string, extraction: Partial<ISourceExtraction>): Observable<ISourceExtraction>;
   archiveExtraction(id: string): Observable<ISourceExtraction>;
   deleteExtraction(id: string): Observable<void>;
   auditLogs(sourceId?: string): Observable<ISourceAuditLog[]>;
+	pageAuditLogs(limit: number, offset: number, sourceId?: string): Observable<ISourceHistoryPage<ISourceAuditLog>>;
 }

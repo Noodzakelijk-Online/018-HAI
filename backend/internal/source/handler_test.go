@@ -176,6 +176,46 @@ func TestHandlerListsOnlyOwnerScopedExtractionsFromRepository(t *testing.T) {
 	}
 }
 
+func TestHandlerPagesOwnerScopedHistoryWithoutLeakingOtherOwners(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
+	)
+	for _, sourceID := range []uuid.UUID{aliceID, aliceID, bobID} {
+		if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: uuid.New(), SourceID: sourceID, Summary: "Private context"}); err != nil {
+			t.Fatalf("SaveExtraction: %v", err)
+		}
+	}
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+	})
+	router.GET("/sources/extractions", handler.Extractions)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/extractions?limit=1&offset=0", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("paged extractions status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var page ExtractionPage
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode extraction page: %v", err)
+	}
+	if page.Total != 2 || len(page.Items) != 1 || !page.HasMore || page.Items[0].SourceID != aliceID {
+		t.Fatalf("page = %#v, want one of two Alice-only extraction records", page)
+	}
+
+	invalidResponse := httptest.NewRecorder()
+	router.ServeHTTP(invalidResponse, httptest.NewRequest(http.MethodGet, "/sources/extractions?limit=251", nil))
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("invalid page limit status = %d, body=%s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+}
+
 func TestHandlerRejectsOwnerlessLegacySourceAndExtractionMutations(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	sourceID := uuid.New()

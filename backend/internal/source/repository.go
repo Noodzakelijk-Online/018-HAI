@@ -21,6 +21,7 @@ type Repository interface {
 	CreateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
 	UpdateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
 	FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
+	FindSyncJobsForSources(sourceIDs []uuid.UUID, limit, offset int) ([]models.SourceSyncJob, int, error)
 	FindRawItem(sourceID uuid.UUID, externalID string) (*models.SourceRawItem, error)
 	SaveRawItem(item *models.SourceRawItem) (*models.SourceRawItem, error)
 	FindRawItems(sourceID uuid.UUID) ([]models.SourceRawItem, error)
@@ -28,6 +29,7 @@ type Repository interface {
 	SaveExtraction(extraction *models.SourceExtraction) (*models.SourceExtraction, error)
 	FindExtractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	FindExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
+	FindExtractionsPageForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit, offset int) ([]models.SourceExtraction, int, error)
 	FindExtraction(id uuid.UUID) (*models.SourceExtraction, error)
 	DeleteExtractionForOwner(
 		extraction *models.SourceExtraction,
@@ -38,6 +40,7 @@ type Repository interface {
 	DeletePendingVectorIndex(extractionID uuid.UUID) error
 	SaveAuditLog(log *models.SourceAuditLog) (*models.SourceAuditLog, error)
 	FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error)
+	FindAuditLogsForSources(sourceIDs []uuid.UUID, limit, offset int) ([]models.SourceAuditLog, int, error)
 	SaveOAuthToken(token *models.SourceOAuthToken) error
 	FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error)
 }
@@ -210,6 +213,20 @@ func (r *GormRepository) FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJ
 	return jobs, err
 }
 
+func (r *GormRepository) FindSyncJobsForSources(sourceIDs []uuid.UUID, limit, offset int) ([]models.SourceSyncJob, int, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceSyncJob{}, 0, nil
+	}
+	query := r.DB.Model(&models.SourceSyncJob{}).Where("source_id IN ?", sourceIDs)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var jobs []models.SourceSyncJob
+	err := query.Order("created_at desc").Limit(limit).Offset(offset).Find(&jobs).Error
+	return jobs, int(total), err
+}
+
 func (r *GormRepository) FindRawItem(sourceID uuid.UUID, externalID string) (*models.SourceRawItem, error) {
 	var item models.SourceRawItem
 	if err := r.DB.Where("source_id = ? AND external_id = ?", sourceID, externalID).First(&item).Error; err != nil {
@@ -255,6 +272,26 @@ func (r *GormRepository) FindExtractionsForSources(sourceIDs []uuid.UUID, projec
 		return []models.SourceExtraction{}, nil
 	}
 	return r.findExtractions(sourceIDs, projectKey, includeArchived)
+}
+
+func (r *GormRepository) FindExtractionsPageForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit, offset int) ([]models.SourceExtraction, int, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceExtraction{}, 0, nil
+	}
+	query := r.DB.Model(&models.SourceExtraction{}).Where("source_id IN ?", sourceIDs)
+	if projectKey != "" {
+		query = query.Where("project_key = ?", projectKey)
+	}
+	if !includeArchived {
+		query = query.Where("archived = ?", false)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var extractions []models.SourceExtraction
+	err := query.Order("updated_at desc").Limit(limit).Offset(offset).Find(&extractions).Error
+	return extractions, int(total), err
 }
 
 func (r *GormRepository) findExtractions(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
@@ -371,6 +408,20 @@ func (r *GormRepository) FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAudi
 	}
 	err := query.Find(&logs).Error
 	return logs, err
+}
+
+func (r *GormRepository) FindAuditLogsForSources(sourceIDs []uuid.UUID, limit, offset int) ([]models.SourceAuditLog, int, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceAuditLog{}, 0, nil
+	}
+	query := r.DB.Model(&models.SourceAuditLog{}).Where("source_id IN ?", sourceIDs)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var logs []models.SourceAuditLog
+	err := query.Order("created_at desc").Limit(limit).Offset(offset).Find(&logs).Error
+	return logs, int(total), err
 }
 
 // SaveOAuthToken upserts the token for a source (one token set per source).
