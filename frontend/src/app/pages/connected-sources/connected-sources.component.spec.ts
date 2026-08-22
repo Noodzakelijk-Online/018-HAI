@@ -101,6 +101,14 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.googleConnectorMetric()).toBe('4 ready');
   });
 
+	it('does not offer connector creation before required setup is complete', () => {
+		const { component } = createComponent();
+		expect(component.connectorCanConnect({ enabled: true, adapterStatus: 'configuration_required' } as any)).toBeFalse();
+		expect(component.connectorCanConnect({ enabled: true, adapterStatus: 'not_implemented' } as any)).toBeFalse();
+		expect(component.connectorCanConnect({ enabled: true, adapterStatus: 'operational' } as any)).toBeTrue();
+		expect(component.adapterStatusLabel('configuration_required')).toBe('setup required');
+	});
+
   it('uses remote read-only defaults for a Trello board source', () => {
     const { component } = createComponent();
 

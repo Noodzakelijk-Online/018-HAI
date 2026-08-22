@@ -195,6 +195,17 @@ export class ConnectedSourcesComponent implements OnInit {
     const connector = this.connectors.find(
       (item) => item.connectorKey === this.sourceForm.value.connectorKey
     );
+	if (!connector) {
+		this.notification.warning('Connector unavailable', 'Refresh the connector catalog and select an available connector.');
+		return;
+	}
+	if (!this.connectorCanConnect(connector)) {
+		this.notification.warning(
+		  'Connector setup required',
+		  connector?.statusReason || 'This connector is not available until its required configuration is complete.'
+		);
+		return;
+	}
     this.sourceService
       .createSource({
         connectorKey: this.sourceForm.value.connectorKey,
@@ -408,8 +419,10 @@ export class ConnectedSourcesComponent implements OnInit {
         return 'local files only';
       case 'modeled':
         return 'built-in model';
+	  case 'configuration_required':
+		return 'setup required';
       case 'not_implemented':
-        return 'not implemented';
+		return 'unavailable';
       default:
         return this.statusText(status);
     }
@@ -551,6 +564,26 @@ export class ConnectedSourcesComponent implements OnInit {
     const status = connector.adapterStatus || (connector.enabled ? 'operational' : 'not_implemented');
     return `${connector.name} — ${this.adapterStatusLabel(status)}`;
   }
+
+	connectorCanConnect(connector?: ISourceConnector): boolean {
+		if (!connector?.enabled) {
+			return false;
+		}
+		switch ((connector.adapterStatus || 'operational').toLowerCase()) {
+		  case 'operational':
+		  case 'local_only':
+		  case 'modeled':
+			return true;
+		  default:
+			return false;
+		}
+	}
+
+	selectedConnectorCanConnect(): boolean {
+		return this.connectorCanConnect(this.connectors.find(
+		  (connector) => connector.connectorKey === this.sourceForm.value.connectorKey
+		));
+	}
 
   connectorChanged(connectorKey: string): void {
     if (connectorKey === 'json-feed') {
@@ -909,7 +942,11 @@ export class ConnectedSourcesComponent implements OnInit {
       'google-calendar': 'calendar.readonly',
     };
     const label = labels[connectorKey];
-    if (!connector?.enabled || connector.adapterStatus === 'not_implemented') {
+	if (!connector) {
+		this.notification.warning(`${label} unavailable`, 'Refresh the connector catalog and try again.');
+		return;
+	}
+	if (!this.connectorCanConnect(connector)) {
       this.notification.warning(
         `${label} not configured`,
         'Configure the Google OAuth client, redirect URL, token encryption key, and state signing key first.'

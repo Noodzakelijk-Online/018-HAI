@@ -148,7 +148,7 @@
                     *ngFor="let connector of connectors"
                     [nzValue]="connector.connectorKey"
                     [nzLabel]="connectorLabel(connector)"
-                    [nzDisabled]="!connector.enabled"
+					[nzDisabled]="!connectorCanConnect(connector)"
                   ></nz-option>
                 </nz-select>
               </label>
@@ -183,7 +183,7 @@
                   data-testid="source-connect"
                   (click)="connectSource()"
                   [nzLoading]="connecting"
-                  [disabled]="sourceForm.invalid || connecting"
+				  [disabled]="sourceForm.invalid || connecting || !selectedConnectorCanConnect()"
                 >
                   Connect source
                 </button>
