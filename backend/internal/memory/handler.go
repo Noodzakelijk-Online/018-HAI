@@ -28,7 +28,11 @@ func (h *Handler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	memory, err := h.ownerService(c).CreateForOwner(memoryOwner(c), request)
+	service, ok := h.ownerService(c)
+	if !ok {
+		return
+	}
+	memory, err := service.CreateForOwner(memoryOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -38,7 +42,11 @@ func (h *Handler) Create(c *gin.Context) {
 
 func (h *Handler) List(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
-	memories, err := h.ownerService(c).FindAllForOwner(memoryOwner(c), c.Query("projectKey"), includeArchived)
+	service, ok := h.ownerService(c)
+	if !ok {
+		return
+	}
+	memories, err := service.FindAllForOwner(memoryOwner(c), c.Query("projectKey"), includeArchived)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -60,7 +68,11 @@ func (h *Handler) Health(c *gin.Context) {
 // paginated envelope for clients that need to browse large memory sets.
 func (h *Handler) Query(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
-	memories, err := h.ownerService(c).FindAllForOwner(memoryOwner(c), c.Query("projectKey"), includeArchived)
+	service, ok := h.ownerService(c)
+	if !ok {
+		return
+	}
+	memories, err := service.FindAllForOwner(memoryOwner(c), c.Query("projectKey"), includeArchived)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -84,7 +96,11 @@ func (h *Handler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	memory, err := h.ownerService(c).FindByIDForOwner(memoryOwner(c), id)
+	service, ok := h.ownerService(c)
+	if !ok {
+		return
+	}
+	memory, err := service.FindByIDForOwner(memoryOwner(c), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -102,7 +118,11 @@ func (h *Handler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	memory, err := h.ownerService(c).UpdateForOwner(memoryOwner(c), id, request)
+	service, ok := h.ownerService(c)
+	if !ok {
+		return
+	}
+	memory, err := service.UpdateForOwner(memoryOwner(c), id, request)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -115,7 +135,11 @@ func (h *Handler) Archive(c *gin.Context) {
 	if !ok {
 		return
 	}
-	memory, err := h.ownerService(c).ArchiveForOwner(memoryOwner(c), id, true)
+	service, ok := h.ownerService(c)
+	if !ok {
+		return
+	}
+	memory, err := service.ArchiveForOwner(memoryOwner(c), id, true)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -128,7 +152,11 @@ func (h *Handler) Restore(c *gin.Context) {
 	if !ok {
 		return
 	}
-	memory, err := h.ownerService(c).ArchiveForOwner(memoryOwner(c), id, false)
+	service, ok := h.ownerService(c)
+	if !ok {
+		return
+	}
+	memory, err := service.ArchiveForOwner(memoryOwner(c), id, false)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -141,7 +169,11 @@ func (h *Handler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.ownerService(c).DeleteForOwner(memoryOwner(c), id); err != nil {
+	service, ok := h.ownerService(c)
+	if !ok {
+		return
+	}
+	if err := service.DeleteForOwner(memoryOwner(c), id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -154,7 +186,11 @@ func (h *Handler) Retrieve(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	result, err := h.ownerService(c).RetrieveForOwner(memoryOwner(c), request)
+	service, ok := h.ownerService(c)
+	if !ok {
+		return
+	}
+	result, err := service.RetrieveForOwner(memoryOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -178,7 +214,11 @@ func (h *Handler) ReindexSemantic(c *gin.Context) {
 }
 
 func (h *Handler) Export(c *gin.Context) {
-	memories, err := h.ownerService(c).FindAllForOwner(memoryOwner(c), c.Query("projectKey"), true)
+	service, ok := h.ownerService(c)
+	if !ok {
+		return
+	}
+	memories, err := service.FindAllForOwner(memoryOwner(c), c.Query("projectKey"), true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -189,12 +229,13 @@ func (h *Handler) Export(c *gin.Context) {
 	})
 }
 
-func (h *Handler) ownerService(c *gin.Context) OwnerScopedService {
+func (h *Handler) ownerService(c *gin.Context) (OwnerScopedService, bool) {
 	scoped, ok := h.service.(OwnerScopedService)
 	if !ok {
-		panic("memory handler requires owner-scoped service")
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "owner-scoped memory service is unavailable"})
+		return nil, false
 	}
-	return scoped
+	return scoped, true
 }
 
 func memoryOwner(c *gin.Context) string {
