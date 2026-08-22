@@ -50,6 +50,7 @@ type Registry struct {
 	audits  map[uuid.UUID][]AuditEvent
 	lastRun map[uuid.UUID]*time.Time
 	lastN   map[uuid.UUID]int
+	syncing map[uuid.UUID]bool
 	seq     int
 
 	ops     *operations.Service
@@ -67,6 +68,7 @@ func NewRegistry(ops *operations.Service, privacy *privacyfilter.Service, opts F
 		audits:  map[uuid.UUID][]AuditEvent{},
 		lastRun: map[uuid.UUID]*time.Time{},
 		lastN:   map[uuid.UUID]int{},
+		syncing: map[uuid.UUID]bool{},
 		ops:     ops,
 		privacy: privacy,
 		opts:    opts,
@@ -187,6 +189,11 @@ func (r *Registry) SyncDue(ctx context.Context) []SyncReport {
 }
 
 func (r *Registry) syncFeed(ctx context.Context, feed Feed) SyncReport {
+	if !r.beginSync(feed.ID) {
+		return SyncReport{FeedID: feed.ID.String(), Errors: []string{"sync already in progress"}}
+	}
+	defer r.endSync(feed.ID)
+
 	rep := SyncReport{FeedID: feed.ID.String()}
 	data, err := fetchFeedBytes(ctx, feed, r.opts)
 	if err != nil {
@@ -228,6 +235,22 @@ func (r *Registry) syncFeed(ctx context.Context, feed Feed) SyncReport {
 	}
 	r.recordSync(feed.ID, rep.ItemsRead, "synced", fmt.Sprintf("read %d items, %d new operations, %d privacy-flagged", rep.ItemsRead, rep.OperationsCreated, rep.PrivacyFlagged))
 	return rep
+}
+
+func (r *Registry) beginSync(id uuid.UUID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.syncing[id] {
+		return false
+	}
+	r.syncing[id] = true
+	return true
+}
+
+func (r *Registry) endSync(id uuid.UUID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.syncing, id)
 }
 
 // Audit returns a feed's audit trail (newest first).

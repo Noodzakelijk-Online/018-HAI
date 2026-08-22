@@ -2,9 +2,14 @@ package accountfeed
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"automation-hub-backend/internal/operations"
 	"automation-hub-backend/internal/privacyfilter"
@@ -66,6 +71,54 @@ func TestSyncGenericFeedIntoLedger(t *testing.T) {
 	// Audit trail recorded.
 	if len(reg.Audit(feed.ID)) < 2 {
 		t.Fatalf("sync must record an audit trail")
+	}
+}
+
+func TestSyncSkipsOverlappingRunForSameFeed(t *testing.T) {
+	reg, _ := newTestRegistry(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+	var releaseOnce sync.Once
+	releaseServer := func() { releaseOnce.Do(func() { close(release) }) }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		startedOnce.Do(func() { close(started) })
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(genericFeed))
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(releaseServer)
+	reg.opts.AllowHTTP = true
+	feed, err := reg.Register(Feed{Name: "slow inbox", Provider: string(ProviderGenericJSONFeed), SourceType: SourceHTTPJSONFeed, URL: server.URL, OwnerUserID: "u", WorkspaceID: "local", Enabled: true})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	firstDone := make(chan SyncReport, 1)
+	go func() {
+		report, _ := reg.Sync(context.Background(), feed.ID)
+		firstDone <- report
+	}()
+	<-started
+
+	secondDone := make(chan SyncReport, 1)
+	go func() {
+		report, _ := reg.Sync(context.Background(), feed.ID)
+		secondDone <- report
+	}()
+	select {
+	case report := <-secondDone:
+		if !strings.Contains(strings.Join(report.Errors, " "), "already in progress") {
+			t.Fatalf("overlapping sync error = %v, want in-progress rejection", report.Errors)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("overlapping sync blocked instead of being rejected")
+	}
+
+	releaseServer()
+	if report := <-firstDone; len(report.Errors) != 0 {
+		t.Fatalf("first sync errors = %v", report.Errors)
 	}
 }
 
