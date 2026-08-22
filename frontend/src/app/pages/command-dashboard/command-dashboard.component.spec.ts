@@ -137,9 +137,8 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
   });
 
   it('loads core dashboard data once without fetching command history on startup', () => {
-    const pursuits = jasmine.createSpyObj('PursuitService', ['dashboard', 'brief']);
-    pursuits.dashboard.and.returnValue(of({}));
-    pursuits.brief.and.returnValue(of({}));
+    const pursuits = jasmine.createSpyObj('PursuitService', ['overview']);
+    pursuits.overview.and.returnValue(of({ dashboard: {}, brief: {} }));
     const assistantCommands = jasmine.createSpyObj('AssistantCommandService', ['logs']);
     assistantCommands.logs.and.returnValue(of([]));
     const component = new CommandDashboardComponent(
@@ -155,8 +154,7 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
 
     component.ngOnInit();
 
-    expect(pursuits.dashboard).toHaveBeenCalledTimes(1);
-    expect(pursuits.brief).toHaveBeenCalledTimes(1);
+    expect(pursuits.overview).toHaveBeenCalledTimes(1);
     expect(assistantCommands.logs).not.toHaveBeenCalled();
 
     component.onCommandHistoryOpen(true);

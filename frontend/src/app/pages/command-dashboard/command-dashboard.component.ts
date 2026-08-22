@@ -512,21 +512,15 @@ export class CommandDashboardComponent implements OnInit, AfterViewInit {
 
   refreshPursuits(): void {
     this.pursuitsLoading = true;
-    this.pursuits.dashboard().subscribe({
-      next: (dashboard) => {
-        this.pursuitDashboard = dashboard;
+    this.pursuits.overview().subscribe({
+      next: (overview) => {
+        this.pursuitDashboard = overview.dashboard;
+        this.pursuitBrief = overview.brief;
         this.pursuitsLoading = false;
       },
       error: () => {
         this.pursuitsLoading = false;
         this.pursuitDashboard = undefined;
-      },
-    });
-    this.pursuits.brief().subscribe({
-      next: (brief) => {
-        this.pursuitBrief = brief;
-      },
-      error: () => {
         this.pursuitBrief = undefined;
       },
     });

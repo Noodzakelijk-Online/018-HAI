@@ -346,6 +346,13 @@ type Brief struct {
 	Cards                []BriefCard `json:"cards"`
 }
 
+// Overview keeps the command dashboard's operational queues and summary in
+// one consistent snapshot, rather than rebuilding the dashboard for each.
+type Overview struct {
+	Dashboard *Dashboard `json:"dashboard"`
+	Brief     *Brief     `json:"brief"`
+}
+
 type BriefCard struct {
 	Queue        string `json:"queue"`
 	PursuitID    string `json:"pursuitId"`
@@ -707,6 +714,7 @@ type Service interface {
 	UpsertTaskAttempt(attempt models.PursuitTaskAttempt) error
 	Dashboard() (*Dashboard, error)
 	DashboardForOwner(ownerIdentity string) (*Dashboard, error)
+	OverviewForOwner(ownerIdentity string) (*Overview, error)
 	Decisions() ([]PursuitDashboardDecision, error)
 	DecisionsForOwner(ownerIdentity string) ([]PursuitDashboardDecision, error)
 	Brief() (*Brief, error)
@@ -1228,6 +1236,21 @@ func (s *service) BriefForOwner(ownerIdentity string) (*Brief, error) {
 	if err != nil {
 		return nil, err
 	}
+	return briefFromDashboard(dashboard), nil
+}
+
+func (s *service) OverviewForOwner(ownerIdentity string) (*Overview, error) {
+	dashboard, err := s.DashboardForOwner(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	return &Overview{Dashboard: dashboard, Brief: briefFromDashboard(dashboard)}, nil
+}
+
+func briefFromDashboard(dashboard *Dashboard) *Brief {
+	if dashboard == nil {
+		dashboard = &Dashboard{}
+	}
 	brief := &Brief{
 		GeneratedAt:          time.Now().UTC(),
 		NeedsRobert:          len(dashboard.NeedsRobert),
@@ -1242,7 +1265,7 @@ func (s *service) BriefForOwner(ownerIdentity string) (*Brief, error) {
 	brief.Summary = briefSummary(*brief, dashboard)
 	brief.PrimaryAction = briefPrimaryAction(*brief)
 	brief.Cards = briefCards(dashboard, 6)
-	return brief, nil
+	return brief
 }
 
 // UpsertTaskAttempt records the durable, compact task-engine projection for a

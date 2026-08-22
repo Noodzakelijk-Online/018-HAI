@@ -298,6 +298,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	pursuits.POST("/", mark("pursuitCreate"))
 	pursuits.GET("/dashboard", mark("pursuitDashboard"))
 	pursuits.GET("/brief", mark("pursuitBrief"))
+	pursuits.GET("/overview", mark("pursuitOverview"))
 	pursuits.GET("/decisions", mark("pursuitDecisions"))
 	pursuits.POST("/match", mark("pursuitMatch"))
 	pursuits.POST("/intake", mark("pursuitRouteIntake"))
@@ -459,6 +460,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"POST", "/api/v1/pursuits/", "pursuitCreate"},
 		{"GET", "/api/v1/pursuits/dashboard", "pursuitDashboard"},
 		{"GET", "/api/v1/pursuits/brief", "pursuitBrief"},
+		{"GET", "/api/v1/pursuits/overview", "pursuitOverview"},
 		{"POST", "/api/v1/pursuits/match", "pursuitMatch"},
 		{"POST", "/api/v1/pursuits/intake", "pursuitRouteIntake"},
 		{"GET", "/api/v1/pursuits/abc/evidence?uri=automation-launch://example", "pursuitEvidence"},
