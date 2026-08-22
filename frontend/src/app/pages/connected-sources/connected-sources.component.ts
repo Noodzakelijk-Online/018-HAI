@@ -53,6 +53,8 @@ export class ConnectedSourcesComponent implements OnInit {
   extractions: ISourceExtraction[] = [];
   auditLogs: ISourceAuditLog[] = [];
   syncJobs: ISourceSyncJob[] = [];
+  recordHistoryLoaded = false;
+  recordHistoryLoading = false;
   connectionHealth: Record<string, ISourceConnectionHealth> = {};
   searchResult?: ISourceSearchResult;
   knowledgeGraph?: IKnowledgeGraphResult;
@@ -162,6 +164,29 @@ export class ConnectedSourcesComponent implements OnInit {
           return of([] as IConnectedSource[]);
         })
       ),
+    })
+      .pipe(finalize(() => (this.loading = false)))
+      .subscribe(({ connectors, sources }) => {
+        this.connectors = connectors;
+        this.sources = sources;
+        this.applySourceDefaults(sources);
+        this.loadConnectionHealth(sources);
+        if (this.recordHistoryLoaded) {
+          this.loadRecordHistory(true);
+        }
+        this.updateSourceActions();
+      });
+  }
+
+  // The operational overview must remain quick even after years of source
+  // history. Extraction text, audit trails, and job ledgers are only needed
+  // once the operator opens the record layer.
+  loadRecordHistory(force = false): void {
+    if (this.recordHistoryLoading || (this.recordHistoryLoaded && !force)) {
+      return;
+    }
+    this.recordHistoryLoading = true;
+    forkJoin({
       extractions: this.sourceService.extractions(this.searchForm.value.projectKey, this.includeArchived).pipe(
         timeout(this.loadTimeoutMs),
         catchError(() => of([] as ISourceExtraction[]))
@@ -175,15 +200,12 @@ export class ConnectedSourcesComponent implements OnInit {
         catchError(() => of([] as ISourceSyncJob[]))
       ),
     })
-      .pipe(finalize(() => (this.loading = false)))
-      .subscribe(({ connectors, sources, extractions, auditLogs, syncJobs }) => {
-        this.connectors = connectors;
-        this.sources = sources;
+      .pipe(finalize(() => (this.recordHistoryLoading = false)))
+      .subscribe(({ extractions, auditLogs, syncJobs }) => {
         this.extractions = extractions;
         this.auditLogs = auditLogs;
         this.syncJobs = syncJobs || [];
-        this.applySourceDefaults(sources);
-        this.loadConnectionHealth(sources);
+        this.recordHistoryLoaded = true;
         this.updateSourceActions();
       });
   }
@@ -311,7 +333,7 @@ export class ConnectedSourcesComponent implements OnInit {
         title: 'Import item',
         detail: 'Add one source-backed record.',
         icon: 'file-add',
-        metric: `${this.extractions.length} records`,
+        metric: this.recordHistoryLoaded ? `${this.extractions.length} records` : 'on demand',
         tone: 'blue',
       },
       {
@@ -419,6 +441,10 @@ export class ConnectedSourcesComponent implements OnInit {
     return this.syncJobs.filter((job) => job.status === 'failed').length;
   }
 
+  recordHistoryMetric(): string {
+    return this.recordHistoryLoaded ? String(this.extractions.length) : 'open';
+  }
+
   pendingJobCount(): number {
     return this.syncJobs.filter((job) => job.status === 'pending' || job.status === 'running').length;
   }
@@ -427,8 +453,16 @@ export class ConnectedSourcesComponent implements OnInit {
     return this.extractions.filter((extraction) => extraction.uncertain).length;
   }
 
-  sensitiveExtractionCount(): number {
-    return this.extractions.filter((extraction) => extraction.sensitive).length;
+  sensitiveExtractionMetric(): string {
+    if (!this.recordHistoryLoaded) {
+      return 'not loaded';
+    }
+
+    return String(this.extractions.filter((extraction) => extraction.sensitive).length);
+  }
+
+  failedJobMetric(): string {
+    return this.recordHistoryLoaded ? String(this.failedJobCount()) : 'not loaded';
   }
 
   recentExtractions(): ISourceExtraction[] {
@@ -508,6 +542,10 @@ export class ConnectedSourcesComponent implements OnInit {
 
   sourceExtractionCount(source: IConnectedSource): number {
     return this.extractions.filter((extraction) => extraction.sourceId === source.id).length;
+  }
+
+  sourceExtractionCountLabel(source: IConnectedSource): string {
+    return this.recordHistoryLoaded ? `${this.sourceExtractionCount(source)} records` : 'records on demand';
   }
 
   connectorFor(source?: IConnectedSource): ISourceConnector | undefined {

@@ -1,5 +1,6 @@
 import { FormBuilder } from '@angular/forms';
 import { Router } from '@angular/router';
+import { of } from 'rxjs';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { IConnectedSource, ISourcePursuitRoutingOutcome } from '../../models/connected-source.model.interface';
 import { ConnectedSourcesComponent } from './connected-sources.component';
@@ -121,5 +122,32 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
       excludePatterns: '',
     }));
     expect(component.syncTargetPlaceholder()).toContain('Trello board ID');
+  });
+
+  it('defers record-heavy source history until the operator opens it', () => {
+    const { component } = createComponent();
+    const sourceService = (component as any).sourceService = jasmine.createSpyObj('ConnectedSourceService', [
+      'connectors', 'sources', 'extractions', 'auditLogs', 'syncJobs', 'connectionHealthSummary',
+    ]);
+    sourceService.connectors.and.returnValue(of([]));
+    sourceService.sources.and.returnValue(of([]));
+    sourceService.extractions.and.returnValue(of([]));
+    sourceService.auditLogs.and.returnValue(of([]));
+    sourceService.syncJobs.and.returnValue(of([]));
+    sourceService.connectionHealthSummary.and.returnValue(of([]));
+
+    component.refresh();
+
+    expect(sourceService.extractions).not.toHaveBeenCalled();
+    expect(sourceService.auditLogs).not.toHaveBeenCalled();
+    expect(sourceService.syncJobs).not.toHaveBeenCalled();
+    expect(component.recordHistoryMetric()).toBe('open');
+
+    component.loadRecordHistory();
+
+    expect(sourceService.extractions).toHaveBeenCalled();
+    expect(sourceService.auditLogs).toHaveBeenCalled();
+    expect(sourceService.syncJobs).toHaveBeenCalled();
+    expect(component.recordHistoryLoaded).toBeTrue();
   });
 });

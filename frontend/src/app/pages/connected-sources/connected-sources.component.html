@@ -10,7 +10,7 @@
         <i nz-icon [nzType]="themeIcon()" nzTheme="outline"></i>
         {{ themeLabel() }}
       </button>
-      <button type="button" nz-button nzType="default" (click)="refresh()" [nzLoading]="loading" title="Reload connectors, sources, jobs, extractions, and audit logs">
+      <button type="button" nz-button nzType="default" (click)="refresh()" [nzLoading]="loading" title="Reload connector and source status">
         <i nz-icon nzType="reload" nzTheme="outline"></i>
         Refresh
       </button>
@@ -36,15 +36,15 @@
         <span>of {{ connectors.length }} connectors</span>
       </div>
       <div title="Extracted records available for source-grounded memory and task context">
-        <strong>{{ extractions.length }}</strong>
+        <strong>{{ recordHistoryMetric() }}</strong>
         <span>extracted records</span>
       </div>
       <div title="Records that must stay review-gated or sensitive">
-        <strong>{{ sensitiveExtractionCount() }}</strong>
+        <strong>{{ sensitiveExtractionMetric() }}</strong>
         <span>sensitive records</span>
       </div>
-      <div [class.attention]="failedJobCount() > 0" title="Sync jobs that failed and need attention">
-        <strong>{{ failedJobCount() }}</strong>
+      <div [class.attention]="recordHistoryLoaded && failedJobCount() > 0" title="Sync jobs that failed and need attention">
+        <strong>{{ failedJobMetric() }}</strong>
         <span>failed jobs</span>
       </div>
     </section>
@@ -104,7 +104,7 @@
             <div class="source-row__badges">
               <span class="status-pill" [attr.data-status]="statusTone(source.status)">{{ statusText(source.status) }}</span>
               <span *ngIf="source.localOnly" class="status-pill local">local</span>
-              <span class="status-pill">{{ sourceExtractionCount(source) }} records</span>
+              <span class="status-pill">{{ sourceExtractionCountLabel(source) }}</span>
             </div>
             <div class="source-row__actions">
               <button
@@ -683,7 +683,13 @@
             <h2>Extracted context</h2>
             <p>Facts, tasks, dates, and follow-ups stay editable and source-linked.</p>
           </div>
-          <label nz-checkbox [(ngModel)]="includeArchived" (ngModelChange)="refresh()" title="Include archived extraction records">Show archived</label>
+          <div class="panel-actions">
+            <button type="button" nz-button nzType="default" (click)="loadRecordHistory(true)" [nzLoading]="recordHistoryLoading" title="Load the source record, sync-job, and audit history">
+              <i nz-icon nzType="unordered-list" nzTheme="outline"></i>
+              Load records
+            </button>
+            <label nz-checkbox [(ngModel)]="includeArchived" (ngModelChange)="loadRecordHistory(true)" title="Include archived extraction records">Show archived</label>
+          </div>
         </div>
         <div class="record-list">
           <article *ngFor="let extraction of recentExtractions()">
@@ -710,7 +716,7 @@
               </button>
             </div>
           </article>
-          <nz-empty *ngIf="!recentExtractions().length" nzNotFoundContent="No extracted records yet."></nz-empty>
+          <nz-empty *ngIf="!recentExtractions().length" [nzNotFoundContent]="recordHistoryLoaded ? 'No extracted records yet.' : 'Load records when you need source history.'"></nz-empty>
         </div>
       </section>
 
@@ -738,7 +744,7 @@
               <small>{{ log.createdAt | date: 'short' }}</small>
             </div>
           </article>
-          <nz-empty *ngIf="!recentSyncJobs().length && !recentAuditLogs().length" nzNotFoundContent="No source activity yet."></nz-empty>
+          <nz-empty *ngIf="!recentSyncJobs().length && !recentAuditLogs().length" [nzNotFoundContent]="recordHistoryLoaded ? 'No source activity yet.' : 'Load records when you need the audit trail.'"></nz-empty>
         </div>
       </section>
     </section>
