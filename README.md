@@ -716,6 +716,35 @@ general importer accepts `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`,
 `.yaml`, `.yml`, and `.log`; export connectors also support `.mbox`, `.eml`,
 and `.ics` within the same allowlisted root.
 
+### Extract a selected local document folder
+
+For Office, HTML, Markdown, text, or reviewed PDF extraction, enable the
+disabled-by-default `local-document-extraction` profile in `.env.local`:
+
+```text
+HAI_DOCLING_ENABLED=true
+HAI_DOCLING_RUNNER_TOKEN=<unique local runner token>
+HAI_DOCLING_PDF_ENABLED=false
+```
+
+Start the backend and the profile, then create a **Selected documents
+(Docling)** source in **Connected Sources**. Keep **Local only** enabled and
+set a specific folder relative to `connected-sources/`, such as
+`legal/vivare`; `.` and paths outside that root are rejected. The **Extract
+documents** action sends no file upload: the isolated runner reads that one
+mounted folder, HAI records source-linked extractions through the normal
+governed intake flow, and it cannot write to the folder, promote memory, or
+execute an external action. PDF extraction remains off until its local model
+artifacts have been reviewed.
+
+```powershell
+docker compose --env-file .env.local -f docker-compose.local.yml `
+  --profile local-document-extraction up -d --build backend docling-runner
+```
+
+See [optional runtime profiles](docs/optional-runtime-profiles.md) for the
+runner isolation and resource limits.
+
 ### Connect LARO case intelligence
 
 HAI includes a dedicated `laro` read-only connected-source adapter. Create the

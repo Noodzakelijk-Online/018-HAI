@@ -210,7 +210,8 @@ func initializeRoutes(router *gin.Engine, backgroundCtx context.Context) error {
 		initializeAgentFrameworkRoutes(v1, agentframework.NewHandler(agentframework.WithModelMaintenance(agentframework.DefaultService(), llmService)))
 		initializeAutoGenCompatibilityRoutes(v1, autogencompat.NewHandler(autogencompat.DefaultService()))
 		initializeCrewAIRoutes(v1, crewai.NewHandler(crewai.WithModelMaintenance(crewai.DefaultService(), llmService)))
-		initializeDoclingRoutes(v1, docling.NewHandler(docling.DefaultService()))
+		doclingService := docling.DefaultService()
+		initializeDoclingRoutes(v1, docling.NewHandler(doclingService))
 		gitleaksService := gitleaks.DefaultService()
 		if workflowLinker, ok := workflowService.(gitleaks.WorkflowLinker); ok {
 			gitleaksService = gitleaks.DefaultService(workflowLinker)
@@ -739,7 +740,7 @@ func initializeRoutes(router *gin.Engine, backgroundCtx context.Context) error {
 		mcpBridgeHandler := mcpbridge.NewHandler(mcpbridge.NewServiceFromEnv(workflowService))
 		initializeMCPBridgeStatusRoutes(v1, mcpBridgeHandler)
 		initializeMCPAgentRoutes(router, relativePathV1, mcpBridgeHandler)
-		initializeSourceRoutes(v1, source.NewHandler(sourceService, whisperService))
+		initializeSourceRoutes(v1, source.NewHandlerWithDocling(sourceService, whisperService, doclingService))
 		initializeWorkflowRoutes(v1, workflow.NewHandlerWithPursuitIntakeRouter(workflowService, pursuitService))
 		initializePursuitRoutes(v1, pursuit.NewHandler(pursuitService))
 		memoryEngineSecret := config.AppConfig.MemoryEngineKey
@@ -1258,6 +1259,7 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 		sourceRoutes.PATCH("/:id", requirePermission(rbac.PermWrite), sourceHandler.UpdateSource)
 		sourceRoutes.POST("/:id/sync", requirePermission(rbac.PermWrite), sourceHandler.Sync)
 		sourceRoutes.POST("/:id/transcribe", requirePermission(rbac.PermWrite), sourceHandler.Transcribe)
+		sourceRoutes.POST("/:id/extract-documents", requirePermission(rbac.PermWrite), sourceHandler.ExtractDocuments)
 		sourceRoutes.POST("/:id/reindex", requirePermission(rbac.PermWrite), sourceHandler.Reindex)
 		sourceRoutes.POST("/:id/pause", requirePermission(rbac.PermWrite), sourceHandler.Pause)
 		sourceRoutes.POST("/:id/resume", requirePermission(rbac.PermWrite), sourceHandler.Resume)

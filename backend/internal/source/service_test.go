@@ -723,16 +723,17 @@ func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 	// "local_only"; odoo-herp is "modeled". Every one is still enabled and usable
 	// — honesty about kind is not the same as disabling anything.
 	wantStatus := map[string]string{
-		"github":          AdapterOperational,
-		"json-feed":       AdapterOperational,
-		"email":           AdapterLocalOnly,
-		"calendar":        AdapterLocalOnly,
-		"cloud-documents": AdapterLocalOnly,
-		"project-board":   AdapterLocalOnly,
-		"local-folder":    AdapterLocalOnly,
-		"whatsapp-export": AdapterLocalOnly,
-		"whisper-audio":   AdapterLocalOnly,
-		"odoo-herp":       AdapterModeled,
+		"github":            AdapterOperational,
+		"json-feed":         AdapterOperational,
+		"email":             AdapterLocalOnly,
+		"calendar":          AdapterLocalOnly,
+		"cloud-documents":   AdapterLocalOnly,
+		"project-board":     AdapterLocalOnly,
+		"local-folder":      AdapterLocalOnly,
+		"whatsapp-export":   AdapterLocalOnly,
+		"whisper-audio":     AdapterLocalOnly,
+		"docling-documents": AdapterLocalOnly,
+		"odoo-herp":         AdapterModeled,
 	}
 	seen := map[string]bool{}
 	for _, connector := range connectors {
@@ -755,6 +756,30 @@ func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 		if !seen[key] {
 			t.Fatalf("connector %s missing from catalog", key)
 		}
+	}
+}
+
+func TestCreateSourceAllowsLocalOnlyDoclingDocuments(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(root+"/legal/vivare", 0o755); err != nil {
+		t.Fatalf("create selected folder: %v", err)
+	}
+	t.Setenv("CONNECTED_SOURCE_LOCAL_ROOT", root)
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	source, err := service.CreateSource(CreateSourceRequest{
+		OwnerIdentity: "alice",
+		ConnectorKey:  "docling-documents",
+		Name:          "Case evidence",
+		Enabled:       true,
+		LocalOnly:     true,
+		SyncFrequency: "manual",
+		SyncTarget:    "legal/vivare",
+	})
+	if err != nil {
+		t.Fatalf("CreateSource: %v", err)
+	}
+	if source.ConnectorKey != "docling-documents" || !source.LocalOnly || source.SyncTarget != "legal/vivare" {
+		t.Fatalf("source = %#v, want local-only Docling source", source)
 	}
 }
 

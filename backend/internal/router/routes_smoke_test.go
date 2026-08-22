@@ -180,6 +180,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	sources.DELETE("/extractions/:id", mark("sourceExtractionDelete"))
 	sources.PATCH("/:id", mark("sourceUpdate"))
 	sources.POST("/:id/sync", mark("sourceSync"))
+	sources.POST("/:id/extract-documents", mark("sourceDocumentExtract"))
 	sources.POST("/:id/reindex", mark("sourceReindex"))
 	sources.POST("/:id/pause", mark("sourcePause"))
 	sources.POST("/:id/resume", mark("sourceResume"))
@@ -422,6 +423,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"DELETE", "/api/v1/sources/extractions/abc", "sourceExtractionDelete"},
 		{"PATCH", "/api/v1/sources/abc", "sourceUpdate"},
 		{"POST", "/api/v1/sources/abc/sync", "sourceSync"},
+		{"POST", "/api/v1/sources/abc/extract-documents", "sourceDocumentExtract"},
 		{"POST", "/api/v1/sources/abc/reindex", "sourceReindex"},
 		{"POST", "/api/v1/sources/abc/pause", "sourcePause"},
 		{"POST", "/api/v1/sources/abc/resume", "sourceResume"},

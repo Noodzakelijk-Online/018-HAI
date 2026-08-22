@@ -469,6 +469,20 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 			return nil, fmt.Errorf("OpenSpec project folder is not allowed: %w", err)
 		}
 	}
+	if connectorKey == "docling-documents" {
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("Docling documents must use the cloud_document category")
+		}
+		if !request.LocalOnly {
+			return nil, fmt.Errorf("Docling documents are local-only; localOnly must be true")
+		}
+		if strings.TrimSpace(request.SyncTarget) == "" {
+			return nil, fmt.Errorf("Docling documents require a selected folder under CONNECTED_SOURCE_LOCAL_ROOT")
+		}
+		if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), request.SyncTarget); err != nil {
+			return nil, fmt.Errorf("Docling document folder is not allowed: %w", err)
+		}
+	}
 	if connectorKey == projectInstructionsConnectorKey || connectorKey == fabricPatternsConnectorKey {
 		label := "project instructions"
 		if connectorKey == fabricPatternsConnectorKey {
@@ -2659,6 +2673,7 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live scheduled and incremental fetch of a normalized JSON feed over HTTP, with host allowlisting and bounded responses"},
 		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "parses local WhatsApp .txt export files into bounded, sensitive, review-gated records; does not connect to WhatsApp"},
 		{ConnectorKey: "whisper-audio", Name: "Selected audio folders (whisper.cpp)", Category: "audio", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-audio-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local transcription from an explicit selected folder through whisper.cpp; no microphone capture, cloud upload, scheduled scan, or raw-audio retention"},
+		{ConnectorKey: "docling-documents", Name: "Selected documents (Docling)", Category: "cloud_document", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-document-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local text extraction from an explicit selected document folder through Docling; originals remain local and HAI never uploads files or selects parsers"},
 		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterModeled, StatusReason: "generates built-in Odoo app-domain models from manual selection; no live Odoo connection; write-back disabled by default"},
 		{ConnectorKey: odooJSON2ConnectorKey, Name: "Odoo JSON-2 (read only)", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "odoo-api-key,read-only-model-access", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Odoo JSON-2 sync for a fixed model and field allowlist; requires HAI_ODOO_* configuration and never writes back"},
 		{ConnectorKey: shareTConnectorKey, Name: "ShareT links (read only)", Category: "project_board", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "connector:read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only ShareT link inventory through a scoped connector token; fetches every page within an explicit completeness limit, excludes participant email addresses, and never creates, changes, comments on, or revokes links"},
@@ -2732,7 +2747,7 @@ func minimalPermissions(category string, requested []string) []string {
 	if len(requested) == 0 {
 		return []string{"metadata:read", category + ":read"}
 	}
-	allowed := map[string]bool{"metadata:read": true, category + ":read": true, "selected-folder-read": true, "selected-chat-export-read": true, "selected-audio-folder-read": true, "explicit-consent": true, "herp:read": true, "odoo:read": true}
+	allowed := map[string]bool{"metadata:read": true, category + ":read": true, "selected-folder-read": true, "selected-chat-export-read": true, "selected-audio-folder-read": true, "selected-document-folder-read": true, "explicit-consent": true, "herp:read": true, "odoo:read": true}
 	result := []string{}
 	for _, value := range requested {
 		value = strings.TrimSpace(value)
