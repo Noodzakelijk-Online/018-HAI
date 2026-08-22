@@ -67,3 +67,34 @@ describe('BackgroundOperationsComponent action submission', () => {
     expect(component.isOperationActionPending(operation)).toBeFalse()
   })
 })
+
+describe('BackgroundOperationsComponent refresh', () => {
+  it('does not start overlapping dashboard batches while a refresh is pending', () => {
+    const dashboard = new Subject<any>()
+    const operations = new Subject<any>()
+    const feeds = new Subject<any>()
+    const service = jasmine.createSpyObj<BackgroundOperationsService>('BackgroundOperationsService', ['dashboard', 'list', 'feeds'])
+    service.dashboard.and.returnValue(dashboard.asObservable())
+    service.list.and.returnValue(operations.asObservable())
+    service.feeds.and.returnValue(feeds.asObservable())
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['success', 'error', 'warning'])
+    const router = jasmine.createSpyObj<Router>('Router', ['navigate'])
+    const component = new BackgroundOperationsComponent(service, notification, router)
+
+    component.refresh()
+    component.refresh()
+
+    expect(service.dashboard).toHaveBeenCalledTimes(1)
+    expect(service.list).toHaveBeenCalledTimes(1)
+    expect(service.feeds).toHaveBeenCalledTimes(1)
+
+    dashboard.next({})
+    dashboard.complete()
+    operations.next({ operations: [] })
+    operations.complete()
+    feeds.next({ feeds: [] })
+    feeds.complete()
+
+    expect(component.loading).toBeFalse()
+  })
+})

@@ -53,6 +53,7 @@ export class BackgroundOperationsComponent implements OnInit {
   }
 
   refresh(): void {
+    if (this.loading) return
     this.loading = true
     forkJoin({
       dashboard: this.service.dashboard(),
