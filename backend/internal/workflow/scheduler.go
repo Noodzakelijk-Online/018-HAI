@@ -36,8 +36,9 @@ func NewScheduler(service ScheduledWorkflowService, interval time.Duration, limi
 // StartScheduler starts the workflow sweep.
 //
 // It prefers the durable path (persisted, retried, crash-recovered — see
-// durable_scheduler.go) and falls back to the legacy in-process ticker, saying
-// so, if the durable queue cannot be reached.
+// durable_scheduler.go). When durable storage cannot be reached, it stops by
+// default instead of silently losing restart recovery. The legacy ticker is an
+// explicit local-development escape hatch.
 func StartScheduler(ctx context.Context, service ScheduledWorkflowService) {
 	if !schedulerEnabled("WORKFLOW_SCHEDULER_ENABLED", true) {
 		return
@@ -46,13 +47,22 @@ func StartScheduler(ctx context.Context, service ScheduledWorkflowService) {
 	limit := schedulerLimit()
 	if durableSchedulerEnabled() {
 		if err := startDurableScheduler(ctx, service, interval, limit); err != nil {
-			log.Printf("workflow scheduler: durable queue unavailable (%v); falling back to the in-process ticker", err)
+			if !legacyFallbackEnabled() {
+				log.Printf("workflow scheduler: durable queue unavailable (%v); scheduler not started; set DURABLE_SCHEDULER_LEGACY_FALLBACK_ENABLED=true only for local development", err)
+				return
+			}
+			log.Printf("workflow scheduler: durable queue unavailable (%v); using the explicitly enabled in-process fallback", err)
 		} else {
 			return
 		}
 	}
 	scheduler := NewScheduler(service, interval, limit)
 	go scheduler.Start(ctx)
+}
+
+func legacyFallbackEnabled() bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv("DURABLE_SCHEDULER_LEGACY_FALLBACK_ENABLED")))
+	return value == "true" || value == "1" || value == "yes"
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
