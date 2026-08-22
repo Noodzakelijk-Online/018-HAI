@@ -27,3 +27,7 @@ The launcher rejects placeholder secrets, another checkout's containers, an
 unreserved URL, insecure cookies, non-loopback gateway binding, and any attempt
 to advertise the local-only A2A bridge. Public access does not bypass normal
 application authentication or approval rules.
+
+The local A2A Agent Card and planning endpoint use a separate `local-a2a`
+Compose profile bound to `127.0.0.1:8091`. They are not routed by the public
+dashboard gateway, so enabling this tunnel cannot publish that local connector.

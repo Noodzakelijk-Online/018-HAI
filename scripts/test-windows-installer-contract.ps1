@@ -20,6 +20,7 @@ $build = [IO.File]::ReadAllText($buildScript)
 $installer = [IO.File]::ReadAllText($installerScript)
 $support = [IO.File]::ReadAllText($supportScript)
 $initializer = [IO.File]::ReadAllText($initializerScript)
+$startScript = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"))
 $docs = [IO.File]::ReadAllText($documentation)
 $gitignore = [IO.File]::ReadAllText((Join-Path $repositoryRoot ".gitignore"))
 
@@ -74,6 +75,15 @@ foreach ($required in @(
     if ($support -notmatch [Regex]::Escape($required)) {
         throw "Installer runtime contract is missing '$required'."
     }
+}
+
+if ($initializer -notmatch [Regex]::Escape('HAI_A2A_LOCAL_PORT') -or
+    $initializer -notmatch [Regex]::Escape('127.0.0.1:$a2aLocalPort/api/v1/a2a')) {
+    throw "The first-run initializer does not configure the separate local A2A connector."
+}
+
+if ($startScript -notmatch [Regex]::Escape('--profile local-a2a')) {
+    throw "The installed start command must activate the local A2A connector profile."
 }
 
 if ($initializer -notmatch [Regex]::Escape('GATEWAY_HOST_BIND') -or
@@ -156,6 +166,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot ".env.example") -PathTy
 }
 foreach ($requiredPayloadPath in @(
     "docker-compose.local.yml",
+    "nginx-config\a2a-local.conf.template",
     "installer\windows\Start-HAI.ps1",
     "installer\windows\Stop-HAI.ps1",
     "installer\windows\HAI-Status.ps1"

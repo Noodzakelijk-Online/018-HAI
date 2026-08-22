@@ -524,7 +524,10 @@ For a product-style local installation, build the Inno Setup executable and
 use its Start menu shortcuts rather than manually operating Compose. The
 installer keeps the source-built stack loopback-only, stores first-run secrets
 outside the application directory, and refuses to start a competing HAI stack.
-See [Windows installer](docs/windows-installer.md).
+It also starts the separate loopback-only A2A planning connector at
+`http://127.0.0.1:8091` by default. That connector is never served through the
+dashboard gateway or the optional ngrok tunnel. See
+[Windows installer](docs/windows-installer.md).
 
 ### Desktop resource defaults
 

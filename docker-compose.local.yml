@@ -514,6 +514,7 @@ services:
       - agent-runners-internal
       - document-runners-internal
       - coding-runners-internal
+      - a2a-local
 
   frontend:
     build:
@@ -874,6 +875,44 @@ services:
       start_period: 20s
     networks:
       - service-hub
+
+  # Local A2A is deliberately isolated from the browser gateway and the ngrok
+  # tunnel. It only exposes the Agent Card and planning JSON-RPC route through
+  # a loopback host port when an operator explicitly enables this profile.
+  a2a-gateway:
+    image: nginx:alpine
+    profiles: ["local-a2a"]
+    container_name: 018-hai-a2a-gateway
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 64m
+    cpus: 0.10
+    pids_limit: 32
+    environment:
+      BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
+    command:
+      - /bin/sh
+      - -c
+      - envsubst '$$BACKEND_API_SHARED_KEY' < /etc/nginx/a2a-local.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${HAI_A2A_LOCAL_PORT:-8091}:80"
+    volumes:
+      - ./nginx-config/a2a-local.conf.template:/etc/nginx/a2a-local.conf.template:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/.well-known/agent-card.json || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    networks:
+      - a2a-local
 
   # Disabled by default. This service is the only public-access mechanism and
   # fails closed unless the production guardrails and a reserved HTTPS origin
@@ -1562,6 +1601,10 @@ networks:
   service-hub:
     name: 018-hai-service-hub
     driver: bridge
+  a2a-local:
+    name: 018-hai-a2a-local
+    driver: bridge
+    internal: true
   evidently-internal:
     name: 018-hai-evidently-internal
     driver: bridge

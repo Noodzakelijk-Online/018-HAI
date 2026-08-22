@@ -117,6 +117,28 @@ class CIWorkflowContractTest(unittest.TestCase):
             self.assertIn("NGROK_AUTHTOKEN", content)
             self.assertIn("HAI_NGROK_URL", content)
 
+    def test_local_a2a_connector_is_loopback_only_and_not_on_the_cloud_gateway(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
+        connector_template = ROOT / "nginx-config" / "a2a-local.conf.template"
+
+        service = compose_service_block(compose, "a2a-gateway")
+        self.assertIn('profiles: ["local-a2a"]', service)
+        self.assertIn('"127.0.0.1:${HAI_A2A_LOCAL_PORT:-8091}:80"', service)
+        self.assertIn("- a2a-local", service)
+        self.assertNotIn("- service-hub", service)
+        self.assertIn("a2a-local:", compose)
+        self.assertIn("internal: true", compose)
+        self.assertIn("HAI_A2A_LOCAL_PORT=8091", defaults)
+        self.assertTrue(connector_template.is_file())
+
+        template = connector_template.read_text(encoding="utf-8")
+        self.assertIn("location = /.well-known/agent-card.json", template)
+        self.assertIn("location = /api/v1/a2a", template)
+        self.assertIn("X-HAI-Backend-Key", template)
+        self.assertIn("return 404", template)
+        self.assertNotIn("location /api/v1", template)
+
     def test_default_connected_source_allowlist_enables_live_trello(self) -> None:
         defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
