@@ -285,6 +285,18 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertNotIn("jacksonbarreto/", compose)
                 self.assertNotIn("env_file:", compose)
 
+    def test_development_compose_overlay_keeps_the_canonical_private_topology(
+        self,
+    ) -> None:
+        compose = (ROOT / "docker-compose.dev.yml").read_text(encoding="utf-8")
+        self.assertNotIn("version:", compose)
+        self.assertNotIn("adminer:", compose)
+        self.assertNotIn("idp_network", compose)
+        self.assertNotIn("automation_hub_network", compose)
+        self.assertIn("backend:", compose)
+        self.assertIn("GIN_MODE: debug", compose)
+        self.assertNotIn("ports:", compose)
+
     def test_trello_read_only_connector_is_wired_to_the_runtime(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         backend_start = compose.index("  backend:\n")
