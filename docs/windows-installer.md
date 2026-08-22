@@ -37,8 +37,10 @@ readiness, and opens `http://127.0.0.1:8088`.
 
 Use the Start menu entries to open the dashboard, inspect HAI status, or stop
 the stack. **Test local agent connector** fetches and validates the local A2A
-Agent Card without exposing it publicly. Stop HAI preserves the Docker volumes
-and local settings.
+Agent Card, then sends one bearer-authenticated, non-executable planning probe.
+It verifies the bounded planning response without exposing the connector
+publicly or creating work. Stop HAI preserves the Docker volumes and local
+settings.
 
 ## One installation at a time
 

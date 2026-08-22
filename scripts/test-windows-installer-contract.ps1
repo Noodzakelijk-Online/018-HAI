@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$SkipPayload
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -21,6 +23,7 @@ $installer = [IO.File]::ReadAllText($installerScript)
 $support = [IO.File]::ReadAllText($supportScript)
 $initializer = [IO.File]::ReadAllText($initializerScript)
 $startScript = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"))
+$connectorTest = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Test-HAI-LocalConnector.ps1"))
 $docs = [IO.File]::ReadAllText($documentation)
 $gitignore = [IO.File]::ReadAllText((Join-Path $repositoryRoot ".gitignore"))
 
@@ -87,6 +90,18 @@ if ($startScript -notmatch [Regex]::Escape('--profile local-a2a')) {
     throw "The installed start command must activate the local A2A connector profile."
 }
 
+foreach ($required in @(
+    "HAI_A2A_BRIDGE_TOKEN",
+    "A2A-Version",
+    "SendMessage",
+    "TASK_STATE_COMPLETED",
+    "hai-controlled-planning-proposal"
+)) {
+    if ($connectorTest -notmatch [Regex]::Escape($required)) {
+        throw "The local connector diagnostic does not verify '$required'."
+    }
+}
+
 if ($initializer -notmatch [Regex]::Escape('GATEWAY_HOST_BIND') -or
     $initializer -notmatch [Regex]::Escape('"127.0.0.1"')) {
     throw "The first-run initializer does not enforce a loopback gateway."
@@ -144,6 +159,11 @@ foreach ($required in @(
     if ($docs -notmatch [Regex]::Escape($required)) {
         throw "Installer documentation is missing '$required'."
     }
+}
+
+if ($SkipPayload) {
+    Write-Host "Windows installer source contracts passed without regenerating the release payload."
+    exit 0
 }
 
 & $buildScript -SkipCompile

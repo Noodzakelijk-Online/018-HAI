@@ -19,6 +19,23 @@ function Get-HaiEnvironmentFile {
     return (Join-Path (Get-HaiDataRoot) "hai.env")
 }
 
+function Get-HaiEnvironmentValue {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $environmentFile = Get-HaiEnvironmentFile
+    if (-not (Test-Path -LiteralPath $environmentFile -PathType Leaf)) {
+        throw "HAI is not initialized. Use Start HAI before reading local connector settings."
+    }
+
+    $pattern = "(?m)^$([Regex]::Escape($Name))=(?<value>.*)$"
+    $match = [Regex]::Match([IO.File]::ReadAllText($environmentFile), $pattern)
+    if (-not $match.Success) {
+        throw "HAI environment file is missing $Name. Start HAI again to recreate the local configuration."
+    }
+
+    return $match.Groups["value"].Value.Trim().Trim("'").Trim('"')
+}
+
 function Get-HaiComposeFile {
     $composeFile = Join-Path (Get-HaiInstallRoot) "docker-compose.local.yml"
     if (-not (Test-Path -LiteralPath $composeFile -PathType Leaf)) {
