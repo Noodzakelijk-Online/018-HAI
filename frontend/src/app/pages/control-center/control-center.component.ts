@@ -190,56 +190,35 @@ export class ControlCenterComponent implements OnInit {
   }
 
   refresh(): void {
-    this.loading = true
-    let pending = 3
-    const done = () => {
-      pending -= 1
-      if (pending <= 0) {
-        this.loading = false
-      }
+    if (this.loading) {
+      return
     }
-
-    this.workflowService.dashboard().pipe(
+    this.loading = true
+    forkJoin({
+      workflow: this.workflowService.dashboard().pipe(
         timeout(2500),
         catchError(() => of(undefined))
-      ).subscribe({
-        next: (workflow) => {
-          this.workflowDashboard = workflow
-          this.rebuildViewModel()
-          done()
-        },
-        error: () => {
-          done()
-        },
-      })
-
-    this.ambientService.overview().pipe(
+      ),
+      ambient: this.ambientService.overview().pipe(
         timeout(2500),
         catchError(() => of(undefined))
-      ).subscribe({
-        next: (ambient) => {
-          this.ambientOverview = ambient
-          this.rebuildViewModel()
-          done()
-        },
-        error: () => {
-          done()
-        },
-      })
-
-    this.pursuitService.dashboard().pipe(
+      ),
+      pursuits: this.pursuitService.dashboard().pipe(
         timeout(1800),
         catchError(() => of(undefined))
-      ).subscribe({
-        next: (pursuits) => {
-          this.pursuitDashboard = pursuits
-          this.rebuildViewModel()
-          done()
-        },
-        error: () => {
-          done()
-        },
-      })
+      ),
+    }).subscribe({
+      next: ({ workflow, ambient, pursuits }) => {
+        this.workflowDashboard = workflow
+        this.ambientOverview = ambient
+        this.pursuitDashboard = pursuits
+        this.rebuildViewModel()
+        this.loading = false
+      },
+      error: () => {
+        this.loading = false
+      },
+    })
   }
 
   loadMemories(force = false): void {
