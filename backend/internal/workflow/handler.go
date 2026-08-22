@@ -2,7 +2,9 @@ package workflow
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -536,7 +538,9 @@ func (h *Handler) respondScopedWorkflow(c *gin.Context, id uuid.UUID, status int
 
 func (h *Handler) RunDue(c *gin.Context) {
 	var request RunDueRequest
-	_ = c.ShouldBindJSON(&request)
+	if !bindOptionalRunRequest(c, &request) {
+		return
+	}
 	result, err := h.service.RunDueForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowRunFailedMessage})
@@ -563,7 +567,9 @@ func (h *Handler) RunOne(c *gin.Context) {
 
 func (h *Handler) RecoverStaleClaims(c *gin.Context) {
 	var request RunDueRequest
-	_ = c.ShouldBindJSON(&request)
+	if !bindOptionalRunRequest(c, &request) {
+		return
+	}
 	result, err := h.service.RecoverStaleClaimsForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowRecoveryFailedMessage})
@@ -574,7 +580,9 @@ func (h *Handler) RecoverStaleClaims(c *gin.Context) {
 
 func (h *Handler) RunDueOpenLoops(c *gin.Context) {
 	var request RunDueRequest
-	_ = c.ShouldBindJSON(&request)
+	if !bindOptionalRunRequest(c, &request) {
+		return
+	}
 	result, err := h.service.RunDueOpenLoopsForOwner(verifiedWorkflowOwner(c), request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": workflowOpenLoopRunFailedMessage})
@@ -585,6 +593,14 @@ func (h *Handler) RunDueOpenLoops(c *gin.Context) {
 
 func (h *Handler) Overview(c *gin.Context) {
 	c.JSON(http.StatusOK, h.service.Overview())
+}
+
+func bindOptionalRunRequest(c *gin.Context, request *RunDueRequest) bool {
+	if err := c.ShouldBindJSON(request); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "request body must be valid JSON"})
+		return false
+	}
+	return true
 }
 
 func parseWorkflowID(c *gin.Context) (uuid.UUID, bool) {
