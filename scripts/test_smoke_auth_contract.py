@@ -96,6 +96,22 @@ class SmokeAuthContractTest(unittest.TestCase):
             with self.subTest(contract=contract):
                 self.assertIn(contract, script)
 
+    def test_account_bridge_smoke_uses_isolated_retryable_ports(self) -> None:
+        script = (ROOT / "scripts" / "smoke-account-bridges.sh").read_text(
+            encoding="utf-8"
+        )
+        for contract in (
+            "allocate_loopback_port()",
+            'PG_PORT_OVERRIDE="${PG_PORT:-}"',
+            'PG_PORT="${PG_PORT_OVERRIDE:-$(allocate_loopback_port)}"',
+            'API_PORT="${API_PORT:-$(allocate_loopback_port)}"',
+            'pg_attempts=5',
+            '[ "${attempt}" -eq 1 ] || PG_PORT="$(allocate_loopback_port)"',
+            'PostgreSQL could not start after ${pg_attempts} attempt(s).',
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, script)
+
 
 if __name__ == "__main__":
     unittest.main()
