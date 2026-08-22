@@ -8,6 +8,7 @@ $buildScript = Join-Path $PSScriptRoot "build-windows-installer.ps1"
 $installerScript = Join-Path $repositoryRoot "installer\windows\HAI.iss"
 $supportScript = Join-Path $repositoryRoot "installer\windows\Hai-InstallerSupport.ps1"
 $startScript = Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"
+$cloudAccessScript = Join-Path $repositoryRoot "installer\windows\Start-HAI-Cloud.ps1"
 $localModelScript = Join-Path $repositoryRoot "installer\windows\Enable-LocalModel.ps1"
 $trelloAcceptanceScript = Join-Path $PSScriptRoot "test-live-trello.ps1"
 $noFakeClaimsAudit = Join-Path $PSScriptRoot "no-fake-claims-audit.ps1"
@@ -16,7 +17,7 @@ $documentation = Join-Path $repositoryRoot "docs\windows-installer.md"
 $composePath = Join-Path $repositoryRoot "docker-compose.local.yml"
 $environmentTemplatePath = Join-Path $repositoryRoot ".env.example"
 
-foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $localModelScript, $trelloAcceptanceScript, $noFakeClaimsAudit, $initializerScript, $documentation)) {
+foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $localModelScript, $cloudAccessScript, $trelloAcceptanceScript, $noFakeClaimsAudit, $initializerScript, $documentation)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Windows installer contract is missing: $requiredFile"
     }
@@ -43,6 +44,7 @@ foreach ($script in @(
     $trelloAcceptanceScript,
     $noFakeClaimsAudit,
     (Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"),
+    $cloudAccessScript,
     (Join-Path $repositoryRoot "installer\windows\Stop-HAI.ps1"),
     (Join-Path $repositoryRoot "installer\windows\HAI-Status.ps1"),
     (Join-Path $repositoryRoot "installer\windows\Open-HAI.ps1")
@@ -140,6 +142,19 @@ foreach ($required in @(
 )) {
     if (($start + $support) -notmatch [Regex]::Escape($required)) {
         throw "Windows startup must expose the optional Kafka event-bus profile: $required"
+    }
+}
+
+$cloudAccess = [IO.File]::ReadAllText($cloudAccessScript)
+foreach ($required in @(
+    "Get-HaiEnvironmentFile",
+    "Get-HaiComposeFile",
+    "start-ngrok.ps1",
+    "[switch]`$ValidateOnly",
+    "[switch]`$Stop"
+)) {
+    if ($cloudAccess -notmatch [Regex]::Escape($required)) {
+        throw "Installed cloud-access wrapper is missing '$required'."
     }
 }
 
@@ -326,6 +341,10 @@ foreach ($requiredPayloadPath in @(
     if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot $requiredPayloadPath) -PathType Leaf)) {
         throw "Installer payload is missing required product file: $requiredPayloadPath"
     }
+}
+if ($installer -notmatch [Regex]::Escape("Start governed cloud access") -or
+    $installer -notmatch [Regex]::Escape("Start-HAI-Cloud.ps1")) {
+    throw "Inno Setup must expose the governed cloud-access shortcut."
 }
 
 & $noFakeClaimsAudit

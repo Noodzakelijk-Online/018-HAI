@@ -35,6 +35,21 @@ readiness, and opens `http://127.0.0.1:8088`.
 Use the Start menu entries to open the dashboard, inspect HAI status, or stop
 the stack. Stop HAI preserves the Docker volumes and local settings.
 
+### Optional governed cloud access
+
+After configuring a reserved HTTPS ngrok endpoint and its restricted agent
+token in `%LOCALAPPDATA%\HAI\hai.env`, use **Start governed cloud access** in
+the HAI Local Start menu group. It passes the installed environment and Compose
+file to the governed ngrok preflight; it will refuse placeholder credentials,
+an insecure login configuration, a non-loopback gateway, or OAuth redirects
+that do not match the configured public origin. Use the same shortcut's
+PowerShell script with `-ValidateOnly` to inspect configuration without opening
+a tunnel, or `-Stop` to close the tunnel while leaving the local HAI stack
+running.
+
+The tunnel can publish only nginx on HAI's private Docker network. It does not
+expose the backend, IDP, databases, Redis, Kafka, or ngrok inspector directly.
+
 The default local control plane has explicit Docker ceilings: 1 GB for the
 backend and automation database, 512 MB for the IDP and identity database,
 256 MB for Redis and the static frontend, and 128 MB for the gateway. These
