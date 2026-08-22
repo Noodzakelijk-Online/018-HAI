@@ -290,6 +290,14 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertRegex(match.group(1), r"(?m)^    mem_limit: \S+")
                 self.assertRegex(match.group(1), r"(?m)^    cpus: \S+")
 
+    def test_backend_uses_the_proven_base_stack_memory_ceiling(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        start = compose.index("\n  backend:\n") + 1
+        end = compose.index("\n  frontend:\n", start)
+        backend = compose[start:end]
+
+        self.assertIn("    mem_limit: 512m", backend)
+
     def test_core_local_service_images_are_digest_pinned(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
 
