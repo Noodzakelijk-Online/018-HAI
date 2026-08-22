@@ -144,6 +144,7 @@ foreach ($required in @(
 foreach ($required in @(
     'DB_RUNTIME_USER=',
     'DB_RUNTIME_PASSWORD=',
+    'HAI_A2A_BRIDGE_URL=http://127.0.0.1:8088/api/v1/a2a',
     'IDP_KAFKA_ENABLED=false',
     'KAFKA_BROKERS=',
     'BROKERS_ADDR='
