@@ -140,12 +140,42 @@ foreach ($required in @(
 }
 
 foreach ($required in @(
+    'DB_RUNTIME_USER=',
+    'DB_RUNTIME_PASSWORD=',
     'IDP_KAFKA_ENABLED=false',
     'KAFKA_BROKERS=',
     'BROKERS_ADDR='
 )) {
     if ($environmentTemplate -notmatch [Regex]::Escape($required)) {
         throw "The local environment template must disable Kafka by default: $required"
+    }
+}
+
+$initializerSettingNames = [Regex]::Matches($initializer, 'Set-DotEnvValue \$content "(?<name>[A-Z0-9_]+)"') |
+    ForEach-Object { $_.Groups['name'].Value } |
+    Select-Object -Unique
+foreach ($name in $initializerSettingNames) {
+    if ($environmentTemplate -notmatch ("(?m)^" + [Regex]::Escape($name) + "=")) {
+        throw "The environment template must define every initializer setting, including $name."
+    }
+}
+
+$initializerTestRoot = Join-Path ([IO.Path]::GetTempPath()) ("hai-initializer-contract-" + [Guid]::NewGuid().ToString("N"))
+try {
+    $initializerEnvironment = Join-Path $initializerTestRoot "hai.env"
+    & $initializerScript -EnvFile $initializerEnvironment -AdminEmail "operator@example.com" -AdminPasswordPlainText "installer-contract-password" -GatewayPort 8088
+    if (-not (Test-Path -LiteralPath $initializerEnvironment -PathType Leaf)) {
+        throw "The first-run initializer did not create a local environment file."
+    }
+    $initializedEnvironment = [IO.File]::ReadAllText($initializerEnvironment)
+    foreach ($required in @('DB_RUNTIME_USER=hai_runtime', 'DB_RUNTIME_PASSWORD=', 'GATEWAY_HOST_PORT=8088', 'GATEWAY_HOST_BIND=127.0.0.1')) {
+        if ($initializedEnvironment -notmatch [Regex]::Escape($required)) {
+            throw "The initialized environment must define $required."
+        }
+    }
+} finally {
+    if (Test-Path -LiteralPath $initializerTestRoot -PathType Container) {
+        Remove-Item -LiteralPath $initializerTestRoot -Recurse -Force
     }
 }
 

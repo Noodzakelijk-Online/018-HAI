@@ -35,6 +35,9 @@ readiness, and opens `http://127.0.0.1:8088`.
 Use the Start menu entries to open the dashboard, inspect HAI status, or stop
 the stack. Stop HAI preserves the Docker volumes and local settings.
 
+The first run writes unique database owner and reserved runtime-role passwords
+to `%LOCALAPPDATA%\HAI\hai.env`. They are never shown in the installer output.
+
 ### Optional Kafka event bus
 
 The ordinary local installation does **not** start Kafka or ZooKeeper. This
