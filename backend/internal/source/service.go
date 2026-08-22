@@ -251,6 +251,7 @@ type pursuitWorkflowIntakeRouter interface {
 
 var errLocalFolderLimitReached = fmt.Errorf("local folder scan limit reached")
 var ErrSyncInProgress = errors.New("source sync is already in progress")
+var ErrSourceNotEnabled = errors.New("source is not enabled for sync")
 
 const maxSyncErrorDetails = 20
 const maxSyncPursuitOutcomes = 20
@@ -757,7 +758,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		return nil, err
 	}
 	if !source.Enabled || source.Status == "paused" || source.Status == "revoked" {
-		return nil, fmt.Errorf("source is not enabled for sync")
+		return nil, ErrSourceNotEnabled
 	}
 	if source.ConnectorKey == "whisper-audio" && !request.controlledTranscription {
 		return nil, fmt.Errorf("whisper-audio sources must use the controlled transcription route")

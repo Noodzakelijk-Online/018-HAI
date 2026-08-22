@@ -309,6 +309,21 @@ func TestDurableSyncHandlerTreatsInProgressAsSuccess(t *testing.T) {
 	}
 }
 
+func TestDurableSyncHandlerTreatsPausedSourceAsComplete(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "local-folder",
+		Name: "Paused folder", Category: "local_folder", Enabled: false,
+		Status: "paused", SyncFrequency: "15m", SyncTarget: ".",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+	payload := `{"sourceId":"` + sourceID.String() + `"}`
+
+	if err := syncHandler(service)(context.Background(), durablejob.Job{Payload: payload}); err != nil {
+		t.Fatalf("paused source must retire an already queued durable job without retries: %v", err)
+	}
+}
+
 func TestDurableSyncHandlerRoutesTerminalFailureToWorkflowReview(t *testing.T) {
 	t.Setenv(trelloAPIKeyEnv, "")
 	t.Setenv(trelloReadTokenEnv, "")

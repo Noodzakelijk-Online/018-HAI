@@ -160,6 +160,11 @@ func syncHandler(service Service) durablejob.Handler {
 				// Not a failure: the next scan will pick it up if still due.
 				return nil
 			}
+			if errors.Is(err, ErrSourceNotEnabled) {
+				// The source was paused or revoked after this job was queued. That
+				// is an intentional operator state change, not a retryable fault.
+				return nil
+			}
 			if job.Attempts+1 >= job.MaxAttempts {
 				reportTerminalScheduledSyncFailure(service, sourceID, err.Error())
 			}
