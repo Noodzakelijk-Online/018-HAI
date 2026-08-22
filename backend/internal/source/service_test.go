@@ -706,6 +706,23 @@ func TestSourceHTTPTransportReusesConnectionsOnlyWithinTheSamePolicy(t *testing.
 	}
 }
 
+func TestSyncContextStopsBeforeAnyWorkWhenRequestIsCancelled(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: "local-folder", Name: "Selected folder", Enabled: true, LocalOnly: true, Status: "active", SyncTarget: ".",
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	service, ok := NewService(repo, &fakeSourceMemoryService{}).(ContextSyncService)
+	if !ok {
+		t.Fatal("default source service must support context-aware sync")
+	}
+	_, err := service.SyncContext(ctx, sourceID, ImportRequest{Mode: ModeManualImport})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SyncContext error = %v, want context.Canceled", err)
+	}
+}
+
 func TestCreateSourceAllowsOperationalLocalFolder(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	source, err := service.CreateSource(CreateSourceRequest{
