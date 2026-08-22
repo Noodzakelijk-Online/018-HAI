@@ -117,6 +117,22 @@ class CIWorkflowContractTest(unittest.TestCase):
             self.assertIn("NGROK_AUTHTOKEN", content)
             self.assertIn("HAI_NGROK_URL", content)
 
+    def test_default_connected_source_allowlist_enables_live_trello(self) -> None:
+        defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        match = re.search(
+            r"^CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS=(.+)$",
+            defaults,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(match)
+        hosts = {host.strip().lower() for host in match.group(1).split(",")}
+        self.assertIn("api.trello.com", hosts)
+        for setting in ("TRELLO_API_KEY", "TRELLO_READ_TOKEN", "TRELLO_API_BASE_URL"):
+            with self.subTest(setting=setting):
+                self.assertIn(f"{setting}=", defaults)
+                self.assertIn(f"{setting}: ${{{setting}:-}}", compose)
+
     def test_directly_invoked_contract_and_smoke_files_exist(self) -> None:
         for relative_path in (
             "nginx-config/test_gateway_contract.py",
