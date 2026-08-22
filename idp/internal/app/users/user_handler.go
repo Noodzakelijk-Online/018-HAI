@@ -143,7 +143,7 @@ func (h *Handler) GetCurrentUser(c *gin.Context) {
 	}
 
 	user, err := h.userService.GetUserByID(userID)
-	if err != nil {
+	if err != nil || user == nil {
 		errorResponse.Message = "User not found"
 		errorResponse.ErrorCode = http.StatusNotFound
 		c.JSON(http.StatusNotFound, errorResponse)

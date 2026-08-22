@@ -66,6 +66,22 @@ func TestUserHandlersRejectInvalidIdentityContext(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, currentRecorder.Code)
 }
 
+func TestGetCurrentUserRejectsMissingUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &recordingUserService{}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", uuid.New())
+		c.Next()
+	})
+	router.GET("/user", NewHandler(service).GetCurrentUser)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/user", nil))
+
+	require.Equal(t, http.StatusNotFound, recorder.Code)
+}
+
 func performUserUpdate(t *testing.T, userID uuid.UUID, service UserService, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
