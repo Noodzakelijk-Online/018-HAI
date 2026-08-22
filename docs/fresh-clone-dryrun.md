@@ -23,7 +23,7 @@ against a real local Postgres instance.
 
 ```powershell
 cd 018-HAI
-Copy-Item .env.example .env.local
+.\scripts\initialize-windows.ps1
 docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
 docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps

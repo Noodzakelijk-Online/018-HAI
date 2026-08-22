@@ -566,8 +566,8 @@ migration startup unless `DB_MIGRATIONS_ENABLED=false` is set. See
 ### Start the local stack
 
 ```powershell
-Copy-Item .env.example .env.local
-# Edit .env.local: set a unique FIRST_RUN_ADMIN_PASSWORD and BACKEND_API_SHARED_KEY.
+# Creates .env.local with a first-run owner and all required production secrets.
+.\scripts\initialize-windows.ps1
 docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
 docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps
@@ -608,14 +608,15 @@ dashboard**, which creates a normal signed session for the configured first-run
 owner. It is deliberately hidden by default and must never be enabled on a
 LAN- or internet-exposed gateway.
 
-The `.env.example` development defaults are:
+Do not start production mode from an unchanged copy of `.env.example`. It
+contains deliberately invalid placeholder secrets, and `/readyz` will report
+`not_ready` until they are replaced. The initializer generates independent
+values for the backend API key, memory encryption, JWT signing, approval
+proof signing, database runtime password, and the local A2A connector token.
+It also prompts for the first-run owner account. For unattended installation,
+pass `-AdminEmail` and `-AdminPasswordPlainText` explicitly to
+`scripts\initialize-windows.ps1`; do not place those values in source control.
 
-```text
-Email: noodzakelijkonline@gmail.com
-Password: ChangeMe123!
-```
-
-Change `FIRST_RUN_ADMIN_PASSWORD` and `BACKEND_API_SHARED_KEY` before first use.
 If the Postgres data volume already exists, changing first-run values does not
 rewrite the existing account. Do not commit `.env.local`, Docker state,
 database directories, uploaded material, frontend build output, or secrets.
