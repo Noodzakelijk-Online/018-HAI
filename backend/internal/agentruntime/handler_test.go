@@ -393,6 +393,64 @@ func TestOpenClawEcosystemUploadRejectsOversizedRequestBeforeParsingMultipart(t 
 	}
 }
 
+func TestOpenClawEcosystemUploadStopsBeforeAuthorizationWhenRequestCancelled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root := t.TempDir()
+	archive := filepath.Join(root, "openclaw-main.zip")
+	if err := writeMinimalOpenClawZip(archive); err != nil {
+		t.Fatalf("write OpenClaw archive: %v", err)
+	}
+	var authorizationCalls atomic.Int32
+	adapter := testOpenClawAdapter(root, archive)
+	handler := NewHandlerWithEcosystemMutationAuthorizer(
+		NewRegistry(adapter),
+		allowingEcosystemMutationAuthorizer(func(EcosystemMutationAuthorizationRequest) {
+			authorizationCalls.Add(1)
+		}),
+	)
+	router := mutationTestRouter(handler)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("ecosystem", "openclaw-main.zip")
+	if err != nil {
+		t.Fatalf("create upload form: %v", err)
+	}
+	payload, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatalf("read OpenClaw archive: %v", err)
+	}
+	if _, err := part.Write(payload); err != nil {
+		t.Fatalf("write upload form: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close upload form: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/agent-runtimes/openclaw/ecosystem/upload",
+		body,
+	).WithContext(ctx)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	addEcosystemAuthorizationHeaders(req)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+
+	if response.Code != http.StatusRequestTimeout {
+		t.Fatalf("cancelled upload status=%d body=%s", response.Code, response.Body.String())
+	}
+	if authorizationCalls.Load() != 0 {
+		t.Fatalf("cancelled upload consumed authorization %d times", authorizationCalls.Load())
+	}
+	current, _ := adapter.ecosystemState()
+	if !sameFilePath(current, archive) {
+		t.Fatalf("cancelled upload changed ecosystem path to %q", current)
+	}
+}
+
 func TestOpenClawExactAuthorizedMutationSucceeds(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	root := t.TempDir()

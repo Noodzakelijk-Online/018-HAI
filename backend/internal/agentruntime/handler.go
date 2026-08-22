@@ -201,6 +201,9 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if rejectCancelledEcosystemUpload(c) {
+		return
+	}
 	if c.Request.ContentLength > maxOpenClawEcosystemRequestBytes {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "openclaw ecosystem upload is too large"})
 		return
@@ -213,6 +216,9 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid openclaw ecosystem upload"})
+		return
+	}
+	if rejectCancelledEcosystemUpload(c) {
 		return
 	}
 	file, err := c.FormFile("ecosystem")
@@ -264,9 +270,15 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to inspect uploaded ecosystem file"})
 		return
 	}
+	if rejectCancelledEcosystemUpload(c) {
+		return
+	}
 
 	h.mutationMu.Lock()
 	defer h.mutationMu.Unlock()
+	if rejectCancelledEcosystemUpload(c) {
+		return
+	}
 	openClaw, ok := h.registry.OpenClawAdapter()
 	if !ok || openClaw == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "openclaw runtime is not registered"})
@@ -300,6 +312,9 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 		return
 	}
 	if !recheckEcosystemEmergencyStop(c) {
+		return
+	}
+	if rejectCancelledEcosystemUpload(c) {
 		return
 	}
 
@@ -340,6 +355,14 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, openClaw.Info())
+}
+
+func rejectCancelledEcosystemUpload(c *gin.Context) bool {
+	if c.Request.Context().Err() == nil {
+		return false
+	}
+	c.JSON(http.StatusRequestTimeout, gin.H{"error": "openclaw ecosystem upload was cancelled"})
+	return true
 }
 
 func mergeEcosystemAuthorization(
