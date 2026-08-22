@@ -35,6 +35,14 @@
       nzCloseable
       (nzOnClose)="overviewLoadError = ''"
     ></nz-alert>
+    <nz-alert
+      *ngIf="connectionHealthLoadError"
+      nzType="warning"
+      nzShowIcon
+      [nzMessage]="connectionHealthLoadError"
+      nzCloseable
+      (nzOnClose)="connectionHealthLoadError = ''"
+    ></nz-alert>
 
     <section class="status-strip" aria-label="Source status">
       <div title="Enabled sources that can currently be used by HAI">

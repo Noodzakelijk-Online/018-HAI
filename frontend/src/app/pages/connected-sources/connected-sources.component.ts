@@ -62,6 +62,7 @@ export class ConnectedSourcesComponent implements OnInit {
 	private auditHistoryHasMore = false;
 	private syncJobHistoryHasMore = false;
   connectionHealth: Record<string, ISourceConnectionHealth> = {};
+  connectionHealthLoadError = '';
   searchResult?: ISourceSearchResult;
   knowledgeGraph?: IKnowledgeGraphResult;
   graphLoading = false;
@@ -1480,9 +1481,18 @@ export class ConnectedSourcesComponent implements OnInit {
   private loadConnectionHealth(sources: IConnectedSource[]): void {
     if (!sources.length) {
       this.connectionHealth = {};
+      this.connectionHealthLoadError = '';
       return;
     }
-    this.sourceService.connectionHealthSummary().pipe(catchError(() => of([]))).subscribe((results) => {
+    this.connectionHealthLoadError = '';
+    this.sourceService.connectionHealthSummary().pipe(
+      timeout(this.loadTimeoutMs),
+      catchError(() => {
+        this.connectionHealthLoadError = 'Could not load source connection health. Existing health results are retained and may be stale.';
+        return of(undefined);
+      })
+    ).subscribe((results) => {
+      if (!results) return;
       this.connectionHealth = results.reduce<Record<string, ISourceConnectionHealth>>((health, item) => {
         if (item) {
           health[item.sourceId] = item;
@@ -1493,7 +1503,13 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   private refreshConnectionHealth(source: IConnectedSource): void {
-    this.sourceService.connectionHealth(source.id).pipe(catchError(() => of(undefined))).subscribe((health) => {
+    this.sourceService.connectionHealth(source.id).pipe(
+      timeout(this.loadTimeoutMs),
+      catchError(() => {
+        this.connectionHealthLoadError = `Could not refresh health for ${source.name}. Existing health results are retained and may be stale.`;
+        return of(undefined);
+      })
+    ).subscribe((health) => {
       if (health) {
         this.connectionHealth = { ...this.connectionHealth, [source.id]: health };
       }

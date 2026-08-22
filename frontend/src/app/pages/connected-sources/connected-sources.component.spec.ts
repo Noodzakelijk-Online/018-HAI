@@ -244,6 +244,25 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.sources).toEqual([]);
   });
 
+  it('retains prior source health and exposes a failed health refresh', () => {
+    const { component } = createComponent();
+    const source = { id: 'source-1', name: 'Trello board', connectorKey: 'trello', enabled: true, status: 'active' } as IConnectedSource;
+    const priorHealth = { sourceId: source.id, status: 'healthy', reason: 'last known good result' } as any;
+    const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
+      'connectors', 'sources', 'connectionHealthSummary',
+    ]);
+    sourceService.connectors.and.returnValue(of([{ connectorKey: 'trello', enabled: true }]));
+    sourceService.sources.and.returnValue(of([source]));
+    sourceService.connectionHealthSummary.and.returnValue(throwError(() => new Error('gateway unavailable')));
+    (component as any).sourceService = sourceService;
+    component.connectionHealth = { [source.id]: priorHealth };
+
+    component.refresh();
+
+    expect(component.connectionHealth[source.id]).toBe(priorHealth);
+    expect(component.connectionHealthLoadError).toContain('connection health');
+  });
+
   it('keeps prior source history visible when a history lane cannot load', () => {
     const { component } = createComponent();
     const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
