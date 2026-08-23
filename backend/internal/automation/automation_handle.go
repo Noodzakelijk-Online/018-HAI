@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 
@@ -15,7 +16,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxAutomationUpdateBodyBytes = 1 << 20
+const (
+	maxAutomationUpdateBodyBytes = 1 << 20
+	automationImageFormOverhead  = 1 << 20
+)
 
 type Handler struct {
 	service Service
@@ -93,6 +97,12 @@ func (h *Handler) ImageHandler(c *gin.Context) {
 // @Router /automations [post]
 func (h *Handler) Create(c *gin.Context) {
 	var automation models.Automation
+	maxBodyBytes := maxAutomationCreateBodyBytes()
+	if c.Request.ContentLength > maxBodyBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "automation image upload is too large"})
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
 
 	automation.Name = c.PostForm("name")
 	automation.Host = c.PostForm("host")
@@ -115,7 +125,14 @@ func (h *Handler) Create(c *gin.Context) {
 	removeImage, _ := strconv.ParseBool(c.PostForm("removeImage"))
 	automation.RemoveImage = removeImage
 
-	file, _ := c.FormFile("imageFile")
+	file, err := c.FormFile("imageFile")
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "automation image upload is too large"})
+			return
+		}
+	}
 	if file != nil {
 		automation.ImageFile = file
 	}
@@ -126,6 +143,14 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, newAutomation)
+}
+
+func maxAutomationCreateBodyBytes() int64 {
+	imageMaxSize := config.AppConfig.ImageMaxSize
+	if imageMaxSize <= 0 {
+		imageMaxSize = 5 << 20
+	}
+	return imageMaxSize + automationImageFormOverhead
 }
 
 // GetAll

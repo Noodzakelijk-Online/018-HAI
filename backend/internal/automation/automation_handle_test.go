@@ -59,3 +59,19 @@ func TestUpdateRejectsOversizedRequestBody(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusRequestEntityTooLarge, recorder.Body.String())
 	}
 }
+
+func TestCreateRejectsOversizedDeclaredMultipartBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/automation", NewHandler(updateOnlyAutomationService{}).Create)
+
+	req := httptest.NewRequest(http.MethodPost, "/automation", bytes.NewReader([]byte("not-read")))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=test")
+	req.ContentLength = maxAutomationCreateBodyBytes() + 1
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusRequestEntityTooLarge, recorder.Body.String())
+	}
+}
