@@ -355,3 +355,20 @@ func TestDurableSyncHandlerTreatsInProgressAsSuccess(t *testing.T) {
 		t.Fatalf("in-progress sync should not fail the job (it would retry-storm): %v", err)
 	}
 }
+
+func TestDurablePollIntervalUsesSafeBounds(t *testing.T) {
+	for _, value := range []string{"", "1", "14", "3601", "invalid"} {
+		t.Setenv("SOURCE_WORKER_POLL_SECONDS", value)
+		if got := durablePollInterval(); got != defaultDurablePollInterval {
+			t.Fatalf("durablePollInterval() with %q = %s, want default %s", value, got, defaultDurablePollInterval)
+		}
+	}
+	t.Setenv("SOURCE_WORKER_POLL_SECONDS", "15")
+	if got := durablePollInterval(); got != minDurablePollInterval {
+		t.Fatalf("durablePollInterval() = %s, want %s", got, minDurablePollInterval)
+	}
+	t.Setenv("SOURCE_WORKER_POLL_SECONDS", "3600")
+	if got := durablePollInterval(); got != maxDurablePollInterval {
+		t.Fatalf("durablePollInterval() = %s, want %s", got, maxDurablePollInterval)
+	}
+}

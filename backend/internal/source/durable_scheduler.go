@@ -40,6 +40,8 @@ const (
 	// An individual sync is worth retrying harder before dead-lettering.
 	syncMaxAttempts            = 5
 	defaultDurablePollInterval = 5 * time.Minute
+	minDurablePollInterval     = 15 * time.Second
+	maxDurablePollInterval     = time.Hour
 )
 
 // syncJobPayload identifies which source a sync job refers to.
@@ -73,7 +75,7 @@ func durablePollInterval() time.Duration {
 		return defaultDurablePollInterval
 	}
 	var seconds int64
-	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 1 {
+	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < int64(minDurablePollInterval/time.Second) || seconds > int64(maxDurablePollInterval/time.Second) {
 		return defaultDurablePollInterval
 	}
 	return time.Duration(seconds) * time.Second

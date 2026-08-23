@@ -75,6 +75,23 @@ func TestWorkflowClaimLeaseDefaultsAndBounds(t *testing.T) {
 	}
 }
 
+func TestWorkflowPollIntervalUsesSafeBounds(t *testing.T) {
+	for _, value := range []string{"", "1", "14", "3601", "invalid"} {
+		t.Setenv("WORKFLOW_WORKER_POLL_SECONDS", value)
+		if got := workflowPollInterval(); got != defaultPollSecond {
+			t.Fatalf("workflowPollInterval() with %q = %s, want default %s", value, got, defaultPollSecond)
+		}
+	}
+	t.Setenv("WORKFLOW_WORKER_POLL_SECONDS", "15")
+	if got := workflowPollInterval(); got != minPollInterval {
+		t.Fatalf("workflowPollInterval() = %s, want %s", got, minPollInterval)
+	}
+	t.Setenv("WORKFLOW_WORKER_POLL_SECONDS", "3600")
+	if got := workflowPollInterval(); got != maxPollInterval {
+		t.Fatalf("workflowPollInterval() = %s, want %s", got, maxPollInterval)
+	}
+}
+
 type fakeScheduledWorkflowService struct {
 	calls          []string
 	openLoopLimit  int

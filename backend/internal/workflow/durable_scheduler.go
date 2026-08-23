@@ -21,6 +21,8 @@ const (
 	JobKindSweep      = "workflow.sweep"
 	sweepMaxAttempts  = 3
 	defaultPollSecond = 5 * time.Minute
+	minPollInterval   = 15 * time.Second
+	maxPollInterval   = time.Hour
 )
 
 // RegisterDurableScheduling registers the workflow sweep as a durable recurring
@@ -114,7 +116,7 @@ func workflowPollInterval() time.Duration {
 		return defaultPollSecond
 	}
 	var seconds int64
-	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 1 {
+	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < int64(minPollInterval/time.Second) || seconds > int64(maxPollInterval/time.Second) {
 		return defaultPollSecond
 	}
 	return time.Duration(seconds) * time.Second

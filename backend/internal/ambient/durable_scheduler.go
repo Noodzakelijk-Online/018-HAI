@@ -17,8 +17,11 @@ import (
 // ambient scan survives a restart, retries on backoff, and is recovered by
 // lease if the worker dies mid-scan.
 const (
-	JobKindScan     = "ambient.scan"
-	scanMaxAttempts = 3
+	JobKindScan            = "ambient.scan"
+	scanMaxAttempts        = 3
+	defaultAmbientPoll     = 5 * time.Minute
+	minAmbientPollInterval = 15 * time.Second
+	maxAmbientPollInterval = time.Hour
 )
 
 // RegisterDurableScheduling registers the ambient scan as a durable recurring
@@ -72,11 +75,11 @@ func startDurableScheduler(ctx context.Context, service Service, interval time.D
 func ambientPollInterval() time.Duration {
 	value := strings.TrimSpace(os.Getenv("AMBIENT_WORKER_POLL_SECONDS"))
 	if value == "" {
-		return 5 * time.Minute
+		return defaultAmbientPoll
 	}
 	var seconds int64
-	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 1 {
-		return 5 * time.Minute
+	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < int64(minAmbientPollInterval/time.Second) || seconds > int64(maxAmbientPollInterval/time.Second) {
+		return defaultAmbientPoll
 	}
 	return time.Duration(seconds) * time.Second
 }
