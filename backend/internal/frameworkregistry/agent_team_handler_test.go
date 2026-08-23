@@ -81,6 +81,10 @@ func TestAgentTeamHTTPRoutesAreOwnerScopedAndPermissionGated(t *testing.T) {
 	if team.ID == "" || !team.AdvisoryOnly || team.GrantsExecutionAuthority || !team.ExecutionAuthorizationRequired {
 		t.Fatalf("unsafe or invalid HTTP team response: %#v", team)
 	}
+	decisionOverview := performAgentTeamRequest(engine, http.MethodGet, "/api/v1/framework-registry/teams/"+team.ID+"/versions/"+team.Version+"/decision-overview", nil, "robert", "viewer")
+	if decisionOverview.Code != http.StatusOK || !bytes.Contains(decisionOverview.Body.Bytes(), []byte(`"messages":[]`)) || !bytes.Contains(decisionOverview.Body.Bytes(), []byte(`"attention":[]`)) {
+		t.Fatalf("viewer decision overview status = %d: %s", decisionOverview.Code, decisionOverview.Body.String())
+	}
 
 	attentionIndex := performAgentTeamRequest(engine, http.MethodGet, "/api/v1/framework-registry/teams/message-attention", nil, "robert", "viewer")
 	if attentionIndex.Code != http.StatusOK || !bytes.Contains(attentionIndex.Body.Bytes(), []byte(`"teamId":"`+team.ID+`"`)) {
