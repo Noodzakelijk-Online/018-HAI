@@ -230,10 +230,58 @@ func TestHandlerListsOnlyOwnerScopedExtractionsFromRepository(t *testing.T) {
 	if len(extractions) != 1 || extractions[0].SourceID != aliceID {
 		t.Fatalf("visible extractions = %#v, want only Alice extraction", extractions)
 	}
+	if total := response.Header().Get("X-Total-Count"); total != "1" {
+		t.Fatalf("X-Total-Count = %q, want 1", total)
+	}
 	for _, sourceID := range repo.lastExtractionSourceIDs {
 		if sourceID == bobID {
 			t.Fatalf("handler repository query included Bob's private source")
 		}
+	}
+}
+
+func TestHandlerRejectsInvalidExtractionPageLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(NewService(newFakeSourceRepo(), nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/extractions", handler.Extractions)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/extractions?limit=501", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestHandlerBoundsExtractionHistoryAndReportsExactTotal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"})
+	for index := 0; index < 3; index++ {
+		if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: uuid.New(), SourceID: sourceID, Summary: "private context"}); err != nil {
+			t.Fatalf("SaveExtraction: %v", err)
+		}
+	}
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/extractions", handler.Extractions)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/extractions?limit=2", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	var extractions []models.SourceExtraction
+	if err := json.Unmarshal(response.Body.Bytes(), &extractions); err != nil {
+		t.Fatalf("decode extractions: %v", err)
+	}
+	if len(extractions) != 2 {
+		t.Fatalf("returned records = %d, want 2", len(extractions))
+	}
+	if total := response.Header().Get("X-Total-Count"); total != "3" {
+		t.Fatalf("X-Total-Count = %q, want 3", total)
 	}
 }
 

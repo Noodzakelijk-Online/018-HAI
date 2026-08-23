@@ -301,7 +301,7 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     const secondSources = new Subject<IConnectedSource[]>();
     sourceService.connectors.and.returnValue(of([]));
     sourceService.sources.and.returnValues(firstSources.asObservable(), secondSources.asObservable());
-    sourceService.extractions.and.returnValue(of([]));
+    sourceService.extractions.and.returnValue(of({ items: [], totalCount: 0, limit: 100 }));
     sourceService.auditLogs.and.returnValue(of([]));
     sourceService.syncJobs.and.returnValue(of([]));
     sourceService.connectionHealths.and.returnValue(of([]));
@@ -356,5 +356,22 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 
     expect(component.extractions.map((item) => item.id)).toEqual(['existing-record']);
     expect(component.loadWarnings).toContain('Extracted records');
+  });
+
+  it('keeps an exact extraction count while loading only the recent page', () => {
+    const { component, sourceService } = createComponent();
+    sourceService.connectors.and.returnValue(of([]));
+    sourceService.sources.and.returnValue(of([]));
+    sourceService.extractions.and.returnValue(of({ items: [{ id: 'recent-record' }], totalCount: 245, limit: 100 }));
+    sourceService.auditLogs.and.returnValue(of([]));
+    sourceService.syncJobs.and.returnValue(of([]));
+    sourceService.connectionHealths.and.returnValue(of([]));
+
+    component.refresh();
+
+    expect(component.extractions.length).toBe(1);
+    expect(component.extractionTotalCount).toBe(245);
+    expect(component.extractionPageIsTruncated()).toBeTrue();
+    expect(sourceService.extractions).toHaveBeenCalledWith('018-HAI', false, 100);
   });
 });

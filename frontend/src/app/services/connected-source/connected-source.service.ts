@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { IConnectedSourceService } from '../connected-source.service.interface';
 import {
   IConnectedSource,
@@ -10,6 +11,7 @@ import {
   ISourceConnector,
   ISourceConnectionHealth,
   ISourceExtraction,
+  ISourceExtractionPage,
   ISourceSearchRequest,
   ISourceSearchResult,
   ISourceSyncJob,
@@ -114,12 +116,23 @@ export class ConnectedSourceService implements IConnectedSourceService {
     });
   }
 
-  extractions(projectKey: string, includeArchived: boolean): Observable<ISourceExtraction[]> {
+  extractions(projectKey: string, includeArchived: boolean, limit = 100): Observable<ISourceExtractionPage> {
     return this.http.get<ISourceExtraction[]>(`${this.apiUrl}/extractions`, {
       params: new HttpParams()
         .set('projectKey', projectKey || '')
-        .set('includeArchived', includeArchived),
-    });
+        .set('includeArchived', includeArchived)
+        .set('limit', limit),
+      observe: 'response',
+    }).pipe(map((response) => {
+      const items = response.body || [];
+      const total = Number(response.headers.get('X-Total-Count'));
+      const responseLimit = Number(response.headers.get('X-Result-Limit'));
+      return {
+        items,
+        totalCount: Number.isFinite(total) && total >= 0 ? total : items.length,
+        limit: Number.isFinite(responseLimit) && responseLimit > 0 ? responseLimit : limit,
+      };
+    }));
   }
 
   updateExtraction(id: string, extraction: Partial<ISourceExtraction>): Observable<ISourceExtraction> {

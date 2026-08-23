@@ -2750,6 +2750,18 @@ func (r *fakeSourceRepo) FindExtractionsForSources(sourceIDs []uuid.UUID, projec
 	return r.findExtractions(allowed, projectKey, includeArchived)
 }
 
+func (r *fakeSourceRepo) FindExtractionPageForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, int64, error) {
+	items, err := r.FindExtractionsForSources(sourceIDs, projectKey, includeArchived)
+	if err != nil {
+		return nil, 0, err
+	}
+	total := int64(len(items))
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, total, nil
+}
+
 func (r *fakeSourceRepo) findExtractions(sourceIDs map[uuid.UUID]bool, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
 	result := []models.SourceExtraction{}
 	for _, extraction := range r.extractions {

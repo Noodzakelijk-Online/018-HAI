@@ -10,6 +10,7 @@ import {
   ISourceConnector,
   ISourceConnectionHealth,
   ISourceExtraction,
+  ISourceExtractionPage,
   IKnowledgeGraphResult,
   IKnowledgeGraphSourceRef,
   ISourcePursuitRoutingOutcome,
@@ -78,6 +79,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   connectors: ISourceConnector[] = [];
   sources: IConnectedSource[] = [];
   extractions: ISourceExtraction[] = [];
+  extractionTotalCount = 0;
   auditLogs: ISourceAuditLog[] = [];
   syncJobs: ISourceSyncJob[] = [];
   sourceExtractionCounts: Record<string, number> = {};
@@ -101,6 +103,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   themeMode: ThemeMode = 'light';
   private readonly loadTimeoutMs = 6000;
   private readonly operationTimeoutMs = 15000;
+  private readonly extractionPageLimit = 100;
   private refreshSubscription?: Subscription;
 
   sourceForm: FormGroup = this.fb.group({
@@ -200,11 +203,11 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
           return of([] as IConnectedSource[]);
         })
       ),
-      extractions: this.sourceService.extractions(this.searchForm.value.projectKey, this.includeArchived).pipe(
+      extractions: this.sourceService.extractions(this.searchForm.value.projectKey, this.includeArchived, this.extractionPageLimit).pipe(
         timeout(this.loadTimeoutMs),
         catchError(() => {
           this.recordLoadWarning('Extracted records');
-          return of([] as ISourceExtraction[]);
+          return of({ items: [], totalCount: 0, limit: this.extractionPageLimit } as ISourceExtractionPage);
         })
       ),
       auditLogs: this.sourceService.auditLogs().pipe(
@@ -226,7 +229,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       .subscribe(({ connectors, sources, extractions, auditLogs, syncJobs }) => {
         this.connectors = connectors;
         this.sources = sources;
-        this.extractions = extractions;
+        this.setExtractionPage(extractions);
         this.auditLogs = auditLogs;
         this.syncJobs = syncJobs || [];
         this.rebuildSourceIndexes();
@@ -1429,11 +1432,11 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
 
   private loadExtractions(): void {
     this.sourceService
-      .extractions(this.searchForm.value.projectKey, this.includeArchived)
+      .extractions(this.searchForm.value.projectKey, this.includeArchived, this.extractionPageLimit)
       .pipe(timeout(this.loadTimeoutMs))
       .subscribe({
-        next: (items) => {
-          this.extractions = items;
+        next: (page) => {
+          this.setExtractionPage(page);
           this.rebuildSourceIndexes();
           this.updateSourceActions();
         },
@@ -1442,6 +1445,15 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
           this.updateSourceActions();
         },
       });
+  }
+
+  extractionPageIsTruncated(): boolean {
+    return this.extractionTotalCount > this.extractions.length;
+  }
+
+  private setExtractionPage(page: ISourceExtractionPage): void {
+    this.extractions = page.items || [];
+    this.extractionTotalCount = page.totalCount;
   }
 
   private loadAuditLogs(): void {

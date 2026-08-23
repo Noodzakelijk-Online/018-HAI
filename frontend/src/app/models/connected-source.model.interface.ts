@@ -111,6 +111,12 @@ export interface ISourceExtraction {
   updatedAt: string;
 }
 
+export interface ISourceExtractionPage {
+  items: ISourceExtraction[];
+  totalCount: number;
+  limit: number;
+}
+
 export interface ISourceSyncResult {
   job: ISourceSyncJob;
   extractions: ISourceExtraction[];

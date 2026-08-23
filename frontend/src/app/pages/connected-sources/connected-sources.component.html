@@ -35,9 +35,9 @@
         <strong>{{ operationalConnectorCount() }} live · {{ localOnlyConnectorCount() }} local · {{ modeledConnectorCount() }} modeled</strong>
         <span>of {{ connectors.length }} connectors</span>
       </div>
-      <div title="Extracted records available for source-grounded memory and task context">
-        <strong>{{ extractions.length }}</strong>
-        <span>extracted records</span>
+      <div title="Exact number of extracted records available for source-grounded memory and task context. The dashboard loads the 100 most recent records first to keep the page responsive.">
+        <strong>{{ extractionTotalCount }}</strong>
+        <span>extracted records<span *ngIf="extractionPageIsTruncated()"> · recent {{ extractions.length }} loaded</span></span>
       </div>
       <div title="Records that must stay review-gated or sensitive">
         <strong>{{ sensitiveExtractionCount() }}</strong>

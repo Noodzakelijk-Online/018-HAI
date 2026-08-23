@@ -177,6 +177,16 @@ type ContextSyncService interface {
 	SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
 }
 
+type ExtractionPage struct {
+	Items      []models.SourceExtraction `json:"items"`
+	TotalCount int64                     `json:"totalCount"`
+	Limit      int                       `json:"limit"`
+}
+
+type ExtractionPageService interface {
+	ExtractionPageForOwner(ownerIdentity, projectKey string, includeArchived bool, limit int) (*ExtractionPage, error)
+}
+
 func syncSourceWithContext(ctx context.Context, service Service, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
 	if contextual, ok := service.(ContextSyncService); ok {
 		return contextual.SyncContext(ctx, sourceID, request)
@@ -1696,6 +1706,18 @@ func (s *service) ExtractionsForOwner(ownerIdentity, projectKey string, includeA
 		return nil, err
 	}
 	return s.repo.FindExtractionsForSources(sourceIDsFromSet(visibleSourceIDs), projectKey, includeArchived)
+}
+
+func (s *service) ExtractionPageForOwner(ownerIdentity, projectKey string, includeArchived bool, limit int) (*ExtractionPage, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	items, totalCount, err := s.repo.FindExtractionPageForSources(sourceIDsFromSet(visibleSourceIDs), projectKey, includeArchived, limit)
+	if err != nil {
+		return nil, err
+	}
+	return &ExtractionPage{Items: items, TotalCount: totalCount, Limit: limit}, nil
 }
 
 func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error) {

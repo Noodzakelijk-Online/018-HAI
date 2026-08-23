@@ -32,6 +32,11 @@ type sourceHistoryService interface {
 	AuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error)
 }
 
+const (
+	defaultExtractionPageLimit = 100
+	maxExtractionPageLimit     = 500
+)
+
 type mutableSourceLookup interface {
 	MutableSourceForOwner(id uuid.UUID, ownerIdentity string) (*models.ConnectedSource, error)
 	MutableExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error)
@@ -483,12 +488,39 @@ func (h *Handler) Search(c *gin.Context) {
 
 func (h *Handler) Extractions(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
+	limit, err := extractionPageLimit(c.Query("limit"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if paged, ok := h.service.(ExtractionPageService); ok {
+		page, err := paged.ExtractionPageForOwner(sourceOwner(c), c.Query("projectKey"), includeArchived, limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.Header("X-Total-Count", strconv.FormatInt(page.TotalCount, 10))
+		c.Header("X-Result-Limit", strconv.Itoa(page.Limit))
+		c.JSON(http.StatusOK, page.Items)
+		return
+	}
 	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), c.Query("projectKey"), includeArchived)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, extractions)
+}
+
+func extractionPageLimit(value string) (int, error) {
+	if strings.TrimSpace(value) == "" {
+		return defaultExtractionPageLimit, nil
+	}
+	limit, err := strconv.Atoi(value)
+	if err != nil || limit < 1 || limit > maxExtractionPageLimit {
+		return 0, errors.New("limit must be between 1 and 500")
+	}
+	return limit, nil
 }
 
 func (h *Handler) UpdateExtraction(c *gin.Context) {

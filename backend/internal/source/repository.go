@@ -33,6 +33,7 @@ type Repository interface {
 	SaveExtraction(extraction *models.SourceExtraction) (*models.SourceExtraction, error)
 	FindExtractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	FindExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
+	FindExtractionPageForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, int64, error)
 	FindExtraction(id uuid.UUID) (*models.SourceExtraction, error)
 	FindMutableExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error)
 	DeleteExtractionForOwner(
@@ -314,9 +315,31 @@ func (r *GormRepository) FindExtractionsForSources(sourceIDs []uuid.UUID, projec
 	return r.findExtractions(sourceIDs, projectKey, includeArchived)
 }
 
+func (r *GormRepository) FindExtractionPageForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, int64, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceExtraction{}, 0, nil
+	}
+	query := r.extractionsQuery(sourceIDs, projectKey, includeArchived)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var extractions []models.SourceExtraction
+	if err := query.Order("updated_at desc").Limit(limit).Find(&extractions).Error; err != nil {
+		return nil, 0, err
+	}
+	return extractions, total, nil
+}
+
 func (r *GormRepository) findExtractions(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
 	var extractions []models.SourceExtraction
-	query := r.DB.Order("updated_at desc")
+	query := r.extractionsQuery(sourceIDs, projectKey, includeArchived).Order("updated_at desc")
+	err := query.Find(&extractions).Error
+	return extractions, err
+}
+
+func (r *GormRepository) extractionsQuery(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) *gorm.DB {
+	query := r.DB.Model(&models.SourceExtraction{})
 	if sourceIDs != nil {
 		query = query.Where("source_id IN ?", sourceIDs)
 	}
@@ -326,8 +349,7 @@ func (r *GormRepository) findExtractions(sourceIDs []uuid.UUID, projectKey strin
 	if !includeArchived {
 		query = query.Where("archived = ?", false)
 	}
-	err := query.Find(&extractions).Error
-	return extractions, err
+	return query
 }
 
 func (r *GormRepository) FindExtraction(id uuid.UUID) (*models.SourceExtraction, error) {
