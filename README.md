@@ -770,16 +770,19 @@ state, enables the adapter, and validates it. HAI does not bundle these tools,
 send messages through them, control browsers, create cron jobs, or bypass their
 or HAI's security boundaries.
 
-DeepSeek Harness is integrated as a preview-readiness adapter only. Its
-published documentation currently describes a local Web UI and warns that the
-developer preview can introduce compatibility-breaking changes; it does not
-establish the stable non-interactive task contract HAI needs for safe governed
-execution. HAI can therefore inspect an operator-selected executable and a
-dedicated workspace, but it will not launch the Web UI, ACP server, install
-plugins, or execute Harness tasks. Model keys and permission configuration
-remain operator-managed. Execution will stay disabled until a stable documented
-non-interactive contract is independently validated and added as a versioned
-adapter.
+DeepSeek Harness remains an upstream developer preview, but it now documents a
+one-shot headless profile: `dsh --profile headless "task"`. HAI integrates only
+that documented process boundary. It is disabled by default and requires both
+`DEEPSEEK_HARNESS_ENABLED=true` and
+`DEEPSEEK_HARNESS_EXECUTION_ENABLED=true`, an executable, a dedicated workspace
+and state directory under `AGENT_RUNTIME_WORKSPACE_ROOT`, plus HAI's
+server-side approval and consumed final-effect proof. The adapter applies a
+timeout, output cap, environment allowlist, cancellation path, and secret
+redaction. It does not launch the Harness Web UI or ACP server, install plugins,
+control a browser, or supply model credentials; model keys and permissions stay
+operator-managed. Because the upstream may introduce breaking changes, the
+health check makes configuration drift visible and an unavailable or failed
+Harness run remains a governed failure, not a reason to bypass HAI controls.
 
 API, script, and Docker adapters have the same default posture: disabled until
 explicitly allowlisted and configured. The emergency stop blocks runtime

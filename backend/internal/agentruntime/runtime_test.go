@@ -1534,6 +1534,7 @@ func executableFakeAdapter() *fakeAdapter {
 func TestDeepSeekHarnessAdapterIsRegisteredAndDisabledByDefault(t *testing.T) {
 	t.Setenv("DEEPSEEK_HARNESS_ENABLED", "false")
 	t.Setenv("DEEPSEEK_HARNESS_WORKSPACE", "")
+	t.Setenv("DEEPSEEK_HARNESS_STATE_DIR", "")
 	t.Setenv("AGENT_RUNTIME_WORKSPACE_ROOT", "")
 	registry := NewRegistry(newDeepSeekHarnessAdapterFromEnv())
 	infos := registry.List()
@@ -1547,12 +1548,12 @@ func TestDeepSeekHarnessAdapterIsRegisteredAndDisabledByDefault(t *testing.T) {
 	if !containsString(info.MissingConfiguration, "DEEPSEEK_HARNESS_WORKSPACE") {
 		t.Fatalf("missing configuration = %#v, want workspace", info.MissingConfiguration)
 	}
-	if skills, err := registry.Skills(context.Background(), "deepseek-harness"); err != nil || len(skills) != 1 || skills[0].ExecutionMode != "preview_readiness_only" {
+	if skills, err := registry.Skills(context.Background(), "deepseek-harness"); err != nil || len(skills) != 1 || skills[0].ExecutionMode != "approved_headless_task" {
 		t.Fatalf("skills = %#v, err = %v", skills, err)
 	}
 }
 
-func TestDeepSeekHarnessAdapterIsNeverExecutionEnabledDuringPreview(t *testing.T) {
+func TestDeepSeekHarnessAdapterRequiresExplicitHeadlessExecutionOptIn(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "deepseek-harness")
 	if err := os.Mkdir(workspace, 0o755); err != nil {
@@ -1563,14 +1564,40 @@ func TestDeepSeekHarnessAdapterIsNeverExecutionEnabledDuringPreview(t *testing.T
 		executable:    "dsh",
 		workspace:     workspace,
 		workspaceRoot: root,
+		stateDir:      filepath.Join(workspace, ".dsh-state"),
 	}
 	info := adapter.Info()
 	if !info.Configured || info.ExecutionEnabled {
-		t.Fatalf("preview adapter configuration = %#v, want configured but execution disabled", info)
+		t.Fatalf("adapter configuration = %#v, want configured but execution opt-in disabled", info)
 	}
 	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
-	if result.Status != "blocked" || !strings.Contains(result.Message, "developer preview") {
-		t.Fatalf("result = %#v, want preview execution block", result)
+	if result.Status != "blocked" || !strings.Contains(result.Message, "EXECUTION_ENABLED") {
+		t.Fatalf("result = %#v, want execution opt-in block", result)
+	}
+}
+
+func TestDeepSeekHarnessAdapterRunsDocumentedHeadlessProfile(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:          true,
+		executionEnabled: true,
+		executable:       os.Args[0],
+		workspace:        workspace,
+		workspaceRoot:    root,
+		stateDir:         filepath.Join(workspace, ".dsh-state"),
+		timeout:          time.Second,
+		outputLimit:      defaultOutputLimit,
+	}
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "completed" || !strings.Contains(result.Output, "--profile") || !strings.Contains(result.Output, "headless") {
+		t.Fatalf("result = %#v, want documented headless invocation", result)
+	}
+	if !strings.Contains(result.Output, "DSH_HOME=") || !strings.Contains(result.Output, "HAI_RUNTIME_TASK_ID=harness-task") {
+		t.Fatalf("result output = %q, want isolated state and task metadata", result.Output)
 	}
 }
 
@@ -1582,6 +1609,7 @@ func TestDeepSeekHarnessAdapterRejectsWorkspaceOutsideRoot(t *testing.T) {
 		executable:    "dsh",
 		workspace:     outside,
 		workspaceRoot: root,
+		stateDir:      filepath.Join(outside, ".dsh-state"),
 	}
 	if reason := adapter.workspaceBlockedReason(); !strings.Contains(reason, "must stay inside") {
 		t.Fatalf("workspace block reason = %q", reason)
@@ -1591,10 +1619,12 @@ func TestDeepSeekHarnessAdapterRejectsWorkspaceOutsideRoot(t *testing.T) {
 func TestDeepSeekHarnessAdapterRejectsMissingWorkspaceRoot(t *testing.T) {
 	workspace := t.TempDir()
 	adapter := &deepSeekHarnessAdapter{
-		enabled:       true,
-		executable:    os.Args[0],
-		workspace:     workspace,
-		workspaceRoot: "",
+		enabled:          true,
+		executionEnabled: true,
+		executable:       os.Args[0],
+		workspace:        workspace,
+		workspaceRoot:    "",
+		stateDir:         filepath.Join(workspace, ".dsh-state"),
 	}
 
 	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
@@ -1603,24 +1633,23 @@ func TestDeepSeekHarnessAdapterRejectsMissingWorkspaceRoot(t *testing.T) {
 	}
 }
 
-func TestDeepSeekHarnessAdapterDoesNotCreateHarnessStateDuringPreview(t *testing.T) {
+func TestDeepSeekHarnessAdapterRejectsStateDirectoryOutsideRoot(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "deepseek-harness")
 	if err := os.Mkdir(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	adapter := &deepSeekHarnessAdapter{
-		enabled:       true,
-		executable:    os.Args[0],
-		workspace:     workspace,
-		workspaceRoot: root,
+		enabled:          true,
+		executionEnabled: true,
+		executable:       os.Args[0],
+		workspace:        workspace,
+		workspaceRoot:    root,
+		stateDir:         filepath.Join(t.TempDir(), ".dsh-state"),
 	}
 	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
-	if result.Status != "blocked" || !strings.Contains(result.Message, "developer preview") {
-		t.Fatalf("result = %#v, want preview execution block", result)
-	}
-	if _, err := os.Stat(filepath.Join(workspace, ".hai-dsh")); !os.IsNotExist(err) {
-		t.Fatalf("preview adapter must not create harness state, stat err = %v", err)
+	if result.Status != "blocked" || !strings.Contains(result.Message, "state directory must stay inside") {
+		t.Fatalf("result = %#v, want state directory block", result)
 	}
 }
 
@@ -1631,14 +1660,16 @@ func TestDeepSeekHarnessHealthReportsPreviewReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapter := &deepSeekHarnessAdapter{
-		enabled:       true,
-		executable:    os.Args[0],
-		workspace:     workspace,
-		workspaceRoot: root,
+		enabled:          true,
+		executionEnabled: true,
+		executable:       os.Args[0],
+		workspace:        workspace,
+		workspaceRoot:    root,
+		stateDir:         filepath.Join(workspace, ".dsh-state"),
 	}
 	health := adapter.HealthCheck(context.Background())
-	if health.Status != "blocked" || !strings.Contains(health.Reason, "developer preview") {
-		t.Fatalf("health = %#v, want preview execution block", health)
+	if health.Status != "ready" || !strings.Contains(health.Reason, "headless") {
+		t.Fatalf("health = %#v, want headless readiness", health)
 	}
 }
 
