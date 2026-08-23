@@ -85,6 +85,14 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn(".dropdown-menu {", home_styles)
         self.assertIn(".ant-menu {", home_styles)
 
+    def test_home_automation_images_defer_offscreen_work(self) -> None:
+        home_template = (ROOT / "frontend" / "src" / "app" / "pages" / "home" / "home.component.html").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('loading="lazy"', home_template)
+        self.assertIn('decoding="async"', home_template)
+
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:
