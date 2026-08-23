@@ -409,6 +409,32 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertIn(f"{setting}=", defaults)
                 self.assertIn(f"{setting}: ${{{setting}", backend)
 
+    def test_phase2_control_state_and_safe_worker_paths_are_durable(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
+        backend = compose_service_block(compose, "backend")
+
+        # The background control service persists emergency-stop and autonomy
+        # decisions. Its safe-worker output and opt-in feed imports must use
+        # distinct paths so a restart neither resets control state nor lets the
+        # worker modify its read-only intake folder.
+        for setting, value in (
+            ("HAI_PHASE2_WORKSPACE_DIR", "/root/agent-workspaces/phase2"),
+            ("HAI_PHASE2_FEEDS_DIR", "/root/phase2-feeds"),
+            ("HAI_PHASE2_STATE_DIR", "/root/phase2-control-state"),
+            ("HAI_PHASE2_FEED_FILES", ""),
+        ):
+            with self.subTest(setting=setting):
+                self.assertIn(f"{setting}=", defaults)
+                self.assertIn(f"{setting}: ${{{setting}:-{value}}}", backend)
+
+        self.assertIn(
+            "- phase2-control-state:/root/phase2-control-state",
+            backend,
+        )
+        self.assertIn("- ./phase2-feeds:/root/phase2-feeds:ro", backend)
+        self.assertIn("phase2-control-state:\n    name: 018-hai-phase2-control-state", compose)
+
     def test_quick_start_and_google_local_callback_match_gateway_port(self) -> None:
         defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

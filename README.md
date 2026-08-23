@@ -641,6 +641,16 @@ general importer accepts `.txt`, `.md`, `.markdown`, `.csv`, `.tsv`, `.json`,
 `.yaml`, `.yml`, and `.log`; export connectors also support `.mbox`, `.eml`,
 and `.ics` within the same allowlisted root.
 
+### Import Phase 2 local feed records
+
+Phase 2's controlled background worker uses a separate intake boundary. Put
+operator-reviewed JSON feed files under `phase2-feeds/`, set
+`HAI_PHASE2_FEED_FILES` to their comma-separated filenames in `.env.local`,
+then restart the backend. The feed folder is mounted read-only. Any verified
+safe-worker artifact is confined to `agent-workspaces/phase2`; emergency-stop
+and autonomy-mode controls persist in the named Docker volume
+`018-hai-phase2-control-state` and are included in the recovery procedure.
+
 ### Connect LARO case intelligence
 
 HAI includes a dedicated `laro` read-only connected-source adapter. Create the
@@ -798,6 +808,8 @@ nginx-config/            Gateway configuration used by local Compose
 nginx-config-manager/    Generated route-config manager; Docker socket disabled by default
 automation-scripts/      Read-only allowlisted script mount
 connected-sources/       Read-only local/export ingestion root
+phase2-feeds/            Read-only Phase 2 JSON feed intake root
+agent-workspaces/        Bounded local safe-worker output root
 browser-extension/       Explicit user-authorized conversation capture
 scripts/                 Smoke and operational verification scripts
 docs/                    Architecture, runbooks, evidence, audits, and roadmap

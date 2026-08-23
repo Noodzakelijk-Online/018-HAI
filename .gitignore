@@ -54,6 +54,8 @@ support-bundle-*.tar.gz
 .claude/
 /agent-workspaces/*
 !/agent-workspaces/.gitkeep
+/phase2-feeds/*
+!/phase2-feeds/.gitkeep
 mini-swe-workspaces/
 hai-repo-link/
 

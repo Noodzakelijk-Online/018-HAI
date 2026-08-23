@@ -456,6 +456,17 @@ services:
       AUTOMATION_DOCKER_CONTROL_ENABLED: ${AUTOMATION_DOCKER_CONTROL_ENABLED}
       AUTOMATION_DOCKER_SOCKET: ${AUTOMATION_DOCKER_SOCKET}
       AUTOMATION_DOCKER_ALLOWED_CONTAINERS: ${AUTOMATION_DOCKER_ALLOWED_CONTAINERS}
+      # Phase 2 keeps local intake, bounded safe-worker output, and safety
+      # controls separate. Only the control path is a named Docker volume so
+      # emergency-stop and autonomy mode survive a backend container rebuild.
+      HAI_PHASE2_OWNER: ${HAI_PHASE2_OWNER:-local-operator}
+      HAI_PHASE2_WORKSPACE_ID: ${HAI_PHASE2_WORKSPACE_ID:-local}
+      HAI_PHASE2_WORKSPACE_DIR: ${HAI_PHASE2_WORKSPACE_DIR:-/root/agent-workspaces/phase2}
+      HAI_PHASE2_FEEDS_DIR: ${HAI_PHASE2_FEEDS_DIR:-/root/phase2-feeds}
+      HAI_PHASE2_FEED_FILES: ${HAI_PHASE2_FEED_FILES:-}
+      HAI_PHASE2_STATE_DIR: ${HAI_PHASE2_STATE_DIR:-/root/phase2-control-state}
+      HAI_PHASE2_MODE: ${HAI_PHASE2_MODE:-autonomous_safe}
+      HAI_PHASE2_EMERGENCY_STOP: ${HAI_PHASE2_EMERGENCY_STOP:-false}
       CONNECTED_SOURCE_LOCAL_ROOT: ${CONNECTED_SOURCE_LOCAL_ROOT}
       CONNECTED_SOURCE_FILE_LIMIT: ${CONNECTED_SOURCE_FILE_LIMIT}
       CONNECTED_SOURCE_MAX_BYTES: ${CONNECTED_SOURCE_MAX_BYTES}
@@ -527,6 +538,8 @@ services:
       - ./automation-scripts:/root/automation-scripts:ro
       - ./connected-sources:/root/connected-sources:ro
       - ./agent-workspaces:/root/agent-workspaces
+      - ./phase2-feeds:/root/phase2-feeds:ro
+      - phase2-control-state:/root/phase2-control-state
       - ${CLOUDQUERY_SUMMARY_HOST_DIR:-./cloudquery-summary}:/cloudquery-summary:ro
     # /readyz, not a TCP probe: an open socket only proves the process is
     # listening. curl -f fails on the 503 that /readyz returns when a critical
@@ -1722,3 +1735,5 @@ volumes:
     name: 018-hai-runner-ollama-data
   redpanda-data:
     name: 018-hai-redpanda-data
+  phase2-control-state:
+    name: 018-hai-phase2-control-state
