@@ -12,7 +12,10 @@ import (
 	"time"
 )
 
-const smtpDialTimeout = 10 * time.Second
+const (
+	smtpDialTimeout    = 10 * time.Second
+	smtpSessionTimeout = 30 * time.Second
+)
 
 // SMTPPasswordResetSender delivers short-lived reset codes over a standard
 // STARTTLS SMTP connection. It deliberately supports port 587-style STARTTLS;
@@ -69,6 +72,10 @@ func (s *SMTPPasswordResetSender) SendPasswordReset(email, resetToken string, ex
 	connection, err := (&net.Dialer{Timeout: smtpDialTimeout}).Dial("tcp", net.JoinHostPort(s.host, s.port))
 	if err != nil {
 		return fmt.Errorf("connect to smtp server: %w", err)
+	}
+	if err := connection.SetDeadline(time.Now().Add(smtpSessionTimeout)); err != nil {
+		_ = connection.Close()
+		return fmt.Errorf("set smtp connection deadline: %w", err)
 	}
 	client, err := smtp.NewClient(connection, s.host)
 	if err != nil {
