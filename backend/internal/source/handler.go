@@ -32,6 +32,11 @@ type sourceHistoryService interface {
 	AuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error)
 }
 
+type mutableSourceLookup interface {
+	MutableSourceForOwner(id uuid.UUID, ownerIdentity string) (*models.ConnectedSource, error)
+	MutableExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error)
+}
+
 func NewHandler(service Service, transcribers ...whispercpp.Service) *Handler {
 	transcriber := whispercpp.DefaultService()
 	if len(transcribers) > 0 && transcribers[0] != nil {
@@ -753,6 +758,16 @@ func (h *Handler) mutableSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
 }
 
 func (h *Handler) requireMutableSource(c *gin.Context, id uuid.UUID) bool {
+	if lookup, ok := h.service.(mutableSourceLookup); ok {
+		if _, err := lookup.MutableSourceForOwner(id, sourceOwner(c)); err == nil {
+			return true
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not verify connected source ownership"})
+			return false
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "connected source not found"})
+		return false
+	}
 	mutableSourceIDs, err := h.mutableSourceIDs(c)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -766,6 +781,16 @@ func (h *Handler) requireMutableSource(c *gin.Context, id uuid.UUID) bool {
 }
 
 func (h *Handler) requireMutableExtraction(c *gin.Context, id uuid.UUID) bool {
+	if lookup, ok := h.service.(mutableSourceLookup); ok {
+		if _, err := lookup.MutableExtractionForOwner(id, sourceOwner(c)); err == nil {
+			return true
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not verify source extraction ownership"})
+			return false
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "source extraction not found"})
+		return false
+	}
 	extractions, err := h.service.ExtractionsForOwner(sourceOwner(c), "", true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

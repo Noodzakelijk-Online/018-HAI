@@ -88,6 +88,9 @@ func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 	if foreignResponse.Code != http.StatusNotFound {
 		t.Fatalf("foreign pause status = %d, body=%s", foreignResponse.Code, foreignResponse.Body.String())
 	}
+	if repo.lastMutableSourceID != bobID || repo.lastMutableSourceOwner != "alice" {
+		t.Fatalf("mutable source lookup = %s/%q, want exact foreign source/alice", repo.lastMutableSourceID, repo.lastMutableSourceOwner)
+	}
 }
 
 func TestHandlerListsOnlyVisibleConnectionHealthInOneBatch(t *testing.T) {
@@ -265,6 +268,9 @@ func TestHandlerRejectsOwnerlessLegacySourceAndExtractionMutations(t *testing.T)
 	router.ServeHTTP(archiveResponse, httptest.NewRequest(http.MethodPost, "/sources/extractions/"+extractionID.String()+"/archive", nil))
 	if archiveResponse.Code != http.StatusNotFound {
 		t.Fatalf("ownerless extraction archive status = %d, want 404: %s", archiveResponse.Code, archiveResponse.Body.String())
+	}
+	if repo.lastMutableExtractionID != extractionID || repo.lastMutableExtractionOwner != "alice" {
+		t.Fatalf("mutable extraction lookup = %s/%q, want exact extraction/alice", repo.lastMutableExtractionID, repo.lastMutableExtractionOwner)
 	}
 
 	storedSource, err := repo.FindSource(sourceID)

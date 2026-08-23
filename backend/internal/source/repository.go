@@ -21,6 +21,7 @@ type Repository interface {
 	FindSources(includeDisabled bool) ([]models.ConnectedSource, error)
 	FindSourcesVisibleToOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error)
 	FindSource(id uuid.UUID) (*models.ConnectedSource, error)
+	FindMutableSourceForOwner(id uuid.UUID, ownerIdentity string) (*models.ConnectedSource, error)
 	CreateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
 	UpdateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
 	FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
@@ -33,6 +34,7 @@ type Repository interface {
 	FindExtractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	FindExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	FindExtraction(id uuid.UUID) (*models.SourceExtraction, error)
+	FindMutableExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error)
 	DeleteExtractionForOwner(
 		extraction *models.SourceExtraction,
 		source *models.ConnectedSource,
@@ -214,6 +216,21 @@ func (r *GormRepository) FindSource(id uuid.UUID) (*models.ConnectedSource, erro
 	return &source, nil
 }
 
+// FindMutableSourceForOwner is stricter than source visibility: ownerless
+// legacy sources can remain readable during migration, but only their verified
+// owner can alter configuration or trigger ingestion.
+func (r *GormRepository) FindMutableSourceForOwner(id uuid.UUID, ownerIdentity string) (*models.ConnectedSource, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var source models.ConnectedSource
+	if err := r.DB.Where("id = ? AND owner_identity = ?", id, ownerIdentity).First(&source).Error; err != nil {
+		return nil, err
+	}
+	return &source, nil
+}
+
 func (r *GormRepository) CreateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error) {
 	if err := r.DB.Create(job).Error; err != nil {
 		return nil, err
@@ -316,6 +333,24 @@ func (r *GormRepository) findExtractions(sourceIDs []uuid.UUID, projectKey strin
 func (r *GormRepository) FindExtraction(id uuid.UUID) (*models.SourceExtraction, error) {
 	var extraction models.SourceExtraction
 	if err := r.DB.First(&extraction, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &extraction, nil
+}
+
+// FindMutableExtractionForOwner scopes an extraction mutation to its verified
+// source owner without materializing the user's full source or extraction history.
+func (r *GormRepository) FindMutableExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var extraction models.SourceExtraction
+	err := r.DB.Model(&models.SourceExtraction{}).
+		Joins("JOIN connected_sources ON connected_sources.id = source_extractions.source_id").
+		Where("source_extractions.id = ? AND connected_sources.owner_identity = ?", id, ownerIdentity).
+		First(&extraction).Error
+	if err != nil {
 		return nil, err
 	}
 	return &extraction, nil

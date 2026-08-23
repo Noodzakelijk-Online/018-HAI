@@ -702,6 +702,14 @@ func (s *service) SourcesForOwner(ownerIdentity string, includeDisabled bool) ([
 	return s.repo.FindSourcesVisibleToOwner(ownerIdentity, includeDisabled)
 }
 
+func (s *service) MutableSourceForOwner(id uuid.UUID, ownerIdentity string) (*models.ConnectedSource, error) {
+	return s.repo.FindMutableSourceForOwner(id, ownerIdentity)
+}
+
+func (s *service) MutableExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error) {
+	return s.repo.FindMutableExtractionForOwner(id, ownerIdentity)
+}
+
 func (s *service) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
 	return s.repo.FindSyncJobs(sourceID)
 }

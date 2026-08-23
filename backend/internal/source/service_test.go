@@ -2370,21 +2370,25 @@ func writeTestFile(t *testing.T, path, content string) {
 }
 
 type fakeSourceRepo struct {
-	connectors              map[string]models.SourceConnector
-	sources                 map[uuid.UUID]*models.ConnectedSource
-	jobs                    []models.SourceSyncJob
-	rawItems                map[uuid.UUID]*models.SourceRawItem
-	extractions             map[uuid.UUID]*models.SourceExtraction
-	index                   []models.SourceIndexEntry
-	lastExtractionSourceIDs []uuid.UUID
-	lastVisibleSourceOwner  string
-	lastSyncJobSourceIDs    []uuid.UUID
-	lastSyncJobLimit        int
-	lastAuditLogSourceIDs   []uuid.UUID
-	lastAuditLogLimit       int
-	auditLogs               []models.SourceAuditLog
-	deleteExtractionErr     error
-	oauthTokens             map[uuid.UUID]*models.SourceOAuthToken
+	connectors                 map[string]models.SourceConnector
+	sources                    map[uuid.UUID]*models.ConnectedSource
+	jobs                       []models.SourceSyncJob
+	rawItems                   map[uuid.UUID]*models.SourceRawItem
+	extractions                map[uuid.UUID]*models.SourceExtraction
+	index                      []models.SourceIndexEntry
+	lastExtractionSourceIDs    []uuid.UUID
+	lastVisibleSourceOwner     string
+	lastMutableSourceID        uuid.UUID
+	lastMutableSourceOwner     string
+	lastMutableExtractionID    uuid.UUID
+	lastMutableExtractionOwner string
+	lastSyncJobSourceIDs       []uuid.UUID
+	lastSyncJobLimit           int
+	lastAuditLogSourceIDs      []uuid.UUID
+	lastAuditLogLimit          int
+	auditLogs                  []models.SourceAuditLog
+	deleteExtractionErr        error
+	oauthTokens                map[uuid.UUID]*models.SourceOAuthToken
 }
 
 type fakeSemanticService struct {
@@ -2547,6 +2551,16 @@ func (r *fakeSourceRepo) FindSource(id uuid.UUID) (*models.ConnectedSource, erro
 	return &copied, nil
 }
 
+func (r *fakeSourceRepo) FindMutableSourceForOwner(id uuid.UUID, ownerIdentity string) (*models.ConnectedSource, error) {
+	r.lastMutableSourceID = id
+	r.lastMutableSourceOwner = strings.TrimSpace(ownerIdentity)
+	source, err := r.FindSource(id)
+	if err != nil || strings.TrimSpace(ownerIdentity) == "" || source.OwnerIdentity != strings.TrimSpace(ownerIdentity) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return source, nil
+}
+
 func (r *fakeSourceRepo) CreateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error) {
 	if job.ID == uuid.Nil {
 		job.ID = uuid.New()
@@ -2696,6 +2710,20 @@ func (r *fakeSourceRepo) FindExtraction(id uuid.UUID) (*models.SourceExtraction,
 	}
 	copied := *extraction
 	return &copied, nil
+}
+
+func (r *fakeSourceRepo) FindMutableExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error) {
+	r.lastMutableExtractionID = id
+	r.lastMutableExtractionOwner = strings.TrimSpace(ownerIdentity)
+	extraction, err := r.FindExtraction(id)
+	if err != nil || strings.TrimSpace(ownerIdentity) == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	source, err := r.FindSource(extraction.SourceID)
+	if err != nil || source.OwnerIdentity != strings.TrimSpace(ownerIdentity) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return extraction, nil
 }
 
 func (r *fakeSourceRepo) DeleteExtractionForOwner(
