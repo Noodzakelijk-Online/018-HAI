@@ -227,6 +227,26 @@ func TestDurableScanDoesNotDuplicateAnActiveSourceSync(t *testing.T) {
 	}
 }
 
+func TestDurableScanDoesNotDuplicateAnActiveSourceSyncAfterRename(t *testing.T) {
+	source, _ := localFolderSource(t, "alice")
+	repo := newFakeSourceRepo(source)
+	service := NewService(repo, &fakeSourceMemoryService{})
+	jobs := newFakeJobRepo()
+	runner := durablejob.NewRunner(jobs, durablejob.Options{WorkerID: "w1"})
+	work := scanWork(runner, service)
+
+	if err := work(context.Background()); err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	repo.sources[source.ID].Name = "alice-renamed"
+	if err := work(context.Background()); err != nil {
+		t.Fatalf("scan after rename: %v", err)
+	}
+	if got := len(jobs.byKind(JobKindSync)); got != 1 {
+		t.Fatalf("sync jobs after rename = %d, want 1", got)
+	}
+}
+
 func TestDurableSyncJobActuallySyncsTheSource(t *testing.T) {
 	source, _ := localFolderSource(t, "alice")
 	repo := newFakeSourceRepo(source)

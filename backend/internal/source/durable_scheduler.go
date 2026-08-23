@@ -44,7 +44,6 @@ const (
 // syncJobPayload identifies which source a sync job refers to.
 type syncJobPayload struct {
 	SourceID string `json:"sourceId"`
-	Name     string `json:"name,omitempty"`
 }
 
 // startDurableScheduler builds the durable runner over the default queue,
@@ -114,7 +113,10 @@ func scanWork(runner *durablejob.Runner, service Service) func(context.Context) 
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			payload, errMarshal := json.Marshal(syncJobPayload{SourceID: item.ID.String(), Name: item.Name})
+			// The payload is also the durable deduplication key. Keep it to the
+			// immutable source identity so renaming a source cannot queue a second
+			// active sync for the same record.
+			payload, errMarshal := json.Marshal(syncJobPayload{SourceID: item.ID.String()})
 			if errMarshal != nil {
 				return fmt.Errorf("encode sync payload for %s: %w", item.Name, errMarshal)
 			}
@@ -154,7 +156,7 @@ func syncHandler(service Service) durablejob.Handler {
 		}
 		if result != nil && result.Job.Status != "completed" {
 			// Partial failures keep the cursor; retrying is the correct response.
-			return fmt.Errorf("sync %s finished with status %s: %s", payload.Name, result.Job.Status, result.Job.Message)
+			return fmt.Errorf("sync source %s finished with status %s: %s", payload.SourceID, result.Job.Status, result.Job.Message)
 		}
 		return nil
 	}
