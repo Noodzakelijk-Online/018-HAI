@@ -299,6 +299,22 @@ func TestSyncTrelloRejectsWriteCapableToken(t *testing.T) {
 	}
 }
 
+func TestSyncTrelloRejectsCallerSuppliedItems(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(newTrelloSource(sourceID, "abc123XY", ""))
+	_, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{
+		Mode: ModeIncrementalSync,
+		Items: []ImportItem{{
+			ExternalID: "trello:card:unverified",
+			Title:      "Unverified item",
+			Content:    "This must not be accepted as live Trello data.",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "read only from the configured Trello API") {
+		t.Fatalf("Sync error = %v, want caller-supplied item rejection", err)
+	}
+}
+
 func TestSyncTrelloRejectsUnallowlistedHost(t *testing.T) {
 	t.Setenv(trelloBaseURLEnv, "https://trello.example.net")
 	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")

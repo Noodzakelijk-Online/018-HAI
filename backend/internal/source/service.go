@@ -891,6 +891,9 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 	if !source.Enabled || source.Status == "paused" || source.Status == "revoked" {
 		return nil, fmt.Errorf("source is not enabled for sync")
 	}
+	if source.ConnectorKey == trelloConnectorKey && len(request.Items) != 0 {
+		return nil, fmt.Errorf("Trello items are read only from the configured Trello API; caller-supplied items are not accepted")
+	}
 	if source.ConnectorKey == "whisper-audio" && !request.controlledTranscription {
 		return nil, fmt.Errorf("whisper-audio sources must use the controlled transcription route")
 	}
