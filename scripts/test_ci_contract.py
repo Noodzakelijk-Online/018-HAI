@@ -72,6 +72,19 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn('ng-zorro-antd/style/default.less', theme)
         self.assertIn('ng-zorro-antd/style/patch.less', theme)
 
+    def test_home_menu_uses_the_ng_zorro_menu_module(self) -> None:
+        home_module = (ROOT / "frontend" / "src" / "app" / "pages" / "home" / "home.module.ts").read_text(
+            encoding="utf-8"
+        )
+        home_styles = (ROOT / "frontend" / "src" / "app" / "pages" / "home" / "home.component.scss").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('from "ng-zorro-antd/menu"', home_module)
+        self.assertIn("NzMenuModule", home_module)
+        self.assertIn(".dropdown-menu {", home_styles)
+        self.assertIn(".ant-menu {", home_styles)
+
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:
