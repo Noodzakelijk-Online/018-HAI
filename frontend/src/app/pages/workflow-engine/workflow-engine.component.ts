@@ -1,4 +1,4 @@
-import { Component, Inject, OnInit } from '@angular/core';
+import { Component, Inject, OnInit, ViewEncapsulation } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
@@ -37,6 +37,7 @@ type FrameworkProvenanceState = 'missing' | 'invalid' | 'recorded' | 'verified';
     selector: 'app-workflow-engine',
     templateUrl: './workflow-engine.component.html',
     styleUrls: ['./workflow-engine.component.scss'],
+    encapsulation: ViewEncapsulation.None,
     standalone: false
 })
 export class WorkflowEngineComponent implements OnInit {

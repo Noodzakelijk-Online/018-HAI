@@ -140,6 +140,35 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn(".operations-shell", control_center_styles)
         self.assertIn("ViewEncapsulation.None", control_center_component)
 
+    def test_workflow_engine_styles_load_with_the_lazy_module(self) -> None:
+        global_styles = (ROOT / "frontend" / "src" / "styles.scss").read_text(
+            encoding="utf-8"
+        )
+        workflow_styles = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "pages"
+            / "workflow-engine"
+            / "workflow-engine.component.scss"
+        ).read_text(encoding="utf-8")
+        workflow_component = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "pages"
+            / "workflow-engine"
+            / "workflow-engine.component.ts"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn(
+            "/* Workflow Engine follows the command-center rule:", global_styles
+        )
+        self.assertIn("app-workflow-engine .workflow-more-tools {", workflow_styles)
+        self.assertIn("ViewEncapsulation.None", workflow_component)
+
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:
