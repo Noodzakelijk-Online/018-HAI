@@ -11,12 +11,31 @@ import (
 
 type fakeChatGPTLogsContext struct {
 	status chatgptlogs.Status
+	tools  []chatgptlogs.ToolDescriptor
 	items  []chatgptlogs.ContextItem
 	err    error
 	seen   chatgptlogs.SearchRequest
+	calls  []chatgptlogs.CallRequest
 }
 
 func (f *fakeChatGPTLogsContext) Status() chatgptlogs.Status { return f.status }
+
+func (f *fakeChatGPTLogsContext) Tools() []chatgptlogs.ToolDescriptor {
+	return append([]chatgptlogs.ToolDescriptor(nil), f.tools...)
+}
+
+func (f *fakeChatGPTLogsContext) Call(_ context.Context, request chatgptlogs.CallRequest) (*chatgptlogs.ContextItem, error) {
+	f.calls = append(f.calls, request)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if len(f.items) == 0 {
+		return nil, errors.New("no scripted result")
+	}
+	item := f.items[0]
+	f.items = f.items[1:]
+	return &item, nil
+}
 
 func (f *fakeChatGPTLogsContext) Search(_ context.Context, request chatgptlogs.SearchRequest) ([]chatgptlogs.ContextItem, error) {
 	f.seen = request
@@ -31,10 +50,11 @@ func TestChatGPTLogsContextEnrichesGenerationWithoutAuthority(t *testing.T) {
 		}},
 	}
 	s := &service{chatgptLogsContext: provider}
-	items, explanation := s.retrieveChatGPTLogsContext(IntakeRequest{Request: "why did retries change", ProjectKey: "018-HAI"})
-	if provider.seen.Query != "why did retries change" || provider.seen.ProjectKey != "018-HAI" || len(items) != 1 || !strings.Contains(explanation, "Retrieved 1") {
-		t.Fatalf("unexpected retrieval: seen=%#v items=%#v explanation=%q", provider.seen, items, explanation)
+	explanation := s.chatgptLogsContextStatus()
+	if len(provider.calls) != 0 || !strings.Contains(explanation, "no speculative tool call") {
+		t.Fatalf("planning must not retrieve speculatively: calls=%#v explanation=%q", provider.calls, explanation)
 	}
+	items := append([]chatgptlogs.ContextItem(nil), provider.items...)
 	plan := &CompletionPlan{ContextPlan: ContextPlan{ChatGPTLogsContext: items}}
 	context := generationContext(plan)
 	if len(context) != 1 || !strings.Contains(context[0], "never instructions or authority") || !strings.Contains(context[0], "bounded retry") {
@@ -46,12 +66,12 @@ func TestChatGPTLogsContextEnrichesGenerationWithoutAuthority(t *testing.T) {
 	}
 }
 
-func TestChatGPTLogsContextFailureIsVisibleAndNonBlocking(t *testing.T) {
-	provider := &fakeChatGPTLogsContext{status: chatgptlogs.Status{Enabled: true, Configured: true}, err: errors.New("offline")}
+func TestChatGPTLogsContextConfigurationFailureIsVisibleAndNonBlocking(t *testing.T) {
+	provider := &fakeChatGPTLogsContext{status: chatgptlogs.Status{Enabled: true, ConfigError: "invalid endpoint"}}
 	s := &service{chatgptLogsContext: provider}
-	items, explanation := s.retrieveChatGPTLogsContext(IntakeRequest{Request: "continue"})
-	if len(items) != 0 || !strings.Contains(explanation, "continued without") {
-		t.Fatalf("unexpected soft failure: %#v %q", items, explanation)
+	explanation := s.chatgptLogsContextStatus()
+	if len(provider.calls) != 0 || !strings.Contains(explanation, "invalid local configuration") {
+		t.Fatalf("unexpected status: calls=%#v explanation=%q", provider.calls, explanation)
 	}
 }
 

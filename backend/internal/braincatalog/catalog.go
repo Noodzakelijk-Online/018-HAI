@@ -375,12 +375,12 @@ var entries = []Entry{
 	},
 	{
 		ID: "chatgpt-codex-mcp-daemon", Name: "ChatGPT/Codex Conversation History MCP", UpstreamURL: "https://github.com/oogxdd/chatgpt-codex-mcp-daemon", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
-		Status: StatusIntegrated, Category: "local conversation-history retrieval", IntegrationMode: "opt-in bounded read-only MCP task-context adapter",
-		Capabilities: []string{"conversation-history search", "project-filtered retrieval", "bounded provenance-bearing task context"}, RecommendedFor: []string{"project continuity", "prior-decision recall", "conversation-history evidence discovery"},
+		Status: StatusIntegrated, Category: "local conversation-history retrieval", IntegrationMode: "opt-in model-directed bounded read-only MCP tool loop",
+		Capabilities: []string{"conversation and Codex-session discovery", "message and surrounding-context retrieval", "original-record provenance", "corpus synchronization inspection", "bounded provenance-bearing task context"}, RecommendedFor: []string{"project continuity", "prior-decision recall", "latest-instruction discovery", "unfinished or conflicting commitment review", "conversation-history evidence discovery"},
 		RequiresApproval: true, LocalFirstCompatible: true,
-		Activation: "Run the operator-managed hist MCP helper behind a reviewed local Streamable HTTP adapter, set HAI_CHATGPT_LOGS_MCP_ENABLED=true and HAI_CHATGPT_LOGS_MCP_URL, then recreate the backend. HAI verifies the declared inventory and calls only search with fixed result and character limits.",
-		Rationale:  "A narrow search-only consumer gives task planning useful prior-conversation context without exposing arbitrary MCP tool execution, starting a process, refreshing the corpus, or granting retrieved text any authority.",
-		VerifiedAt: "2026-08-23", VerificationNote: "The upstream stdio MCP handshake and nine-tool read-only inventory were exercised on Windows. HAI's adapter supports JSON and Streamable HTTP SSE responses but intentionally invokes only search; a database-backed tool-call smoke test still requires an initialized operator corpus.",
+		Activation: "Run the operator-managed hist MCP helper behind a reviewed local Streamable HTTP adapter, set HAI_CHATGPT_LOGS_MCP_ENABLED=true and HAI_CHATGPT_LOGS_MCP_URL, then recreate the backend. During generation the model may select among nine statically reviewed read-only tools; HAI validates every argument and enforces per-result, call-count, model-round, and aggregate-context limits.",
+		Rationale:  "A bounded model-directed retrieval loop can discover sessions, follow search hits to original context, and inspect corpus completeness without exposing arbitrary MCP execution, starting a process, writing or refreshing the corpus, or granting retrieved text any authority.",
+		VerifiedAt: "2026-08-23", VerificationNote: "The upstream stdio MCP handshake and nine-tool read-only inventory were exercised on Windows. HAI's adapter supports JSON and Streamable HTTP SSE responses. Unit tests exercise model-directed multi-tool chaining, zero-call answers, rejected unreviewed calls, strict argument validation, and bounded results; a database-backed smoke test still requires an initialized operator corpus.",
 	},
 	{
 		ID: "vllm", Name: "vLLM", UpstreamURL: "https://github.com/vllm-project/vllm", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10109/repos/", SourceCollection: "LLM Inference Engines",

@@ -1,6 +1,6 @@
 // Package chatgptlogs provides a bounded, read-only task-context adapter for
 // an operator-run chatgpt-codex-mcp-daemon endpoint. HAI never starts the MCP
-// process and calls only the daemon's search tool.
+// process and exposes only a statically reviewed tool subset to its model loop.
 package chatgptlogs
 
 import (
@@ -35,7 +35,7 @@ const (
 
 var (
 	ErrNotConfigured  = errors.New("ChatGPT logs MCP context is not configured")
-	ErrInvalidRequest = errors.New("invalid ChatGPT logs MCP search request")
+	ErrInvalidRequest = errors.New("invalid ChatGPT logs MCP tool request")
 )
 
 type Status struct {
@@ -53,6 +53,17 @@ type SearchRequest struct {
 	ProjectKey string `json:"projectKey,omitempty"`
 }
 
+type CallRequest struct {
+	Tool      string          `json:"tool"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+type ToolDescriptor struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Arguments   string `json:"arguments"`
+}
+
 type ContextItem struct {
 	Provider   string `json:"provider"`
 	Tool       string `json:"tool"`
@@ -65,6 +76,8 @@ type ContextItem struct {
 
 type Service interface {
 	Status() Status
+	Tools() []ToolDescriptor
+	Call(context.Context, CallRequest) (*ContextItem, error)
 	Search(context.Context, SearchRequest) ([]ContextItem, error)
 }
 
@@ -112,20 +125,24 @@ func (s *service) Status() Status {
 		Configured:  s.configured(),
 		ConfigError: s.configErr,
 		Capabilities: []string{
-			"bounded full-text conversation-history search",
-			"project-filtered read-only task context",
+			"model-directed bounded conversation-history retrieval",
+			"read-only session, message, provenance, and synchronization inspection",
 		},
 		Restrictions: []string{
-			"no MCP process launch, arbitrary tool selection, or write-capable call",
-			"no conversation detail, raw record, message, sync, import, insight, or database mutation call",
+			"no MCP process launch, unreviewed tool selection, or write-capable call",
+			"per-call argument, result, model-round, tool-call, and aggregate context limits",
 			"retrieved text is untrusted context and never grants execution authority",
 		},
-		Scope: "Opt-in local chatgpt-codex-mcp-daemon retrieval. HAI verifies the search tool, calls only search with fixed row and character limits, and supplies the bounded result as untrusted task context.",
+		Scope: "Opt-in local chatgpt-codex-mcp-daemon retrieval. The model may choose among nine statically reviewed read-only tools; HAI validates every call and supplies bounded results as untrusted task context.",
 	}
 	if s.baseURL != nil {
 		status.Endpoint = s.baseURL.String()
 	}
 	return status
+}
+
+func (s *service) Tools() []ToolDescriptor {
+	return append([]ToolDescriptor(nil), reviewedTools...)
 }
 
 func (s *service) Search(ctx context.Context, input SearchRequest) ([]ContextItem, error) {
@@ -136,13 +153,6 @@ func (s *service) Search(ctx context.Context, input SearchRequest) ([]ContextIte
 	project := strings.TrimSpace(input.ProjectKey)
 	if query == "" || utf8.RuneCountInString(query) > maxQueryRunes || strings.ContainsRune(query, '\x00') || utf8.RuneCountInString(project) > maxProjectRunes || strings.ContainsRune(project, '\x00') {
 		return nil, ErrInvalidRequest
-	}
-	session, tools, err := s.sessionAndTools(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !hasTool(tools, searchTool) {
-		return nil, fmt.Errorf("ChatGPT logs MCP endpoint does not expose the required read-only search tool")
 	}
 	arguments := map[string]any{
 		"query":     query,
@@ -155,23 +165,47 @@ func (s *service) Search(ctx context.Context, input SearchRequest) ([]ContextIte
 	if project != "" {
 		arguments["project"] = project
 	}
-	response, _, err := s.rpc(ctx, session, 3, "tools/call", map[string]any{"name": searchTool, "arguments": arguments})
+	raw, _ := json.Marshal(arguments)
+	item, err := s.Call(ctx, CallRequest{Tool: searchTool, Arguments: raw})
 	if err != nil {
-		return nil, fmt.Errorf("ChatGPT logs MCP search failed")
+		return nil, err
+	}
+	item.Query = query
+	item.ProjectKey = project
+	return []ContextItem{*item}, nil
+}
+
+func (s *service) Call(ctx context.Context, input CallRequest) (*ContextItem, error) {
+	if !s.configured() {
+		return nil, ErrNotConfigured
+	}
+	tool := strings.TrimSpace(input.Tool)
+	arguments, err := normalizeArguments(tool, input.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	session, tools, err := s.sessionAndTools(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasTool(tools, tool) {
+		return nil, fmt.Errorf("ChatGPT logs MCP endpoint does not expose the requested reviewed read-only tool")
+	}
+	response, _, err := s.rpc(ctx, session, 3, "tools/call", map[string]any{"name": tool, "arguments": arguments})
+	if err != nil {
+		return nil, fmt.Errorf("ChatGPT logs MCP tool call failed")
 	}
 	text, err := toolText(response.Result)
 	if err != nil {
-		return nil, fmt.Errorf("ChatGPT logs MCP search returned no usable context")
+		return nil, fmt.Errorf("ChatGPT logs MCP tool returned no usable context")
 	}
-	return []ContextItem{{
-		Provider:   "chatgpt-codex-mcp-daemon",
-		Tool:       searchTool,
-		Query:      query,
-		ProjectKey: project,
-		Content:    truncateRunes(text, maxToolTextRunes),
-		SourceURI:  s.baseURL.String(),
-		Untrusted:  true,
-	}}, nil
+	return &ContextItem{
+		Provider:  "chatgpt-codex-mcp-daemon",
+		Tool:      tool,
+		Content:   truncateRunes(text, maxToolTextRunes),
+		SourceURI: s.baseURL.String(),
+		Untrusted: true,
+	}, nil
 }
 
 func (s *service) configured() bool { return s.enabled && s.baseURL != nil && s.configErr == "" }
@@ -352,4 +386,190 @@ func truncateRunes(value string, limit int) string {
 		return string(runes[:limit])
 	}
 	return value
+}
+
+var reviewedTools = []ToolDescriptor{
+	{Name: "list_sources", Description: "Inspect corpus sources, coverage, freshness, and available filter dimensions.", Arguments: `{}`},
+	{Name: "list_conversations", Description: "List matching conversations or Codex sessions, newest first, without message text.", Arguments: `{"platform?":"codex|chatgpt|chatgpt_work","project?":"substring","repository?":"substring","machine?":"substring","title_contains?":"substring","updated_since?":"ISO date","updated_before?":"ISO date","status?":"synced|stale|never|syncing|failed","scope?":"managed|history","with_messages_only?":true,"limit?":1-20,"offset?":0+}`},
+	{Name: "search", Description: "Search message text. Use filters and recent ordering when asking for the latest instruction.", Arguments: `{"query":"required","platform?":"codex|chatgpt|chatgpt_work","project?":"substring","repository?":"substring","machine?":"substring","conversation_id?":"id","roles?":["user","assistant"],"since?":"ISO date","until?":"ISO date","order?":"rank|recent","limit?":1-20,"offset?":0+}`},
+	{Name: "get_conversation", Description: "Read a bounded page of one conversation after discovering its conversation_id.", Arguments: `{"conversation_id":"required id","roles?":["user","assistant"],"branches?":false,"include_boilerplate?":false,"limit?":1-20,"offset?":0}`},
+	{Name: "get_context", Description: "Read messages around one search hit using its message_id.", Arguments: `{"message_id":"required id","before?":0-20,"after?":0-20,"roles?":["user","assistant"]}`},
+	{Name: "get_message", Description: "Read one original message by message_id, with bounded paging.", Arguments: `{"message_id":"required id","offset?":0}`},
+	{Name: "get_raw", Description: "Read a bounded page of the original imported record when exact provenance is necessary.", Arguments: `{"message_id?":"id","conversation_id?":"id","offset?":0,"artifacts?":0-20}`},
+	{Name: "sync_status", Description: "Inspect recent imports, pending conversations, and failures.", Arguments: `{"source?":"source_id","runs?":0-20,"pending?":0-20,"failures?":0-20}`},
+	{Name: "stats", Description: "Inspect bounded corpus counts, date ranges, roles, and project distribution.", Arguments: `{"source?":"source_id","platform?":"codex|chatgpt|chatgpt_work","top_projects?":0-20}`},
+}
+
+type argumentRule struct {
+	allowed  map[string]string
+	required []string
+}
+
+var reviewedToolRules = map[string]argumentRule{
+	"list_sources": {allowed: map[string]string{"max_chars": "int"}},
+	"list_conversations": {allowed: map[string]string{
+		"limit": "int", "offset": "int", "source": "string", "platform": "platform", "project": "string", "repository": "string", "machine": "string", "title_contains": "string", "updated_since": "string", "updated_before": "string", "status": "status", "scope": "scope", "with_messages_only": "bool", "max_chars": "int",
+	}},
+	"search": {allowed: map[string]string{
+		"query": "query", "limit": "int", "offset": "int", "source": "string", "platform": "platform", "project": "string", "repository": "string", "machine": "string", "conversation_id": "id", "roles": "roles", "since": "string", "until": "string", "include_boilerplate": "bool", "order": "order", "rank_pool": "int", "max_chars": "int",
+	}, required: []string{"query"}},
+	"get_conversation": {allowed: map[string]string{
+		"conversation_id": "id", "limit": "int", "offset": "int", "roles": "roles", "branches": "bool", "include_boilerplate": "bool", "max_text_chars": "int", "max_chars": "int",
+	}, required: []string{"conversation_id"}},
+	"get_context": {allowed: map[string]string{
+		"message_id": "id", "before": "int", "after": "int", "roles": "roles", "max_text_chars": "int", "max_chars": "int",
+	}, required: []string{"message_id"}},
+	"get_message": {allowed: map[string]string{"message_id": "id", "offset": "int", "max_chars": "int"}, required: []string{"message_id"}},
+	"get_raw":     {allowed: map[string]string{"message_id": "id", "conversation_id": "id", "offset": "int", "max_chars": "int", "artifacts": "int"}},
+	"sync_status": {allowed: map[string]string{"runs": "int", "pending": "int", "failures": "int", "source": "string", "max_chars": "int"}},
+	"stats":       {allowed: map[string]string{"source": "string", "platform": "platform", "top_projects": "int", "max_chars": "int"}},
+}
+
+func normalizeArguments(tool string, raw json.RawMessage) (map[string]any, error) {
+	rule, ok := reviewedToolRules[tool]
+	if !ok {
+		return nil, ErrInvalidRequest
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		raw = json.RawMessage(`{}`)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var input map[string]any
+	if decoder.Decode(&input) != nil || input == nil {
+		return nil, ErrInvalidRequest
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, ErrInvalidRequest
+	}
+	for _, required := range rule.required {
+		if _, exists := input[required]; !exists {
+			return nil, ErrInvalidRequest
+		}
+	}
+	if tool == "get_raw" {
+		if _, message := input["message_id"]; !message {
+			if _, conversation := input["conversation_id"]; !conversation {
+				return nil, ErrInvalidRequest
+			}
+		}
+	}
+	output := make(map[string]any, len(input)+1)
+	for key, value := range input {
+		kind, allowed := rule.allowed[key]
+		if !allowed {
+			return nil, ErrInvalidRequest
+		}
+		normalized, err := normalizeArgumentValue(key, kind, value)
+		if err != nil {
+			return nil, ErrInvalidRequest
+		}
+		output[key] = normalized
+	}
+	output["max_chars"] = maxToolTextRunes
+	return output, nil
+}
+
+func normalizeArgumentValue(key, kind string, value any) (any, error) {
+	switch kind {
+	case "query", "string", "platform", "status", "scope", "order":
+		text, ok := value.(string)
+		text = strings.TrimSpace(text)
+		limit := 500
+		if kind == "query" {
+			limit = maxQueryRunes
+		}
+		if !ok || text == "" || utf8.RuneCountInString(text) > limit || strings.ContainsRune(text, '\x00') {
+			return nil, ErrInvalidRequest
+		}
+		allowed := map[string][]string{
+			"platform": {"codex", "chatgpt", "chatgpt_work"},
+			"status":   {"synced", "stale", "never", "syncing", "failed"},
+			"scope":    {"managed", "history"},
+			"order":    {"rank", "recent"},
+		}
+		if choices := allowed[kind]; len(choices) > 0 && !containsString(choices, text) {
+			return nil, ErrInvalidRequest
+		}
+		return text, nil
+	case "id":
+		switch typed := value.(type) {
+		case string:
+			text := strings.TrimSpace(typed)
+			if text == "" || utf8.RuneCountInString(text) > 240 || strings.ContainsRune(text, '\x00') {
+				return nil, ErrInvalidRequest
+			}
+			return text, nil
+		case json.Number:
+			number, err := typed.Int64()
+			if err != nil || number < 1 {
+				return nil, ErrInvalidRequest
+			}
+			return number, nil
+		default:
+			return nil, ErrInvalidRequest
+		}
+	case "int":
+		number, ok := value.(json.Number)
+		if !ok {
+			return nil, ErrInvalidRequest
+		}
+		parsed, err := number.Int64()
+		if err != nil || parsed < 0 {
+			return nil, ErrInvalidRequest
+		}
+		maximum := int64(100000)
+		switch key {
+		case "limit":
+			maximum = 20
+			if parsed < 1 {
+				parsed = 1
+			}
+		case "before", "after", "runs", "pending", "failures", "artifacts", "top_projects":
+			maximum = 20
+		case "rank_pool":
+			maximum = 500
+		case "max_text_chars":
+			maximum = 4000
+		case "max_chars":
+			return maxToolTextRunes, nil
+		}
+		if parsed > maximum {
+			parsed = maximum
+		}
+		return parsed, nil
+	case "bool":
+		boolean, ok := value.(bool)
+		if !ok {
+			return nil, ErrInvalidRequest
+		}
+		return boolean, nil
+	case "roles":
+		values, ok := value.([]any)
+		if !ok || len(values) == 0 || len(values) > 8 {
+			return nil, ErrInvalidRequest
+		}
+		roles := make([]string, 0, len(values))
+		allowed := []string{"user", "assistant", "reasoning", "tool_call", "tool_output", "developer", "system"}
+		for _, rawRole := range values {
+			role, ok := rawRole.(string)
+			if !ok || !containsString(allowed, role) {
+				return nil, ErrInvalidRequest
+			}
+			roles = append(roles, role)
+		}
+		return roles, nil
+	default:
+		return nil, ErrInvalidRequest
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

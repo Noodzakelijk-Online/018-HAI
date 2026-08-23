@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -322,6 +323,7 @@ type ExecutionResult struct {
 	UnsupportedClaims  int                        `json:"unsupportedClaims"`
 	LLMGeneration      *llm.GenerationResult      `json:"llmGeneration,omitempty"`
 	ToolExecution      *ToolExecutionResult       `json:"toolExecution,omitempty"`
+	MCPToolCalls       []MCPToolCallTrace         `json:"mcpToolCalls,omitempty"`
 	Actions            []ExecutedAction           `json:"actions"`
 	BlockedReason      string                     `json:"blockedReason,omitempty"`
 }
@@ -1105,7 +1107,8 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 		return nil, err
 	}
 	sourceContext, sourceExplanation := s.retrieveSourceContext(request)
-	chatgptLogsContext, chatgptLogsExplanation := s.retrieveChatGPTLogsContext(request)
+	chatgptLogsContext := []chatgptlogs.ContextItem{}
+	chatgptLogsExplanation := s.chatgptLogsContextStatus()
 	modelDecision, err := s.llmService.Route(llm.RouteRequest{
 		Task:              request.Request,
 		TaskType:          intake.TaskType,
@@ -1840,7 +1843,6 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 	result.Actions = append(result.Actions,
 		executedAction("memory.retrieve", "completed", request.Request, countLabel(len(plan.ContextPlan.UsedContext), "memory item"), started),
 		executedAction("source.search", "completed", request.Request, countLabel(len(plan.ContextPlan.SourceContext), "source extraction"), started),
-		executedAction("mcp.chatgpt-logs.search", "completed", request.Request, countLabel(len(plan.ContextPlan.ChatGPTLogsContext), "conversation-history context item"), started),
 		executedAction("life-ontology.retrieve", "completed", request.Request, countLabel(len(plan.ContextPlan.LifeContext), "whole-life record"), started),
 	)
 	if deterministicReadOnlyRuntimeCompleted(result.ToolExecution) {
@@ -1874,9 +1876,9 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 	draft := ""
 	generateStarted := time.Now().UTC()
 	if s.llmService != nil {
-		context := generationContext(plan)
+		generationContextEntries := generationContext(plan)
 		if result.ToolExecution != nil {
-			context = append(context, toolExecutionSnippet(result.ToolExecution))
+			generationContextEntries = append(generationContextEntries, toolExecutionSnippet(result.ToolExecution))
 		}
 		effectContext := &llm.EffectContext{
 			OwnerIdentity: plan.OwnerIdentity,
@@ -1903,10 +1905,10 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 				effectContext.ApprovalBindingDigest = approvalDecision.ApprovalBindingDigest
 			}
 		}
-		generation, err := s.llmService.Generate(llm.GenerateRequest{
+		generationRequest := llm.GenerateRequest{
 			Task:         plan.RealGoal,
 			SystemPrompt: "Produce a concise draft answer using only the provided context. Do not invent facts; unsupported details will be rejected by verification." + minimalitySystemContract(plan.MinimalityDecision),
-			Context:      context,
+			Context:      generationContextEntries,
 			RouteRequest: &llm.RouteRequest{
 				Task:              plan.Request,
 				TaskType:          plan.Intake.TaskType,
@@ -1919,17 +1921,50 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 			MaxTokens:     900,
 			OperationID:   plan.ID + ":attempt:" + strconv.Itoa(maxInt(plan.RetryPolicy.CurrentAttempt+1, 1)),
 			FallbackDepth: plan.RetryPolicy.CurrentAttempt,
-		})
-		if err == nil && generation != nil {
-			result.LLMGeneration = generation
-			if generation.Status == "completed" {
-				draft = generation.Output
+		}
+		loop := runChatGPTLogsToolLoop(context.Background(), s.chatgptLogsContext, s.llmService.Generate, generationRequest)
+		result.MCPToolCalls = append(result.MCPToolCalls, loop.Calls...)
+		if len(loop.Items) > 0 {
+			plan.ContextPlan.ChatGPTLogsContext = append(plan.ContextPlan.ChatGPTLogsContext, loop.Items...)
+			for _, item := range loop.Items {
+				if itemEvidence, ok := chatgptLogsEvidence(item); ok {
+					evidence = append(evidence, itemEvidence)
+				}
 			}
-			result.Actions = append(result.Actions, executedAction("llm.generate", generation.Status, plan.ModelDecision.SelectedModelID, generation.Reason, generateStarted))
-			plan.Events = append(plan.Events, event("llm", "model generation "+generation.Status+": "+generation.Reason))
-		} else if err != nil {
-			result.Actions = append(result.Actions, executedAction("llm.generate", "failed", plan.ModelDecision.SelectedModelID, err.Error(), generateStarted))
-			plan.Events = append(plan.Events, event("llm", "model generation failed; falling back to source-grounded evidence synthesis"))
+			result.EvidenceCount = len(evidence)
+		}
+		for _, call := range loop.Calls {
+			result.Actions = append(result.Actions, executedAction("mcp.chatgpt-logs."+call.Tool, call.Status, string(call.Arguments), call.Detail, call.StartedAt))
+		}
+		if loop.Status != "skipped" {
+			plan.Events = append(plan.Events, event("mcp-tool-loop", loop.Status+": "+loop.Detail))
+		}
+		if loop.Status == "completed" && strings.TrimSpace(loop.Answer) != "" {
+			draft = loop.Answer
+			if loop.Generation != nil {
+				generation := *loop.Generation
+				generation.Output = draft
+				result.LLMGeneration = &generation
+			}
+			result.Actions = append(result.Actions, executedAction("llm.generate", "completed", plan.ModelDecision.SelectedModelID, loop.Detail, generateStarted))
+			plan.Events = append(plan.Events, event("llm", "model-directed MCP loop completed generation: "+loop.Detail))
+		} else {
+			generationRequest.Context = generationContext(plan)
+			if result.ToolExecution != nil {
+				generationRequest.Context = append(generationRequest.Context, toolExecutionSnippet(result.ToolExecution))
+			}
+			generation, err := s.llmService.Generate(generationRequest)
+			if err == nil && generation != nil {
+				result.LLMGeneration = generation
+				if generation.Status == "completed" {
+					draft = generation.Output
+				}
+				result.Actions = append(result.Actions, executedAction("llm.generate", generation.Status, plan.ModelDecision.SelectedModelID, generation.Reason, generateStarted))
+				plan.Events = append(plan.Events, event("llm", "model generation "+generation.Status+": "+generation.Reason))
+			} else if err != nil {
+				result.Actions = append(result.Actions, executedAction("llm.generate", "failed", plan.ModelDecision.SelectedModelID, err.Error(), generateStarted))
+				plan.Events = append(plan.Events, event("llm", "model generation failed; falling back to source-grounded evidence synthesis"))
+			}
 		}
 	}
 
@@ -2229,18 +2264,9 @@ func evidenceFromPlan(plan *CompletionPlan) []verification.EvidenceInput {
 		})
 	}
 	for _, item := range plan.ContextPlan.ChatGPTLogsContext {
-		if strings.TrimSpace(item.Content) == "" {
-			continue
+		if itemEvidence, ok := chatgptLogsEvidence(item); ok {
+			evidence = append(evidence, itemEvidence)
 		}
-		evidence = append(evidence, verification.EvidenceInput{
-			SourceType:  "mcp_conversation_history",
-			SourceID:    item.Provider + ":" + item.Tool,
-			SourceURI:   item.SourceURI,
-			SourceLabel: "untrusted bounded conversation-history search",
-			Snippet:     item.Content,
-			Authority:   "untrusted_context",
-			Primary:     false,
-		})
 	}
 	for _, suggestion := range plan.ContextPlan.LifeContext {
 		entity := suggestion.Entity
@@ -2261,6 +2287,21 @@ func evidenceFromPlan(plan *CompletionPlan) []verification.EvidenceInput {
 		}
 	}
 	return evidence
+}
+
+func chatgptLogsEvidence(item chatgptlogs.ContextItem) (verification.EvidenceInput, bool) {
+	if strings.TrimSpace(item.Content) == "" {
+		return verification.EvidenceInput{}, false
+	}
+	return verification.EvidenceInput{
+		SourceType:  "mcp_conversation_history",
+		SourceID:    item.Provider + ":" + item.Tool,
+		SourceURI:   item.SourceURI,
+		SourceLabel: "untrusted bounded conversation-history MCP result",
+		Snippet:     item.Content,
+		Authority:   "untrusted_context",
+		Primary:     false,
+	}, true
 }
 
 func generationContext(plan *CompletionPlan) []string {
@@ -2399,25 +2440,18 @@ func (s *service) retrieveSourceContext(request IntakeRequest) ([]source.RankedE
 	return result.UsedContext, result.Explanation
 }
 
-func (s *service) retrieveChatGPTLogsContext(request IntakeRequest) ([]chatgptlogs.ContextItem, string) {
+func (s *service) chatgptLogsContextStatus() string {
 	if s.chatgptLogsContext == nil {
-		return []chatgptlogs.ContextItem{}, "ChatGPT logs MCP context is not configured."
+		return "ChatGPT logs MCP context is not configured."
 	}
 	status := s.chatgptLogsContext.Status()
 	if !status.Configured {
 		if status.Enabled && strings.TrimSpace(status.ConfigError) != "" {
-			return []chatgptlogs.ContextItem{}, "ChatGPT logs MCP context is blocked by invalid local configuration."
+			return "ChatGPT logs MCP context is blocked by invalid local configuration."
 		}
-		return []chatgptlogs.ContextItem{}, "ChatGPT logs MCP context is disabled."
+		return "ChatGPT logs MCP context is disabled."
 	}
-	items, err := s.chatgptLogsContext.Search(context.Background(), chatgptlogs.SearchRequest{
-		Query:      request.Request,
-		ProjectKey: request.ProjectKey,
-	})
-	if err != nil {
-		return []chatgptlogs.ContextItem{}, "ChatGPT logs MCP retrieval failed; task planning continued without conversation-history context."
-	}
-	return items, fmt.Sprintf("Retrieved %d bounded untrusted conversation-history context item(s) through the reviewed read-only MCP search adapter.", len(items))
+	return "ChatGPT logs MCP tools are available to the bounded model-directed read-only tool loop during execution; planning made no speculative tool call."
 }
 
 func analyzeIntake(request IntakeRequest) IntakeAnalysis {
@@ -3137,6 +3171,21 @@ func sanitizeCompletionPlanApprovalData(plan CompletionPlan) CompletionPlan {
 			tool.Output = sanitizeTaskOperationalText(tool.Output, 8192)
 			tool.AuditEvents = sanitizeTaskAuditEvents(tool.AuditEvents)
 			execution.ToolExecution = &tool
+		}
+		if len(execution.MCPToolCalls) > 0 {
+			traces := append([]MCPToolCallTrace(nil), execution.MCPToolCalls...)
+			for index := range traces {
+				traces[index].Tool = sanitizeTaskOperationalText(traces[index].Tool, 128)
+				traces[index].Status = sanitizeTaskOperationalText(traces[index].Status, 64)
+				traces[index].Detail = sanitizeTaskOperationalText(traces[index].Detail, 512)
+				redacted := safety.RedactSecrets(string(traces[index].Arguments))
+				if json.Valid([]byte(redacted)) {
+					traces[index].Arguments = json.RawMessage(redacted)
+				} else {
+					traces[index].Arguments = nil
+				}
+			}
+			execution.MCPToolCalls = traces
 		}
 		if len(execution.Actions) > 0 {
 			actions := append([]ExecutedAction{}, execution.Actions...)

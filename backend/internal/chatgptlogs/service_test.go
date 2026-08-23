@@ -94,7 +94,7 @@ func TestSearchFailsClosedForUnsafeConfigurationAndMissingSearch(t *testing.T) {
 	}))
 	defer server.Close()
 	configured := NewService(true, server.URL+"/mcp", server.Client())
-	if _, err := configured.Search(context.Background(), SearchRequest{Query: "test"}); err == nil || !strings.Contains(err.Error(), "search tool") {
+	if _, err := configured.Search(context.Background(), SearchRequest{Query: "test"}); err == nil || !strings.Contains(err.Error(), "requested reviewed read-only tool") {
 		t.Fatalf("missing search error = %v", err)
 	}
 }
@@ -107,6 +107,53 @@ func TestSearchRejectsInvalidInputBeforeNetwork(t *testing.T) {
 	for _, request := range []SearchRequest{{}, {Query: "nul\x00query"}, {Query: strings.Repeat("x", maxQueryRunes+1)}, {Query: "ok", ProjectKey: strings.Repeat("p", maxProjectRunes+1)}} {
 		if _, err := service.Search(context.Background(), request); !errors.Is(err, ErrInvalidRequest) {
 			t.Fatalf("Search(%#v) error = %v", request, err)
+		}
+	}
+}
+
+func TestNormalizeArgumentsAllowsReviewedToolsAndClampsBudgets(t *testing.T) {
+	tests := []struct {
+		tool string
+		raw  string
+	}{
+		{"list_sources", `{}`},
+		{"list_conversations", `{"platform":"codex","project":"018-HAI","limit":200}`},
+		{"search", `{"query":"unfinished commitment","roles":["user","assistant"],"order":"recent"}`},
+		{"get_conversation", `{"conversation_id":42,"limit":100}`},
+		{"get_context", `{"message_id":"message-1","before":50,"after":50}`},
+		{"get_message", `{"message_id":99}`},
+		{"get_raw", `{"conversation_id":"conversation-1","artifacts":50}`},
+		{"sync_status", `{"runs":50,"pending":50,"failures":50}`},
+		{"stats", `{"platform":"chatgpt_work","top_projects":50}`},
+	}
+	for _, test := range tests {
+		t.Run(test.tool, func(t *testing.T) {
+			arguments, err := normalizeArguments(test.tool, json.RawMessage(test.raw))
+			if err != nil {
+				t.Fatalf("normalizeArguments() error = %v", err)
+			}
+			if arguments["max_chars"] != maxToolTextRunes {
+				t.Fatalf("max_chars = %#v", arguments["max_chars"])
+			}
+			for _, key := range []string{"limit", "before", "after", "artifacts", "runs", "pending", "failures", "top_projects"} {
+				if value, exists := arguments[key]; exists && value.(int64) > 20 {
+					t.Fatalf("%s escaped clamp: %#v", key, value)
+				}
+			}
+		})
+	}
+}
+
+func TestNormalizeArgumentsRejectsUnknownToolsFieldsAndMissingIdentifiers(t *testing.T) {
+	for _, test := range []CallRequest{
+		{Tool: "delete_conversation", Arguments: json.RawMessage(`{}`)},
+		{Tool: "search", Arguments: json.RawMessage(`{"query":"ok","command":"rm"}`)},
+		{Tool: "search", Arguments: json.RawMessage(`{"query":"ok","platform":"unknown"}`)},
+		{Tool: "get_message", Arguments: json.RawMessage(`{}`)},
+		{Tool: "get_raw", Arguments: json.RawMessage(`{}`)},
+	} {
+		if _, err := normalizeArguments(test.Tool, test.Arguments); !errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("normalizeArguments(%#v) error = %v", test, err)
 		}
 	}
 }
