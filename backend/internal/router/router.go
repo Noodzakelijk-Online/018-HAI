@@ -20,6 +20,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	maxRequestReadDuration   = 15 * time.Minute
+	maxUploadWriteDuration   = 15 * time.Minute
+	defaultIdleConnectionTTL = 60 * time.Second
+)
+
 func Initialize() error {
 	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals()...)
 	defer stop()
@@ -66,14 +72,19 @@ func initializeWithContext(ctx context.Context) error {
 		router.GET("/metrics", metricsExporter.RequireBearerToken(), gin.WrapH(metricsExporter.Handler()))
 	}
 
-	server := &http.Server{
-		Addr:              config.AppConfig.ServerPort,
-		Handler:           router,
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		WriteTimeout:      60 * time.Second,
-	}
+	server := newHTTPServer(config.AppConfig.ServerPort, router)
 	return serveWithContext(ctx, server, nil)
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       maxRequestReadDuration,
+		IdleTimeout:       defaultIdleConnectionTTL,
+		WriteTimeout:      maxUploadWriteDuration,
+	}
 }
 
 // serveWithContext gives the API and the schedulers that derive from its

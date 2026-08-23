@@ -44,6 +44,8 @@ class GatewayAuthContractTest(unittest.TestCase):
         block = location_block("location = /api/v1/agent-runtimes/openclaw/ecosystem/upload")
         self.assertIn("client_max_body_size 752m;", block)
         self.assertIn("proxy_request_buffering off;", block)
+        self.assertIn("proxy_read_timeout 15m;", block)
+        self.assertIn("proxy_send_timeout 15m;", block)
 
     def test_backend_routes_use_authenticated_catch_all(self) -> None:
         backend = location_block("location /api/v1 {")

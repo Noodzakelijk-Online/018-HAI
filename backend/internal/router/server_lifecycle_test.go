@@ -40,6 +40,22 @@ func TestServeWithContextStopsOnCancellation(t *testing.T) {
 	}
 }
 
+func TestHTTPServerUsesBoundedUploadCompatibleTimeouts(t *testing.T) {
+	server := newHTTPServer(":8080", http.NewServeMux())
+	if server.ReadHeaderTimeout != 5*time.Second {
+		t.Fatalf("ReadHeaderTimeout = %v", server.ReadHeaderTimeout)
+	}
+	if server.ReadTimeout != maxRequestReadDuration {
+		t.Fatalf("ReadTimeout = %v, want %v", server.ReadTimeout, maxRequestReadDuration)
+	}
+	if server.WriteTimeout != maxUploadWriteDuration {
+		t.Fatalf("WriteTimeout = %v, want %v", server.WriteTimeout, maxUploadWriteDuration)
+	}
+	if server.IdleTimeout != defaultIdleConnectionTTL {
+		t.Fatalf("IdleTimeout = %v, want %v", server.IdleTimeout, defaultIdleConnectionTTL)
+	}
+}
+
 func TestShutdownSignalsIncludeInterrupt(t *testing.T) {
 	for _, candidate := range shutdownSignals() {
 		if candidate == os.Interrupt {
