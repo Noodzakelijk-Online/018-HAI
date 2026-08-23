@@ -1063,6 +1063,55 @@ func TestCreateSourceRequiresExplicitLocalFolderTarget(t *testing.T) {
 	}
 }
 
+func TestCreateSourceRejectsUnsupportedSyncFrequency(t *testing.T) {
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	_, err := service.CreateSource(CreateSourceRequest{
+		ConnectorKey:  "local-folder",
+		Name:          "Local folder",
+		Enabled:       true,
+		LocalOnly:     true,
+		SyncFrequency: "after-lunch",
+		SyncTarget:    ".",
+	})
+	if err == nil || !strings.Contains(err.Error(), "sync frequency") {
+		t.Fatalf("CreateSource error = %v, want unsupported sync frequency", err)
+	}
+}
+
+func TestCreateSourceNormalizesManualSyncFrequency(t *testing.T) {
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	source, err := service.CreateSource(CreateSourceRequest{
+		ConnectorKey:  "local-folder",
+		Name:          "Local folder",
+		Enabled:       true,
+		LocalOnly:     true,
+		SyncFrequency: "off",
+		SyncTarget:    ".",
+	})
+	if err != nil {
+		t.Fatalf("CreateSource: %v", err)
+	}
+	if source.SyncFrequency != "manual" {
+		t.Fatalf("SyncFrequency = %q, want manual", source.SyncFrequency)
+	}
+}
+
+func TestUpdateSourceRejectsUnsupportedSyncFrequency(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: "local-folder", Name: "Local folder", Enabled: true,
+		LocalOnly: true, Status: "active", SyncFrequency: "1h", SyncTarget: ".",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+	_, err := service.UpdateSource(sourceID, UpdateSourceRequest{SyncFrequency: "eventually"})
+	if err == nil || !strings.Contains(err.Error(), "sync frequency") {
+		t.Fatalf("UpdateSource error = %v, want unsupported sync frequency", err)
+	}
+	if got := repo.sources[sourceID].SyncFrequency; got != "1h" {
+		t.Fatalf("stored SyncFrequency = %q, want unchanged 1h", got)
+	}
+}
+
 func TestCreateTrelloSourceRequiresConfiguredRemoteBoard(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	request := CreateSourceRequest{

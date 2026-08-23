@@ -537,6 +537,10 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 	if category == "" {
 		return nil, fmt.Errorf("category is required")
 	}
+	syncFrequency, err := validatedSyncFrequency(connectorKey, request.SyncFrequency)
+	if err != nil {
+		return nil, err
+	}
 	source := &models.ConnectedSource{
 		OwnerIdentity:     strings.TrimSpace(request.OwnerIdentity),
 		ConnectorKey:      connectorKey,
@@ -544,7 +548,7 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 		Category:          category,
 		Enabled:           request.Enabled,
 		LocalOnly:         request.LocalOnly,
-		SyncFrequency:     firstNonEmpty(request.SyncFrequency, "manual"),
+		SyncFrequency:     syncFrequency,
 		SyncTarget:        strings.TrimSpace(request.SyncTarget),
 		DefaultProjectKey: strings.TrimSpace(request.DefaultProjectKey),
 		IngestionModes:    joinValues(defaultModes(request.IngestionModes)),
@@ -673,7 +677,11 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 		source.LocalOnly = *request.LocalOnly
 	}
 	if request.SyncFrequency != "" {
-		source.SyncFrequency = request.SyncFrequency
+		syncFrequency, err := validatedSyncFrequency(source.ConnectorKey, request.SyncFrequency)
+		if err != nil {
+			return nil, err
+		}
+		source.SyncFrequency = syncFrequency
 	}
 	if request.SyncTarget != nil {
 		source.SyncTarget = strings.TrimSpace(*request.SyncTarget)
@@ -3289,6 +3297,24 @@ func parseSyncFrequency(value string) (time.Duration, bool) {
 		return 0, false
 	}
 	return duration, true
+}
+
+// validatedSyncFrequency prevents a source from displaying a scheduled
+// interval that the scheduler cannot understand. Manual aliases are persisted
+// consistently, while operator-triggered transcription remains manual-only.
+func validatedSyncFrequency(connectorKey, value string) (string, error) {
+	clean := strings.TrimSpace(strings.ToLower(value))
+	switch clean {
+	case "", "manual", "off", "disabled", "none":
+		return "manual", nil
+	}
+	if connectorKey == "whisper-audio" {
+		return "", fmt.Errorf("whisper-audio is operator-triggered only and must use manual sync frequency")
+	}
+	if _, ok := parseSyncFrequency(clean); !ok {
+		return "", fmt.Errorf("sync frequency %q is unsupported; use manual, hourly, daily, weekly, or a duration of at least one minute", value)
+	}
+	return strings.TrimSpace(value), nil
 }
 
 type whatsAppMessage struct {
