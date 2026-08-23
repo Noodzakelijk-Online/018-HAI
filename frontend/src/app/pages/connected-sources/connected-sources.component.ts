@@ -53,6 +53,8 @@ export class ConnectedSourcesComponent implements OnInit {
   extractions: ISourceExtraction[] = [];
   auditLogs: ISourceAuditLog[] = [];
   syncJobs: ISourceSyncJob[] = [];
+  sourceExtractionCounts: Record<string, number> = {};
+  latestJobsBySource: Record<string, ISourceSyncJob> = {};
   connectionHealth: Record<string, ISourceConnectionHealth> = {};
   connectionHealthUnavailable: Record<string, boolean> = {};
   searchResult?: ISourceSearchResult;
@@ -196,6 +198,7 @@ export class ConnectedSourcesComponent implements OnInit {
         this.extractions = extractions;
         this.auditLogs = auditLogs;
         this.syncJobs = syncJobs || [];
+        this.rebuildSourceIndexes();
         this.applySourceDefaults(sources);
         this.loadConnectionHealth(sources);
         this.updateSourceActions();
@@ -514,7 +517,7 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   latestJobFor(source: IConnectedSource): ISourceSyncJob | undefined {
-    return this.syncJobs.find((job) => job.sourceId === source.id);
+    return this.latestJobsBySource[source.id];
   }
 
   statusText(status?: string): string {
@@ -551,7 +554,7 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   sourceExtractionCount(source: IConnectedSource): number {
-    return this.extractions.filter((extraction) => extraction.sourceId === source.id).length;
+    return this.sourceExtractionCounts[source.id] || 0;
   }
 
   connectorFor(source?: IConnectedSource): ISourceConnector | undefined {
@@ -1363,6 +1366,7 @@ export class ConnectedSourcesComponent implements OnInit {
       .subscribe({
         next: (items) => {
           this.extractions = items;
+          this.rebuildSourceIndexes();
           this.updateSourceActions();
         },
         error: () => {
@@ -1383,6 +1387,7 @@ export class ConnectedSourcesComponent implements OnInit {
     this.sourceService.syncJobs().pipe(timeout(this.loadTimeoutMs)).subscribe({
       next: (jobs) => {
         this.syncJobs = jobs || [];
+        this.rebuildSourceIndexes();
         this.updateSourceActions();
       },
       error: () => {
@@ -1390,6 +1395,19 @@ export class ConnectedSourcesComponent implements OnInit {
         this.updateSourceActions();
       },
     });
+  }
+
+  private rebuildSourceIndexes(): void {
+    this.sourceExtractionCounts = this.extractions.reduce<Record<string, number>>((counts, extraction) => {
+      counts[extraction.sourceId] = (counts[extraction.sourceId] || 0) + 1;
+      return counts;
+    }, {});
+    this.latestJobsBySource = this.syncJobs.reduce<Record<string, ISourceSyncJob>>((jobs, job) => {
+      if (!jobs[job.sourceId]) {
+        jobs[job.sourceId] = job;
+      }
+      return jobs;
+    }, {});
   }
 
   private loadConnectionHealth(sources: IConnectedSource[]): void {

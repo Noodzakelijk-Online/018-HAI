@@ -236,6 +236,24 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.sourceHealth(source)).toBeUndefined();
   });
 
+  it('builds constant-time source record and latest-job lookups', () => {
+    const { component } = createComponent();
+    const source = { id: 'gmail-source', connectorKey: 'gmail', name: 'Personal Gmail' } as IConnectedSource;
+    component.extractions = [
+      { id: 'record-1', sourceId: source.id } as any,
+      { id: 'record-2', sourceId: source.id } as any,
+    ];
+    component.syncJobs = [
+      { id: 'newest-job', sourceId: source.id, status: 'completed' } as any,
+      { id: 'older-job', sourceId: source.id, status: 'failed' } as any,
+    ];
+
+    (component as any).rebuildSourceIndexes();
+
+    expect(component.sourceExtractionCount(source)).toBe(2);
+    expect(component.latestJobFor(source)?.id).toBe('newest-job');
+  });
+
   it('preserves extracted records when an action-triggered reload fails', () => {
     const { component, sourceService } = createComponent();
     component.extractions = [{ id: 'existing-record' } as any];
