@@ -1,8 +1,8 @@
-import { Component, Inject, OnInit } from '@angular/core';
+import { Component, Inject, OnDestroy, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
-import { forkJoin, of } from 'rxjs';
+import { forkJoin, of, Subscription } from 'rxjs';
 import { catchError, finalize, timeout } from 'rxjs/operators';
 import {
   IConnectedSource,
@@ -47,7 +47,7 @@ interface SourceActionCard {
     styleUrls: ['./connected-sources.component.scss'],
     standalone: false
 })
-export class ConnectedSourcesComponent implements OnInit {
+export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   connectors: ISourceConnector[] = [];
   sources: IConnectedSource[] = [];
   extractions: ISourceExtraction[] = [];
@@ -74,6 +74,7 @@ export class ConnectedSourcesComponent implements OnInit {
   themeMode: ThemeMode = 'light';
   private readonly loadTimeoutMs = 6000;
   private readonly operationTimeoutMs = 15000;
+  private refreshSubscription?: Subscription;
 
   sourceForm: FormGroup = this.fb.group({
     connectorKey: ['local-folder', [Validators.required]],
@@ -149,10 +150,15 @@ export class ConnectedSourcesComponent implements OnInit {
     this.refresh();
   }
 
+  ngOnDestroy(): void {
+    this.refreshSubscription?.unsubscribe();
+  }
+
   refresh(): void {
+    this.refreshSubscription?.unsubscribe();
     this.loading = true;
     this.loadWarnings = [];
-    forkJoin({
+    this.refreshSubscription = forkJoin({
       connectors: this.sourceService.connectors().pipe(
         timeout(this.loadTimeoutMs),
         catchError(() => {

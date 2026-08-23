@@ -224,6 +224,28 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.hasLoadWarnings()).toBeTrue();
   });
 
+  it('cancels an obsolete refresh so stale sources cannot replace the newest view', () => {
+    const { component, sourceService } = createComponent();
+    const firstSources = new Subject<IConnectedSource[]>();
+    const secondSources = new Subject<IConnectedSource[]>();
+    sourceService.connectors.and.returnValue(of([]));
+    sourceService.sources.and.returnValues(firstSources.asObservable(), secondSources.asObservable());
+    sourceService.extractions.and.returnValue(of([]));
+    sourceService.auditLogs.and.returnValue(of([]));
+    sourceService.syncJobs.and.returnValue(of([]));
+    sourceService.connectionHealths.and.returnValue(of([]));
+
+    component.refresh();
+    component.refresh();
+
+    secondSources.next([{ id: 'new-source', name: 'Newest source' } as IConnectedSource]);
+    secondSources.complete();
+    firstSources.next([{ id: 'old-source', name: 'Stale source' } as IConnectedSource]);
+    firstSources.complete();
+
+    expect(component.sources.map((source) => source.id)).toEqual(['new-source']);
+  });
+
   it('marks an unavailable source health batch instead of treating it as absent health', () => {
     const { component, sourceService } = createComponent();
     const source = { id: 'gmail-source', connectorKey: 'gmail', name: 'Personal Gmail' } as IConnectedSource;
