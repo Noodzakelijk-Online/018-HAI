@@ -39,6 +39,15 @@ function Require-Value($Values, [string]$Name, [string]$Expected) {
     if ([string]$Values[$Name] -ne $Expected) { throw "$Name must be '$Expected' before public access can start." }
 }
 
+function Require-PositiveInteger($Values, [string]$Name) {
+    $raw = ([string]$Values[$Name]).Trim()
+    $parsed = 0
+    if (![int]::TryParse($raw, [ref]$parsed) -or $parsed -lt 1) {
+        throw "$Name must be a positive integer before public access can start."
+    }
+    return $parsed
+}
+
 function Assert-HaiComposeOwnership {
     $ids = @(docker ps -aq --filter 'label=com.docker.compose.project=018-hai')
     if (!$ids.Count) { return }
@@ -67,6 +76,7 @@ Require-Value $settings 'LOCAL_LOGIN_BYPASS_ENABLED' 'false'
 Require-Value $settings 'IDP_COOKIE_SECURE' 'true'
 Require-Value $settings 'GATEWAY_HOST_BIND' '127.0.0.1'
 Require-Value $settings 'HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED' 'false'
+Require-PositiveInteger $settings 'RATE_LIMIT_PER_MINUTE' | Out-Null
 $ngrokUrl = Require-Setting $settings 'HAI_NGROK_URL'
 Require-Setting $settings 'NGROK_AUTHTOKEN' 20 | Out-Null
 foreach ($secret in 'JWT_SECRET', 'BACKEND_API_SHARED_KEY', 'HAI_MEMORY_ENCRYPTION_KEY', 'HAI_APPROVAL_PROOF_SIGNING_KEY') {

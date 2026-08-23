@@ -7,7 +7,10 @@ loopback-bound local HAI installation.
 Before enabling it, create `.env.local` from `.env.example`, use real generated
 secrets, reserve an HTTPS ngrok domain, and configure a dedicated ngrok token.
 The tunnel refuses to start unless production mode, secure cookies, loopback
-gateway binding, and disabled public A2A exposure are all explicit.
+gateway binding, disabled public A2A exposure, and a positive
+`RATE_LIMIT_PER_MINUTE` are all explicit. The default rate limit remains `0`
+for local-only development; set an appropriate positive value before exposing
+HAI publicly.
 
 Validate the configuration without creating a tunnel:
 

@@ -8,6 +8,10 @@ fail() { echo "ngrok exposure gate: $1" >&2; exit 1; }
 [ "${IDP_COOKIE_SECURE:-}" = "true" ] || fail "secure IDP cookies are required"
 [ "${GATEWAY_HOST_BIND:-}" = "127.0.0.1" ] || fail "gateway host bind must remain loopback-only"
 [ "${HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED:-false}" = "false" ] || fail "A2A must remain private while a public tunnel is active"
+case "${RATE_LIMIT_PER_MINUTE:-}" in
+  ''|*[!0-9]*) fail "RATE_LIMIT_PER_MINUTE must be a positive integer while a public tunnel is active" ;;
+  0) fail "RATE_LIMIT_PER_MINUTE must be a positive integer while a public tunnel is active" ;;
+esac
 
 token="${NGROK_AUTHTOKEN:-}"
 [ "${#token}" -ge 20 ] || fail "a dedicated ngrok authtoken is required"

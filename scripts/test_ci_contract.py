@@ -261,6 +261,7 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("no-new-privileges:true", service)
         self.assertIn("cap_drop:", service)
         self.assertIn("HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED", service)
+        self.assertIn("RATE_LIMIT_PER_MINUTE", service)
         self.assertIn("NGROK_AUTHTOKEN=", defaults)
         self.assertIn("HAI_NGROK_URL=", defaults)
         self.assertIn("HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED=false", defaults)
@@ -275,6 +276,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             self.assertIn("IDP_COOKIE_SECURE", content)
             self.assertIn("GATEWAY_HOST_BIND", content)
             self.assertIn("HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED", content)
+            self.assertIn("RATE_LIMIT_PER_MINUTE", content)
             self.assertIn("NGROK_AUTHTOKEN", content)
             self.assertIn("HAI_NGROK_URL", content)
 
