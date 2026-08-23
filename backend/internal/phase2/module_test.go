@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"automation-hub-backend/internal/autonomypolicy"
+	"automation-hub-backend/internal/background"
 	"automation-hub-backend/internal/executionauth"
 	"automation-hub-backend/internal/executionbroker"
 	"automation-hub-backend/internal/frameworkregistry"
@@ -77,6 +78,27 @@ func TestRunBackgroundForOwnerRejectsBlankOwnerWithoutEffects(t *testing.T) {
 	}
 	if len(ops) != 0 {
 		t.Fatalf("rejected run produced %d operations", len(ops))
+	}
+}
+
+func TestRunBackgroundForOwnerReturnsBusyWhileAnotherPassIsRunning(t *testing.T) {
+	m := newTestModule(t)
+	m.runMu.Lock()
+	defer m.runMu.Unlock()
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := m.RunBackgroundForOwner(t.Context(), "robert")
+		result <- err
+	}()
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, background.ErrBusy) {
+			t.Fatalf("error = %v, want %v", err, background.ErrBusy)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("concurrent background run waited instead of returning busy")
 	}
 }
 
