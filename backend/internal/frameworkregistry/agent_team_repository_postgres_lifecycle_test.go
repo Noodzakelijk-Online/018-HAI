@@ -183,6 +183,24 @@ func TestPostgresAgentTeamRepositoryDurableLifecycleAndRaces(t *testing.T) {
 	if err != nil || len(acknowledgments) != 2 || acknowledgments[1].Status != agentcoordination.AcknowledgmentAccepted {
 		t.Fatalf("durable acknowledgments = %#v, err %v", acknowledgments, err)
 	}
+	batchedAcknowledgments, err := NewPostgresAgentTeamRepository(db).ListMessageAcknowledgmentsForMessages(
+		owner,
+		team.ID,
+		team.Version,
+		[]string{raceMessage.ID, "not-a-stored-message", raceMessage.ID, "  "},
+	)
+	if err != nil {
+		t.Fatalf("batch durable acknowledgments: %v", err)
+	}
+	if len(batchedAcknowledgments) != 2 {
+		t.Fatalf("batched acknowledgment keys = %#v, want race and missing messages", batchedAcknowledgments)
+	}
+	if got := batchedAcknowledgments[raceMessage.ID]; len(got) != 2 || got[1].Status != agentcoordination.AcknowledgmentAccepted {
+		t.Fatalf("batched durable acknowledgments for race message = %#v", got)
+	}
+	if missing, exists := batchedAcknowledgments["not-a-stored-message"]; !exists || len(missing) != 0 {
+		t.Fatalf("batched missing-message acknowledgment state = %#v, exists=%v", missing, exists)
+	}
 	if result := db.Exec(`UPDATE public.agent_team_message_acknowledgments SET status = 'rejected' WHERE owner_identity = ? AND acknowledgment_id = ?`, owner, acceptedAck.ID); result.Error == nil {
 		t.Fatal("append-only acknowledgment row accepted an update")
 	}
