@@ -570,6 +570,9 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 	if err != nil {
 		return nil, err
 	}
+	if source.RevokedAt != nil || strings.EqualFold(strings.TrimSpace(source.Status), "revoked") {
+		return nil, ErrSourceRevoked
+	}
 	if source.ConnectorKey == shareTConnectorKey {
 		if _, err := shareTConfigFromEnv(); err != nil {
 			return nil, fmt.Errorf("ShareT connector requires explicit configuration: %w", err)
@@ -1511,6 +1514,9 @@ func (s *service) Pause(sourceID uuid.UUID, paused bool) (*models.ConnectedSourc
 	source, err := s.repo.FindSource(sourceID)
 	if err != nil {
 		return nil, err
+	}
+	if source.RevokedAt != nil || strings.EqualFold(strings.TrimSpace(source.Status), "revoked") {
+		return nil, ErrSourceRevoked
 	}
 	source.Enabled = !paused
 	if paused {

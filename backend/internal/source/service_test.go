@@ -629,6 +629,31 @@ func TestScheduledSourceDueHonorsSourceLifecycle(t *testing.T) {
 	}
 }
 
+func TestRevokedSourceCannotBeReactivatedThroughOrdinaryControls(t *testing.T) {
+	revokedAt := time.Now().UTC()
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: "json-feed", Name: "Revoked feed", Category: "api",
+		Enabled: false, Status: "revoked", RevokedAt: &revokedAt,
+	})
+	service := NewService(repo, nil)
+
+	enabled := true
+	if _, err := service.UpdateSource(sourceID, UpdateSourceRequest{Enabled: &enabled}); !errors.Is(err, ErrSourceRevoked) {
+		t.Fatalf("UpdateSource error = %v, want ErrSourceRevoked", err)
+	}
+	if _, err := service.Pause(sourceID, false); !errors.Is(err, ErrSourceRevoked) {
+		t.Fatalf("Pause resume error = %v, want ErrSourceRevoked", err)
+	}
+	stored, err := repo.FindSource(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Enabled || stored.Status != "revoked" || stored.RevokedAt == nil {
+		t.Fatalf("revoked source was mutated: %#v", stored)
+	}
+}
+
 func TestDueSourcesExcludesPausedSourcesBeforeScheduling(t *testing.T) {
 	now := time.Now().UTC()
 	repo := newFakeSourceRepo(
