@@ -83,7 +83,9 @@ interface PortfolioPursuitDraft {
     selector: 'app-pursuits',
     templateUrl: './pursuits.component.html',
     styleUrls: ['./pursuits.component.scss'],
-    encapsulation: ViewEncapsulation.None,
+    // This route owns generic operational selectors such as .page-header.
+    // Keep them scoped so visiting Pursuits cannot restyle another lazy page.
+    encapsulation: ViewEncapsulation.Emulated,
     standalone: false
 })
 export class PursuitsComponent implements OnInit, OnDestroy {

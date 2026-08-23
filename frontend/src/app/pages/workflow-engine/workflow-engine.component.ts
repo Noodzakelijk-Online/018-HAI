@@ -37,7 +37,9 @@ type FrameworkProvenanceState = 'missing' | 'invalid' | 'recorded' | 'verified';
     selector: 'app-workflow-engine',
     templateUrl: './workflow-engine.component.html',
     styleUrls: ['./workflow-engine.component.scss'],
-    encapsulation: ViewEncapsulation.None,
+    // Workflow uses broad element and layout selectors. Scope them to this
+    // route instead of allowing a lazy-loaded stylesheet to affect HAI-wide UI.
+    encapsulation: ViewEncapsulation.Emulated,
     standalone: false
 })
 export class WorkflowEngineComponent implements OnInit, OnDestroy {

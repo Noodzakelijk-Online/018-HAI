@@ -202,7 +202,8 @@ class CIWorkflowContractTest(unittest.TestCase):
             "/* Workflow Engine follows the command-center rule:", global_styles
         )
         self.assertIn("app-workflow-engine .workflow-more-tools {", workflow_styles)
-        self.assertIn("ViewEncapsulation.None", workflow_component)
+        self.assertIn("ViewEncapsulation.Emulated", workflow_component)
+        self.assertNotIn("ViewEncapsulation.None", workflow_component)
 
     def test_pursuits_disclosure_styles_load_with_the_lazy_module(self) -> None:
         global_styles = (ROOT / "frontend" / "src" / "styles.scss").read_text(
@@ -231,7 +232,8 @@ class CIWorkflowContractTest(unittest.TestCase):
             "/* Pursuits uses the same calm, progressive-disclosure pattern", global_styles
         )
         self.assertIn("app-pursuits .pursuit-health", pursuit_styles)
-        self.assertIn("ViewEncapsulation.None", pursuit_component)
+        self.assertIn("ViewEncapsulation.Emulated", pursuit_component)
+        self.assertNotIn("ViewEncapsulation.None", pursuit_component)
 
     def test_pursuit_portfolio_planner_styles_load_with_the_lazy_module(self) -> None:
         global_styles = (ROOT / "frontend" / "src" / "styles.scss").read_text(
@@ -247,9 +249,9 @@ class CIWorkflowContractTest(unittest.TestCase):
             / "pursuits.component.scss"
         ).read_text(encoding="utf-8")
 
-        # The planner opens only from the lazy Pursuits route. Its overlay
-        # selectors need ViewEncapsulation.None, but they do not belong in the
-        # startup stylesheet for every other HAI module.
+        # The planner opens only from the lazy Pursuits route. Angular retains
+        # the component's scoped attributes when the content is rendered in the
+        # NG-Zorro overlay, so it remains styled without leaking route rules.
         self.assertNotIn(".portfolio-planner {", global_styles)
         self.assertIn(".portfolio-planner {", pursuit_styles)
         self.assertIn(".portfolio-workflow-settlement__usage", pursuit_styles)
