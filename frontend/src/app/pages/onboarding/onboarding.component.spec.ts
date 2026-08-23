@@ -32,4 +32,9 @@ describe('OnboardingComponent', () => {
     expect(router.navigate).toHaveBeenCalledWith(['/control-center']);
     expect(OnboardingComponent.isOnboarded()).toBeTrue();
   });
+
+  it('uses the shared theme token for its explanatory text', () => {
+    const styles = (OnboardingComponent as any).ɵcmp.styles.join('\n');
+    expect(styles).toContain('color: var(--hai-muted)');
+  });
 });
