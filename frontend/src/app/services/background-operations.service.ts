@@ -7,6 +7,7 @@ import {
   IOperation,
   IOperationEvent,
   IOperationsDashboard,
+  IOperationsOverview,
 } from '../models/background-operations.model.interface'
 
 @Injectable({ providedIn: 'root' })
@@ -25,6 +26,14 @@ export class BackgroundOperationsService {
 
   dashboard(): Observable<IOperationsDashboard> {
     return this.http.get<IOperationsDashboard>(`${this.apiUrl}/operations/dashboard`)
+  }
+
+  overview(filters?: { status?: string; risk?: string; limit?: number }): Observable<IOperationsOverview> {
+    let params = new HttpParams()
+    if (filters?.status) params = params.set('status', filters.status)
+    if (filters?.risk) params = params.set('risk', filters.risk)
+    if (filters?.limit) params = params.set('limit', String(filters.limit))
+    return this.http.get<IOperationsOverview>(`${this.apiUrl}/operations/overview`, { params })
   }
 
   get(id: string): Observable<IOperation> {

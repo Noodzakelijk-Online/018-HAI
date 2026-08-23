@@ -5,8 +5,7 @@ import { BackgroundOperationsComponent } from './background-operations.component
 describe('BackgroundOperationsComponent', () => {
   function make(): BackgroundOperationsComponent {
     const service = {
-      dashboard: () => of({}),
-      list: () => of({ operations: [] }),
+      overview: () => of({ dashboard: {}, operations: [] }),
       feeds: () => of({ feeds: [] }),
       events: () => of({ events: [] }),
     }
@@ -36,8 +35,7 @@ describe('BackgroundOperationsComponent', () => {
     let cancellations = 0
     const pending = () => new Observable(() => () => cancellations++)
     const service = {
-      dashboard: pending,
-      list: pending,
+      overview: pending,
       feeds: pending,
       events: () => of({ events: [] }),
     }
@@ -48,7 +46,7 @@ describe('BackgroundOperationsComponent', () => {
     component.refresh()
     component.refresh()
 
-    expect(cancellations).toBe(3)
+    expect(cancellations).toBe(2)
   })
 
   it('gives an owner-permission recovery path for authorization failures', () => {

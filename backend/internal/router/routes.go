@@ -1551,6 +1551,7 @@ func initializePhase2Routes(apiVersion *gin.RouterGroup, handler *phase2.Handler
 	ops.Use(requireAuthenticatedOwner())
 	{
 		ops.GET("", requirePermission(rbac.PermRead), handler.ListOperations)
+		ops.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
 		ops.GET("/dashboard", requirePermission(rbac.PermRead), handler.Dashboard)
 		ops.GET("/:id", requirePermission(rbac.PermRead), handler.GetOperation)
 		ops.GET("/:id/events", requirePermission(rbac.PermRead), handler.OperationEvents)

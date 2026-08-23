@@ -66,16 +66,15 @@ export class BackgroundOperationsComponent implements OnInit, OnDestroy {
     this.refreshSubscription?.unsubscribe()
     this.loading = true
     this.refreshSubscription = forkJoin({
-      dashboard: this.service.dashboard(),
-      operations: this.service.list(this.statusFilter ? { status: this.statusFilter } : undefined),
+      overview: this.service.overview(this.statusFilter ? { status: this.statusFilter } : undefined),
       feeds: this.service.feeds(),
 	}).pipe(
 	  timeout(this.loadTimeoutMs),
 	  finalize(() => (this.loading = false))
 	).subscribe({
-      next: ({ dashboard, operations, feeds }) => {
-        this.dashboard = dashboard
-        this.operations = operations.operations ?? []
+	  next: ({ overview, feeds }) => {
+	    this.dashboard = overview.dashboard
+	    this.operations = overview.operations ?? []
         this.feeds = feeds.feeds ?? []
       },
       error: () => {

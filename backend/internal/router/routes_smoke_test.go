@@ -216,6 +216,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 
 	operationsRoutes := r.Group("/api/v1").Group("/operations")
 	operationsRoutes.GET("", mark("operationsList"))
+	operationsRoutes.GET("/overview", mark("operationsOverview"))
 	operationsRoutes.GET("/dashboard", mark("operationsDashboard"))
 	operationsRoutes.GET("/:id", mark("operationsGet"))
 	operationsRoutes.GET("/:id/events", mark("operationsEvents"))

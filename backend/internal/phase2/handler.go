@@ -23,6 +23,14 @@ type Handler struct {
 	m *Module
 }
 
+// OperationsOverview keeps the operations page's initial ledger reads in one
+// owner-scoped response. Feed state remains a separate connector-registry read
+// because it has different lifecycle and authorization ownership.
+type OperationsOverview struct {
+	Dashboard  operations.Dashboard `json:"dashboard"`
+	Operations []models.Operation   `json:"operations"`
+}
+
 // NewHandler builds a handler over a module.
 func NewHandler(m *Module) *Handler { return &Handler{m: m} }
 
@@ -40,24 +48,46 @@ func (h *Handler) owner(c *gin.Context) (string, string) {
 // ListOperations returns operations for the caller, optionally filtered.
 func (h *Handler) ListOperations(c *gin.Context) {
 	owner, workspace := h.owner(c)
-	f := operations.Filter{OwnerUserID: owner, WorkspaceID: workspace}
-	if s := c.Query("status"); s != "" {
-		f.Status = operations.OperationStatus(s)
-	}
-	if r := c.Query("risk"); r != "" {
-		f.RiskLevel = operations.RiskLevel(r)
-	}
-	if l := c.Query("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil {
-			f.Limit = n
-		}
-	}
+	f := operationFilter(c, owner, workspace)
 	ops, err := h.m.svc.List(f)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"operations": ops})
+}
+
+// Overview returns the operation-ledger roll-up and the current filtered list
+// together, avoiding a duplicate owner-scoped request during page startup.
+func (h *Handler) Overview(c *gin.Context) {
+	owner, workspace := h.owner(c)
+	dashboard, err := h.m.svc.Dashboard(owner, workspace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	operationsList, err := h.m.svc.List(operationFilter(c, owner, workspace))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, OperationsOverview{Dashboard: dashboard, Operations: operationsList})
+}
+
+func operationFilter(c *gin.Context, owner, workspace string) operations.Filter {
+	f := operations.Filter{OwnerUserID: owner, WorkspaceID: workspace}
+	if status := c.Query("status"); status != "" {
+		f.Status = operations.OperationStatus(status)
+	}
+	if risk := c.Query("risk"); risk != "" {
+		f.RiskLevel = operations.RiskLevel(risk)
+	}
+	if limit := c.Query("limit"); limit != "" {
+		if parsed, err := strconv.Atoi(limit); err == nil {
+			f.Limit = parsed
+		}
+	}
+	return f
 }
 
 // Dashboard returns the Background Operations roll-up.

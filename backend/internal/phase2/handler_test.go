@@ -75,6 +75,7 @@ func newTestRouter(m *Module, subject string, setSubject bool) *gin.Engine {
 	h := m.Handler()
 	ops := r.Group("/operations")
 	ops.GET("", h.ListOperations)
+	ops.GET("/overview", h.Overview)
 	ops.GET("/dashboard", h.Dashboard)
 	ops.GET("/:id", h.GetOperation)
 	ops.GET("/:id/events", h.OperationEvents)
@@ -153,6 +154,33 @@ func TestBackgroundRunAndDashboardOverHTTP(t *testing.T) {
 	w = do(t, r, http.MethodGet, "/operations/"+listed.Operations[0].ID+"/events")
 	if w.Code != http.StatusOK {
 		t.Fatalf("events: status %d", w.Code)
+	}
+}
+
+func TestOverviewReturnsDashboardAndFilteredOperationsInOneResponse(t *testing.T) {
+	r, _ := newTestServer(t)
+	if w := do(t, r, http.MethodPost, "/background/run"); w.Code != http.StatusOK {
+		t.Fatalf("background run: status %d body %s", w.Code, w.Body.String())
+	}
+
+	w := do(t, r, http.MethodGet, "/operations/overview?status=completed")
+	if w.Code != http.StatusOK {
+		t.Fatalf("overview: status %d body %s", w.Code, w.Body.String())
+	}
+	var overview struct {
+		Dashboard  operations.Dashboard `json:"dashboard"`
+		Operations []struct {
+			Status string `json:"status"`
+		} `json:"operations"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &overview); err != nil {
+		t.Fatal(err)
+	}
+	if overview.Dashboard.DoneWhileAway != 1 || overview.Dashboard.NeedsRobert != 1 {
+		t.Fatalf("unexpected dashboard: %+v", overview.Dashboard)
+	}
+	if len(overview.Operations) != 1 || overview.Operations[0].Status != string(operations.StatusCompleted) {
+		t.Fatalf("unexpected filtered operations: %+v", overview.Operations)
 	}
 }
 
