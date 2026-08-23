@@ -3,6 +3,7 @@ package agentruntime
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,8 @@ type deepSeekHarnessAdapter struct {
 	enabled           bool
 	executionEnabled  bool
 	executable        string
+	expectedVersion   string
+	versionProbe      func(context.Context) (string, error)
 	workspace         string
 	workspaceRoot     string
 	stateDir          string
@@ -37,6 +40,7 @@ func newDeepSeekHarnessAdapterFromEnv() *deepSeekHarnessAdapter {
 		enabled:          envEnabled("DEEPSEEK_HARNESS_ENABLED"),
 		executionEnabled: envEnabled("DEEPSEEK_HARNESS_EXECUTION_ENABLED"),
 		executable:       firstNonEmpty(os.Getenv("DEEPSEEK_HARNESS_EXECUTABLE"), "dsh"),
+		expectedVersion:  strings.TrimSpace(os.Getenv("DEEPSEEK_HARNESS_VERSION")),
 		workspace:        strings.TrimSpace(os.Getenv("DEEPSEEK_HARNESS_WORKSPACE")),
 		workspaceRoot:    strings.TrimSpace(os.Getenv("AGENT_RUNTIME_WORKSPACE_ROOT")),
 		stateDir:         strings.TrimSpace(os.Getenv("DEEPSEEK_HARNESS_STATE_DIR")),
@@ -50,6 +54,9 @@ func (a *deepSeekHarnessAdapter) Info() Info {
 	missing := []string{}
 	if strings.TrimSpace(a.executable) == "" {
 		missing = append(missing, "DEEPSEEK_HARNESS_EXECUTABLE")
+	}
+	if strings.TrimSpace(a.expectedVersion) == "" {
+		missing = append(missing, "DEEPSEEK_HARNESS_VERSION")
 	}
 	if strings.TrimSpace(a.workspace) == "" {
 		missing = append(missing, "DEEPSEEK_HARNESS_WORKSPACE")
@@ -109,6 +116,11 @@ func (a *deepSeekHarnessAdapter) HealthCheck(ctx context.Context) Health {
 	if err != nil {
 		health.Status = "unavailable"
 		health.Reason = "DeepSeek Harness executable was not found"
+		return health
+	}
+	if reason := a.versionBlockedReason(ctx); reason != "" {
+		health.Status = "blocked"
+		health.Reason = reason
 		return health
 	}
 	if !a.executionEnabled {
@@ -173,6 +185,15 @@ func (a *deepSeekHarnessAdapter) ExecuteTask(parent context.Context, task Task) 
 		}
 	}
 	defer a.releaseExecutionGate()
+	if reason := a.versionBlockedReason(ctx); reason != "" {
+		return Result{
+			RuntimeID:   "deepseek-harness",
+			Status:      "blocked",
+			Message:     reason,
+			ExitCode:    -1,
+			AuditEvents: []string{"DeepSeek Harness version probe blocked task execution before CLI task invocation"},
+		}
+	}
 	cmd := exec.CommandContext(ctx, a.executable, "--profile", "headless", task.Prompt)
 	cmd.Dir = a.workspace
 	cmd.Env = safeEnvironment(a.envAllow, map[string]string{
@@ -220,6 +241,57 @@ func (a *deepSeekHarnessAdapter) ExecuteTask(parent context.Context, task Task) 
 			"dedicated workspace, state directory, serialized state access, timeout, output limit, environment allowlist, and secret redaction enforced by HAI",
 		},
 	}
+}
+
+// versionBlockedReason verifies the operator-pinned preview release before a
+// task is allowed to run. The probe asks only for the launcher's version: it
+// does not boot a profile, contact a model, or enable tools.
+func (a *deepSeekHarnessAdapter) versionBlockedReason(parent context.Context) string {
+	expected := strings.TrimSpace(a.expectedVersion)
+	if expected == "" {
+		return "DEEPSEEK_HARNESS_VERSION is required to pin this developer-preview runtime"
+	}
+	if a.versionProbe != nil {
+		actual, err := a.versionProbe(parent)
+		if err != nil {
+			return "DeepSeek Harness version probe failed: " + safety.RedactSecrets(err.Error())
+		}
+		actual = strings.TrimSpace(actual)
+		if !strings.Contains(actual, expected) {
+			return fmt.Sprintf("DeepSeek Harness version mismatch: expected %q, probe returned %q", expected, safety.RedactSecrets(actual))
+		}
+		return ""
+	}
+	probeTimeout := a.timeout
+	if probeTimeout <= 0 {
+		probeTimeout = time.Duration(defaultTimeoutSeconds) * time.Second
+	}
+	ctx, cancel := context.WithTimeout(parent, minDuration(probeTimeout, 10*time.Second))
+	defer cancel()
+	cmd := exec.CommandContext(ctx, a.executable, "--version")
+	cmd.Dir = a.workspace
+	cmd.Env = safeEnvironment(a.envAllow, map[string]string{
+		"DSH_HOME": a.stateDir,
+	})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &limitedWriter{writer: &stdout, remaining: a.outputLimit / 4}
+	cmd.Stderr = &limitedWriter{writer: &stderr, remaining: a.outputLimit / 8}
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "DeepSeek Harness version probe timed out"
+		}
+		diagnostic := safety.RedactSecrets(strings.TrimSpace(stderr.String()))
+		if diagnostic == "" {
+			diagnostic = "the executable returned an unsuccessful status without diagnostic output"
+		}
+		return "DeepSeek Harness version probe failed: " + diagnostic
+	}
+	actual := strings.TrimSpace(stdout.String())
+	if !strings.Contains(actual, expected) {
+		return fmt.Sprintf("DeepSeek Harness version mismatch: expected %q, probe returned %q", expected, safety.RedactSecrets(actual))
+	}
+	return ""
 }
 
 // acquireExecutionGate serializes HAI-owned runs because the upstream preview

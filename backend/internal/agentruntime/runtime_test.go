@@ -1548,6 +1548,9 @@ func TestDeepSeekHarnessAdapterIsRegisteredAndDisabledByDefault(t *testing.T) {
 	if !containsString(info.MissingConfiguration, "DEEPSEEK_HARNESS_WORKSPACE") {
 		t.Fatalf("missing configuration = %#v, want workspace", info.MissingConfiguration)
 	}
+	if !containsString(info.MissingConfiguration, "DEEPSEEK_HARNESS_VERSION") {
+		t.Fatalf("missing configuration = %#v, want pinned version", info.MissingConfiguration)
+	}
 	if skills, err := registry.Skills(context.Background(), "deepseek-harness"); err != nil || len(skills) != 1 || skills[0].ExecutionMode != "approved_headless_task" {
 		t.Fatalf("skills = %#v, err = %v", skills, err)
 	}
@@ -1560,11 +1563,12 @@ func TestDeepSeekHarnessAdapterRequiresExplicitHeadlessExecutionOptIn(t *testing
 		t.Fatal(err)
 	}
 	adapter := &deepSeekHarnessAdapter{
-		enabled:       true,
-		executable:    "dsh",
-		workspace:     workspace,
-		workspaceRoot: root,
-		stateDir:      filepath.Join(workspace, ".dsh-state"),
+		enabled:         true,
+		executable:      "dsh",
+		expectedVersion: "test-preview-1.0",
+		workspace:       workspace,
+		workspaceRoot:   root,
+		stateDir:        filepath.Join(workspace, ".dsh-state"),
 	}
 	info := adapter.Info()
 	if !info.Configured || info.ExecutionEnabled {
@@ -1586,6 +1590,8 @@ func TestDeepSeekHarnessAdapterRunsDocumentedHeadlessProfile(t *testing.T) {
 		enabled:          true,
 		executionEnabled: true,
 		executable:       os.Args[0],
+		expectedVersion:  "test-preview-1.0",
+		versionProbe:     func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
 		workspace:        workspace,
 		workspaceRoot:    root,
 		stateDir:         filepath.Join(workspace, ".dsh-state"),
@@ -1611,6 +1617,8 @@ func TestDeepSeekHarnessAdapterRejectsOptionLikePrompt(t *testing.T) {
 		enabled:          true,
 		executionEnabled: true,
 		executable:       os.Args[0],
+		expectedVersion:  "test-preview-1.0",
+		versionProbe:     func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
 		workspace:        workspace,
 		workspaceRoot:    root,
 		stateDir:         filepath.Join(workspace, ".dsh-state"),
@@ -1634,6 +1642,7 @@ func TestDeepSeekHarnessAdapterRejectsLauncherSubcommandPrompt(t *testing.T) {
 		enabled:          true,
 		executionEnabled: true,
 		executable:       os.Args[0],
+		expectedVersion:  "test-preview-1.0",
 		workspace:        workspace,
 		workspaceRoot:    root,
 		stateDir:         filepath.Join(workspace, ".dsh-state"),
@@ -1659,6 +1668,7 @@ func TestDeepSeekHarnessAdapterBoundsWaitingForSharedState(t *testing.T) {
 		enabled:          true,
 		executionEnabled: true,
 		executable:       os.Args[0],
+		expectedVersion:  "test-preview-1.0",
 		workspace:        workspace,
 		workspaceRoot:    root,
 		stateDir:         filepath.Join(workspace, ".dsh-state"),
@@ -1697,6 +1707,7 @@ func TestDeepSeekHarnessAdapterRejectsMissingWorkspaceRoot(t *testing.T) {
 		enabled:          true,
 		executionEnabled: true,
 		executable:       os.Args[0],
+		expectedVersion:  "test-preview-1.0",
 		workspace:        workspace,
 		workspaceRoot:    "",
 		stateDir:         filepath.Join(workspace, ".dsh-state"),
@@ -1718,6 +1729,7 @@ func TestDeepSeekHarnessAdapterRejectsStateDirectoryOutsideRoot(t *testing.T) {
 		enabled:          true,
 		executionEnabled: true,
 		executable:       os.Args[0],
+		expectedVersion:  "test-preview-1.0",
 		workspace:        workspace,
 		workspaceRoot:    root,
 		stateDir:         filepath.Join(t.TempDir(), ".dsh-state"),
@@ -1743,6 +1755,7 @@ func TestDeepSeekHarnessAdapterRejectsStateDirectorySymlinkOutsideRoot(t *testin
 		enabled:          true,
 		executionEnabled: true,
 		executable:       os.Args[0],
+		expectedVersion:  "test-preview-1.0",
 		workspace:        workspace,
 		workspaceRoot:    root,
 		stateDir:         stateDir,
@@ -1762,6 +1775,8 @@ func TestDeepSeekHarnessHealthReportsPreviewReadiness(t *testing.T) {
 		enabled:          true,
 		executionEnabled: true,
 		executable:       os.Args[0],
+		expectedVersion:  "test-preview-1.0",
+		versionProbe:     func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
 		workspace:        workspace,
 		workspaceRoot:    root,
 		stateDir:         filepath.Join(workspace, ".dsh-state"),
@@ -1769,6 +1784,30 @@ func TestDeepSeekHarnessHealthReportsPreviewReadiness(t *testing.T) {
 	health := adapter.HealthCheck(context.Background())
 	if health.Status != "ready" || !strings.Contains(health.Reason, "headless") {
 		t.Fatalf("health = %#v, want headless readiness", health)
+	}
+}
+
+func TestDeepSeekHarnessAdapterBlocksVersionMismatchBeforeTaskExecution(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:          true,
+		executionEnabled: true,
+		executable:       os.Args[0],
+		expectedVersion:  "different-preview",
+		versionProbe:     func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
+		workspace:        workspace,
+		workspaceRoot:    root,
+		stateDir:         filepath.Join(workspace, ".dsh-state"),
+		timeout:          time.Second,
+		outputLimit:      defaultOutputLimit,
+	}
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "version mismatch") {
+		t.Fatalf("result = %#v, want version mismatch block", result)
 	}
 }
 

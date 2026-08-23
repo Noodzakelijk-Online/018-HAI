@@ -772,7 +772,8 @@ one-shot headless profile: `dsh --profile headless "task"`. HAI integrates only
 that documented process boundary. It is disabled by default and requires both
 `DEEPSEEK_HARNESS_ENABLED=true` and
 `DEEPSEEK_HARNESS_EXECUTION_ENABLED=true`, an executable, a dedicated workspace
-and state directory under `AGENT_RUNTIME_WORKSPACE_ROOT`, plus HAI's
+and state directory under `AGENT_RUNTIME_WORKSPACE_ROOT`, and a pinned
+`DEEPSEEK_HARNESS_VERSION` matching `dsh --version`, plus HAI's
 server-side approval and consumed final-effect proof. The adapter applies a
 timeout, output cap, environment allowlist, cancellation path, and secret
 redaction. HAI serializes its own Harness runs per backend process so concurrent
@@ -780,8 +781,9 @@ headless tasks cannot race over the shared Harness state directory; do not
 horizontally scale this optional adapter against the same `DSH_HOME`. It does
 not launch the Harness Web UI or ACP server, install plugins,
 control a browser, or supply model credentials; model keys and permissions stay
-operator-managed. Because the upstream may introduce breaking changes, the
-health check makes configuration drift visible and an unavailable or failed
+operator-managed. Because the upstream may introduce breaking changes, HAI
+probes `dsh --version` before health is reported ready and again before task
+execution; a mismatch blocks the task. An unavailable or failed
 Harness run remains a governed failure, not a reason to bypass HAI controls.
 
 API, script, and Docker adapters have the same default posture: disabled until
