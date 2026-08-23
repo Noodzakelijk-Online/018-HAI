@@ -27,6 +27,8 @@ func trelloTestServer(t *testing.T, cardsJSON string) (*httptest.Server, *[]stri
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case strings.HasPrefix(r.URL.Path, "/1/tokens/"):
+			_, _ = w.Write([]byte(`{"permissions":[{"modelType":"Board","read":true,"write":false}]}`))
 		case strings.HasSuffix(r.URL.Path, "/lists"):
 			_, _ = w.Write([]byte(`[{"id":"list-1","name":"Doing"},{"id":"list-2","name":"Done"}]`))
 		case strings.HasSuffix(r.URL.Path, "/cards"):
@@ -262,6 +264,38 @@ func TestSyncTrelloRequiresCredentials(t *testing.T) {
 	_, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeIncrementalSync})
 	if err == nil || !strings.Contains(err.Error(), "not configured") {
 		t.Fatalf("error = %v, want a not-configured credential error", err)
+	}
+}
+
+func TestSyncTrelloRejectsWriteCapableToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/1/tokens/") {
+			_, _ = w.Write([]byte(`{"permissions":[{"modelType":"Board","read":true,"write":true}]}`))
+			return
+		}
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/lists"):
+			_, _ = w.Write([]byte(`[]`))
+		case strings.HasSuffix(r.URL.Path, "/cards"):
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			_, _ = w.Write([]byte(`{"id":"board-1","name":"Client Delivery"}`))
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv(trelloBaseURLEnv, server.URL)
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+	t.Setenv(trelloAPIKeyEnv, "test-key")
+	t.Setenv(trelloReadTokenEnv, "write-capable-token")
+
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(newTrelloSource(sourceID, "abc123XY", ""))
+	_, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeIncrementalSync})
+	if err == nil || !strings.Contains(err.Error(), "write permission") {
+		t.Fatalf("Sync error = %v, want write-capable token rejection", err)
 	}
 }
 

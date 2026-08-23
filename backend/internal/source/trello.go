@@ -64,6 +64,16 @@ type trelloBoard struct {
 	ShortURL string `json:"shortUrl"`
 }
 
+type trelloTokenPermission struct {
+	ModelType string `json:"modelType"`
+	Read      bool   `json:"read"`
+	Write     bool   `json:"write"`
+}
+
+type trelloTokenInfo struct {
+	Permissions []trelloTokenPermission `json:"permissions"`
+}
+
 type trelloList struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -161,6 +171,9 @@ func fetchTrelloSource(ctx context.Context, source *models.ConnectedSource) ([]I
 	if err != nil {
 		return nil, "", err
 	}
+	if err := validateTrelloReadOnlyToken(ctx, base, key, token); err != nil {
+		return nil, "", err
+	}
 
 	var board trelloBoard
 	if err := trelloGetJSONContext(ctx, base, key, token, "/1/boards/"+boardID, url.Values{"fields": {"name,url,shortUrl"}}, &board); err != nil {
@@ -233,6 +246,29 @@ func fetchTrelloSource(ctx context.Context, source *models.ConnectedSource) ([]I
 		nextCursor = latest.UTC().Format(time.RFC3339Nano)
 	}
 	return items, nextCursor, nil
+}
+
+// validateTrelloReadOnlyToken verifies the permission boundary reported by
+// Trello before HAI reads a board. HAI itself never writes to Trello, but an
+// over-privileged token must also be rejected instead of being silently used.
+func validateTrelloReadOnlyToken(ctx context.Context, base *url.URL, key, token string) error {
+	var info trelloTokenInfo
+	if err := trelloGetJSONContext(ctx, base, key, token, "/1/tokens/"+url.PathEscape(token), nil, &info); err != nil {
+		return fmt.Errorf("verify Trello token permissions: %w", err)
+	}
+	if len(info.Permissions) == 0 {
+		return fmt.Errorf("Trello token did not report any permissions; a least-privilege read-only token is required")
+	}
+	for _, permission := range info.Permissions {
+		modelType := firstNonEmpty(strings.TrimSpace(permission.ModelType), "an unknown resource")
+		if permission.Write {
+			return fmt.Errorf("Trello token has write permission on %s; configure a least-privilege read-only token", modelType)
+		}
+		if !permission.Read {
+			return fmt.Errorf("Trello token lacks read permission on %s", modelType)
+		}
+	}
+	return nil
 }
 
 func trelloImportItem(card trelloCard, boardName, listName, projectKey string) ImportItem {
