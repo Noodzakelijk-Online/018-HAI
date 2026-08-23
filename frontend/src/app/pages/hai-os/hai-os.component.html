@@ -1,9 +1,11 @@
 <section class="os-page">
-  <nz-layout>
-    <nz-header class="header-container">
-      <div class="header-content">
-        <h1 class="header-content__title">HAI Personal AI OS</h1>
-        <div class="header-content__actions">
+  <header class="os-page__header">
+    <div>
+      <p class="os-page__eyebrow">System overview</p>
+      <h1>HAI Personal AI OS</h1>
+      <p class="os-page__description">The operating model, safety posture, and readiness of the connected HAI system.</p>
+    </div>
+    <div class="os-page__actions">
           <button nz-button nzType="default" (click)="refresh()" [nzLoading]="loading">
             <i nz-icon nzType="reload" nzTheme="outline"></i>
             Refresh
@@ -12,11 +14,10 @@
             <i nz-icon nzType="appstore" nzTheme="outline"></i>
             Automations
           </button>
-        </div>
-      </div>
-    </nz-header>
+    </div>
+  </header>
 
-    <nz-content class="content-container" *ngIf="overview as os">
+  <div class="content-container" *ngIf="overview as os">
       <div class="status-strip">
         <nz-card nzSize="small">
           <strong>Completion first</strong>
@@ -118,7 +119,7 @@
         </ng-template>
       </nz-card>
 
-      <nz-card nzTitle="Product Stack" class="section-card">
+      <nz-card nzTitle="Product Stack" class="section-card hai-progressive-section--advanced">
         <p><strong>Canonical:</strong> {{ os.canonicalStack }}</p>
         <nz-table [nzData]="os.referenceStacks" nzSize="small" [nzPageSize]="5">
           <thead>
@@ -138,7 +139,7 @@
         </nz-table>
       </nz-card>
 
-      <nz-card nzTitle="System Metrics" class="section-card">
+      <nz-card nzTitle="System Metrics" class="section-card hai-progressive-section--advanced">
         <div class="metric-grid">
           <div
             class="metric-button"
@@ -151,7 +152,7 @@
         </div>
       </nz-card>
 
-      <nz-card nzTitle="Operating Planes" class="section-card">
+      <nz-card nzTitle="Operating Planes" class="section-card hai-progressive-section--advanced">
         <nz-table [nzData]="os.planes" nzSize="small" [nzPageSize]="8">
           <thead>
             <tr>
@@ -182,7 +183,7 @@
         </nz-table>
       </nz-card>
 
-      <nz-card nzTitle="Real-World Readiness" class="section-card">
+      <nz-card nzTitle="Real-World Readiness" class="section-card hai-progressive-section--advanced">
         <nz-table [nzData]="os.readinessGates" nzSize="small" [nzPageSize]="8">
           <thead>
             <tr>
@@ -203,7 +204,7 @@
         </nz-table>
       </nz-card>
 
-      <nz-card nzTitle="Governance" class="section-card">
+      <nz-card nzTitle="Governance" class="section-card hai-progressive-section--advanced">
         <p>
           Emergency stop:
           <strong>{{ os.emergencyStop ? 'active' : 'clear' }}</strong>
@@ -216,6 +217,5 @@
         </p>
         <p>Last updated: {{ os.generatedAt | date: 'short' }}</p>
       </nz-card>
-    </nz-content>
-  </nz-layout>
+  </div>
 </section>
