@@ -518,10 +518,12 @@ docker compose --env-file .env.local -f docker-compose.local.yml ps
 ```
 
 The initializer prompts for the first-run owner email and password, generates
-the four production-required backend signing/encryption secrets, and writes an
-ignored loopback-only `.env.local`. For a non-Windows shell, copy the template,
-set a real `FIRST_RUN_ADMIN_PASSWORD`, then run
-`./scripts/generate-secrets.sh >> .env.local` before starting Compose.
+the production signing/encryption, database, and first-run credentials, and
+writes an ignored loopback-only `.env.local`. For a non-Windows shell, copy the
+template, then run `./scripts/generate-secrets.sh >> .env.local` before
+starting Compose. The generator replaces every required placeholder, including
+the first-run owner password; never run it without redirecting its output into
+your ignored local environment file.
 
 `docker compose --env-file .env.local up --build -d` is equivalent. The
 default `docker-compose.yml` intentionally delegates to the same local,
@@ -578,15 +580,10 @@ dashboard**, which creates a normal signed session for the configured first-run
 owner. It is deliberately hidden by default and must never be enabled on a
 LAN- or internet-exposed gateway.
 
-The `.env.example` development defaults are:
-
-```text
-Email: noodzakelijkonline@gmail.com
-Password: ChangeMe123!
-```
-
-Change `FIRST_RUN_ADMIN_PASSWORD` before first use and generate every required
-secret with the command above. If the Postgres data volume already exists,
+The `.env.example` values for credentials and secrets are intentionally invalid
+placeholders. The IDP refuses to create its first owner account from a missing,
+placeholder, or too-short password, and the public ngrok launcher rejects both
+placeholder database and owner credentials. If the Postgres data volume already exists,
 changing first-run values does not rewrite the existing account. Do not commit
 `.env.local`, Docker state, database directories, uploaded material, frontend
 build output, or secrets.

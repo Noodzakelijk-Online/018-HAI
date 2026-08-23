@@ -661,6 +661,8 @@ class CIWorkflowContractTest(unittest.TestCase):
             "HAI_MEMORY_ENCRYPTION_KEY",
             "JWT_SECRET",
             "HAI_APPROVAL_PROOF_SIGNING_KEY",
+            "DB_PASSWORD",
+            "FIRST_RUN_ADMIN_PASSWORD",
         ):
             with self.subTest(key=key):
                 self.assertIn(f"{key}=$(secret)", generator)

@@ -26,6 +26,8 @@ $startScript = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\wind
 $stopScript = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Stop-HAI.ps1"))
 $connectorTest = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Test-HAI-LocalConnector.ps1"))
 $ngrokStart = [IO.File]::ReadAllText((Join-Path $repositoryRoot "scripts\start-ngrok.ps1"))
+$exampleEnvironment = [IO.File]::ReadAllText((Join-Path $repositoryRoot ".env.example"))
+$secretGenerator = [IO.File]::ReadAllText((Join-Path $repositoryRoot "scripts\generate-secrets.sh"))
 $docs = [IO.File]::ReadAllText($documentation)
 $gitignore = [IO.File]::ReadAllText((Join-Path $repositoryRoot ".gitignore"))
 
@@ -193,6 +195,32 @@ foreach ($required in @(
 )) {
     if ($ngrokStart -notmatch [Regex]::Escape($required)) {
         throw "The cloud-tunnel ownership gate is missing '$required'."
+    }
+}
+
+foreach ($required in @(
+    'DB_PASSWORD=$(secret)',
+    'FIRST_RUN_ADMIN_PASSWORD=$(secret)'
+)) {
+    if ($secretGenerator -notmatch [Regex]::Escape($required)) {
+        throw "The cross-platform secret generator is missing '$required'."
+    }
+}
+if ($initializer -notmatch [Regex]::Escape('FIRST_RUN_ADMIN_PASSWORD')) {
+    throw "The Windows initializer must configure the first-run owner password."
+}
+
+if ($exampleEnvironment -match [Regex]::Escape('DB_PASSWORD=postgres') -or
+    $exampleEnvironment -match [Regex]::Escape('FIRST_RUN_ADMIN_PASSWORD=ChangeMe123!')) {
+    throw "The safe environment template must not ship a known database or owner password."
+}
+
+foreach ($required in @(
+    "'DB_PASSWORD'",
+    "'FIRST_RUN_ADMIN_PASSWORD'"
+)) {
+    if ($ngrokStart -notmatch [Regex]::Escape($required)) {
+        throw "The cloud-tunnel secret gate is missing '$required'."
     }
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"gorm.io/gorm"
 	"os"
+	"strings"
 )
 
 func RunMigrations(db *gorm.DB) error {
@@ -25,12 +26,15 @@ func RunMigrations(db *gorm.DB) error {
 
 func SeedDatabase(db *gorm.DB) error {
 	hasher := utils.DefaultBcryptHasher()
-	defaultPassword := firstNonEmpty(os.Getenv("FIRST_RUN_ADMIN_PASSWORD"), "ChangeMe123!")
 	defaultEmail := firstNonEmpty(os.Getenv("FIRST_RUN_ADMIN_EMAIL"), "noodzakelijkonline@gmail.com")
 	var user models.User
 	err := db.Where("Email = ?", defaultEmail).First(&user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			defaultPassword, err := configuredFirstRunAdminPassword()
+			if err != nil {
+				return err
+			}
 			hashedPassword, err := hasher.Hash(defaultPassword)
 			if err != nil {
 				return err
@@ -56,6 +60,19 @@ func SeedDatabase(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func configuredFirstRunAdminPassword() (string, error) {
+	password := strings.TrimSpace(os.Getenv("FIRST_RUN_ADMIN_PASSWORD"))
+	lowerPassword := strings.ToLower(password)
+	if len(password) < 12 ||
+		strings.Contains(lowerPassword, "change-this") ||
+		strings.Contains(lowerPassword, "changeme") ||
+		strings.Contains(lowerPassword, "placeholder") ||
+		strings.Contains(lowerPassword, "example") {
+		return "", errors.New("FIRST_RUN_ADMIN_PASSWORD must be a non-placeholder password with at least 12 characters before the first owner account can be created")
+	}
+	return password, nil
 }
 
 func firstNonEmpty(values ...string) string {

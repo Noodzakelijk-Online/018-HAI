@@ -143,8 +143,9 @@ secrets. The doctor report now flags these instead of passing them:
   `not_ready` until real secrets are set.
 - Outside production: the same values report **WARN** (visible, non-blocking).
 
-`scripts/generate-secrets.sh` writes real `openssl rand -hex 32` values that can
-be appended to `.env.local`.
+`scripts/generate-secrets.sh` writes real `openssl rand -hex 32` values for the
+backend signing/encryption keys, database password, and first-run owner password
+that can be appended to `.env.local`.
 
 ## 7. Gateway routing drift
 

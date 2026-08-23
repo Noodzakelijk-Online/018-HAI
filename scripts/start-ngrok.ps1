@@ -106,9 +106,10 @@ Require-Value $settings 'HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED' 'false'
 Require-PositiveInteger $settings 'RATE_LIMIT_PER_MINUTE' | Out-Null
 $ngrokUrl = Require-Setting $settings 'HAI_NGROK_URL'
 Require-Setting $settings 'NGROK_AUTHTOKEN' 20 | Out-Null
-foreach ($secret in 'JWT_SECRET', 'BACKEND_API_SHARED_KEY', 'HAI_MEMORY_ENCRYPTION_KEY', 'HAI_APPROVAL_PROOF_SIGNING_KEY') {
+foreach ($secret in 'JWT_SECRET', 'BACKEND_API_SHARED_KEY', 'HAI_MEMORY_ENCRYPTION_KEY', 'HAI_APPROVAL_PROOF_SIGNING_KEY', 'DB_PASSWORD') {
     Require-Setting $settings $secret 32 | Out-Null
 }
+Require-Setting $settings 'FIRST_RUN_ADMIN_PASSWORD' 12 | Out-Null
 if ($ngrokUrl -notmatch '^https://[^/@?#]+\.(ngrok\.app|ngrok\.dev|ngrok-free\.app|ngrok-free\.dev)$') {
     throw 'HAI_NGROK_URL must be a reserved HTTPS ngrok origin without path, query, fragment, or credentials.'
 }
