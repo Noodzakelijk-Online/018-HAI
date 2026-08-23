@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/pursuit"
+	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/semantic"
 	"automation-hub-backend/internal/workflow"
 	"context"
@@ -870,6 +871,36 @@ func TestSyncContextStopsBeforeAnyWorkWhenRequestIsCancelled(t *testing.T) {
 	_, err := service.SyncContext(ctx, sourceID, ImportRequest{Mode: ModeManualImport})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("SyncContext error = %v, want context.Canceled", err)
+	}
+}
+
+func TestSyncRedactsAdapterErrorsBeforeReturningAndPersisting(t *testing.T) {
+	sourceID := uuid.New()
+	secret := "token=super-secret-source-value"
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "json-feed",
+		Name:         "Remote feed",
+		Enabled:      true,
+		LocalOnly:    false,
+		Status:       "active",
+		SyncTarget:   "http://127.0.0.1:1/feed?" + secret,
+	})
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+
+	result, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeIncrementalSync})
+	if err == nil || result != nil {
+		t.Fatalf("Sync result/error = %#v/%v, want nil/redacted error", result, err)
+	}
+	if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "token= [REDACTED]") {
+		t.Fatalf("returned error = %q, want redacted token", err)
+	}
+	if len(repo.jobs) != 1 || strings.Contains(repo.jobs[0].Message, secret) || !strings.Contains(repo.jobs[0].Message, "token= [REDACTED]") {
+		t.Fatalf("sync job = %#v, want redacted token", repo.jobs)
+	}
+	if len(repo.auditLogs) == 0 || strings.Contains(repo.auditLogs[len(repo.auditLogs)-1].Message, secret) || !strings.Contains(repo.auditLogs[len(repo.auditLogs)-1].Message, "token= [REDACTED]") {
+		t.Fatalf("audit logs = %#v, want redacted token", repo.auditLogs)
 	}
 }
 
@@ -2365,6 +2396,7 @@ func (r *fakeSourceRepo) CreateSyncJob(job *models.SourceSyncJob) (*models.Sourc
 }
 
 func (r *fakeSourceRepo) UpdateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error) {
+	job.Message = safety.RedactSecrets(job.Message)
 	job.UpdatedAt = time.Now().UTC()
 	for index := range r.jobs {
 		if r.jobs[index].ID == job.ID {

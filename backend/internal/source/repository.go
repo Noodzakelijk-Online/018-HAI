@@ -3,6 +3,7 @@ package source
 import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
 	"errors"
 	"time"
 
@@ -194,6 +195,9 @@ func (r *GormRepository) CreateSyncJob(job *models.SourceSyncJob) (*models.Sourc
 }
 
 func (r *GormRepository) UpdateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error) {
+	// Adapter failures can include arbitrary upstream diagnostics. Persist only
+	// a redacted message; API responses and audit records use the same boundary.
+	job.Message = safety.RedactSecrets(job.Message)
 	if err := r.DB.Save(job).Error; err != nil {
 		return nil, err
 	}

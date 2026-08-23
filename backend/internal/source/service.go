@@ -775,7 +775,12 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	return s.SyncContext(context.Background(), sourceID, request)
 }
 
-func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
+func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (result *SyncResult, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			resultErr = redactSourceError(resultErr)
+		}
+	}()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -2495,15 +2500,34 @@ func (s *service) endSync(sourceID uuid.UUID) {
 
 func itemFailure(item ImportItem, stage string, err error) string {
 	label := firstNonEmpty(item.ExternalID, item.Title, "unknown item")
-	return compact(fmt.Sprintf("%s: %s: %v", label, stage, err), 320)
+	return compact(safety.RedactSecrets(fmt.Sprintf("%s: %s: %v", label, stage, err)), 320)
 }
 
 func (s *service) audit(sourceID uuid.UUID, action, message string) {
 	_, _ = s.repo.SaveAuditLog(&models.SourceAuditLog{
 		SourceID: sourceID,
 		Action:   action,
-		Message:  message,
+		Message:  safety.RedactSecrets(message),
 	})
+}
+
+type redactedSourceError struct {
+	message string
+	cause   error
+}
+
+func (e redactedSourceError) Error() string { return e.message }
+
+func (e redactedSourceError) Unwrap() error { return e.cause }
+
+func redactSourceError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return redactedSourceError{
+		message: compact(safety.RedactSecrets(err.Error()), 320),
+		cause:   err,
+	}
 }
 
 // Adapter status values. These describe honestly what a connector actually does,
