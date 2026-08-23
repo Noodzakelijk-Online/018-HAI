@@ -205,10 +205,18 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("ViewEncapsulation.Emulated", workflow_component)
         self.assertNotIn("ViewEncapsulation.None", workflow_component)
 
-    def test_pursuits_disclosure_styles_load_with_the_lazy_module(self) -> None:
+    def test_pursuits_disclosure_styles_load_with_the_lazy_authenticated_shell(self) -> None:
         global_styles = (ROOT / "frontend" / "src" / "styles.scss").read_text(
             encoding="utf-8"
         )
+        shell_styles = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "control-room"
+            / "app-shell.component.scss"
+        ).read_text(encoding="utf-8")
         pursuit_styles = (
             ROOT
             / "frontend"
@@ -227,11 +235,22 @@ class CIWorkflowContractTest(unittest.TestCase):
             / "pursuits"
             / "pursuits.component.ts"
         ).read_text(encoding="utf-8")
+        shell_component = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "control-room"
+            / "app-shell.component.ts"
+        ).read_text(encoding="utf-8")
 
         self.assertNotIn(
             "/* Pursuits uses the same calm, progressive-disclosure pattern", global_styles
         )
-        self.assertIn("app-pursuits .pursuit-health", pursuit_styles)
+        self.assertNotIn("app-pursuits .pursuit-health", pursuit_styles)
+        self.assertIn("details.pursuit-health", shell_styles)
+        self.assertIn("details.route-intake-panel", shell_styles)
+        self.assertIn("encapsulation: ViewEncapsulation.None", shell_component)
         self.assertIn("ViewEncapsulation.Emulated", pursuit_component)
         self.assertNotIn("ViewEncapsulation.None", pursuit_component)
 

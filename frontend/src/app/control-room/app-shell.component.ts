@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common'
-import { Component, OnDestroy, OnInit } from '@angular/core'
+import { Component, OnDestroy, OnInit, ViewEncapsulation } from '@angular/core'
 import { NavigationEnd, Router, RouterModule } from '@angular/router'
 import { NzButtonModule } from 'ng-zorro-antd/button'
 import { NzIconModule } from 'ng-zorro-antd/icon'
@@ -13,6 +13,10 @@ import { ThemeMode, ThemeService } from '../services/theme.service'
     selector: 'app-shell',
     templateUrl: './app-shell.component.html',
     styleUrls: ['./app-shell.component.scss'],
+    // The lazy shell owns shared styles for the authenticated route tree.
+    // Child pages render in their own component scopes, so these selectors
+    // must remain global once the shell is loaded.
+    encapsulation: ViewEncapsulation.None,
     imports: [CommonModule, RouterModule, NzButtonModule, NzIconModule],
     standalone: true
 })
