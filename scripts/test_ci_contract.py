@@ -318,6 +318,21 @@ class CIWorkflowContractTest(unittest.TestCase):
             self.assertIn("NGROK_AUTHTOKEN", content)
             self.assertIn("HAI_NGROK_URL", content)
 
+    def test_optional_event_bus_does_not_expand_the_default_local_stack(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+        kafka = compose_service_block(compose, "kafka")
+        config_manager = compose_service_block(compose, "nginxconfigmanager")
+        backend = compose_service_block(compose, "backend")
+        idp = compose_service_block(compose, "idp")
+
+        self.assertIn('profiles: ["event-bus"]', kafka)
+        self.assertIn('profiles: ["event-bus"]', config_manager)
+        self.assertNotIn("      kafka:\n", backend)
+        self.assertNotIn("      kafka:\n", idp)
+        self.assertIn("HAI_EVENT_BUS_ENABLED=false", defaults)
+
     def test_local_a2a_connector_is_loopback_only_and_not_on_the_cloud_gateway(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         defaults = (ROOT / ".env.example").read_text(encoding="utf-8")

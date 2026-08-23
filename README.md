@@ -163,7 +163,7 @@ Constitution, run an approval-gated task, or resolve a task review item.
 | Optional local runners | Disabled-by-default Compose profiles for aggregate security scans, no-tool planning drafts, selected-folder document extraction, and disposable patch proposals. | They publish no host ports and have private networks, read-only mounts, and resource limits. Configuration or container health is not live proof; each real snapshot, model, or document path still needs retained approval, audit, and verification evidence. |
 | Proactive planning | Ambient scans identify stale work, blockers, approvals, open loops, contradiction candidates, and delegation opportunities. Governance Control records owner `accept`, `dismiss`, bounded `snooze`, indefinite `suppress`, and `resume` feedback in an immutable owner-scoped ledger that changes later attention evaluation. | Ambient mode is suggestion-first and cannot bypass approval, verification, leases, audit, or emergency stop. Attention feedback has `canExecute:false`, grants no delivery or execution authority, and invokes no notification or external effect. |
 | Advisory ambient outcome monitor | Governance Control can bind an existing outcome indicator to one of three fixed read-only local collectors: `workflow_open_loop_count`, `workflow_verified_completion_count`, or `overdue_commitment_count`. A durable singleton sweep leases due targets, appends immutable source-digested observations and run receipts, composes them into the existing outcome-evaluation service, and may surface an owner-scoped proactivity inbox decision. | The monitor is `advisory_monitor_only`. It cannot execute or deliver work, notify anyone, write Calendar data, mutate a workflow, authorize a mandate, or mutate learning. It reads only canonical local ledgers and accepts no caller-supplied SQL, URL, script, expression, or arbitrary tool instruction. Live external-account correctness and target-machine acceptance remain separate gates. |
-| Operations | nginx gateway, IDP, Postgres, Redis, Kafka, health/readiness, support bundle, doctor/reconcile/migrate commands, versioned SQL migrations, a durable job runner (persisted retry + crash recovery), CI, Compose validation, and local smoke coverage. | **Source, workflow, and ambient** scheduling all run on the durable worker: each is a self-rescheduling singleton job with backoff retry and lease-based crash recovery, and each falls back to its in-process ticker (logging that it did) if the queue is unreachable. The workflow schedule also consumes only separately owner-authorized internal reminder deliveries; each delivery is revalidated, source-bound, idempotently receipted, and recorded as a local proactivity signal. No external notification, Calendar write, provider invocation, or follow-up execution is performed. This is a single-node worker, not a distributed or HA platform. |
+| Operations | nginx gateway, IDP, Postgres, Redis, optional Kafka-compatible event bus, health/readiness, support bundle, doctor/reconcile/migrate commands, versioned SQL migrations, a durable job runner (persisted retry + crash recovery), CI, Compose validation, and local smoke coverage. | **Source, workflow, and ambient** scheduling all run on the durable worker: each is a self-rescheduling singleton job with backoff retry and lease-based crash recovery, and each falls back to its in-process ticker (logging that it did) if the queue is unreachable. The workflow schedule also consumes only separately owner-authorized internal reminder deliveries; each delivery is revalidated, source-bound, idempotently receipted, and recorded as a local proactivity signal. No external notification, Calendar write, provider invocation, or follow-up execution is performed. This is a single-node worker, not a distributed or HA platform. |
 
 ### Readiness Terms
 
@@ -479,13 +479,13 @@ Go API and operating engines
   |-- local-first LLM router and provider probes
   |-- ambient planning and controlled runtime registry
         |
-Postgres + Redis + Kafka
+Postgres + Redis + optional event bus
 ```
 
 The local deployment targets Windows 11 with Docker Desktop. The control-plane
 backend, IDP, and nginx configuration manager use Go 1.25.12 and share an
 executable CI alignment contract. They use Gin, Gorm, Postgres, and
-Sarama/Kafka where applicable. The frontend uses Angular 20 and ng-zorro-antd 20.
+Sarama/Kafka when the optional event-bus profile is enabled. The frontend uses Angular 20 and ng-zorro-antd 20.
 Versioned SQL migrations are the schema source of truth and `DB_AUTOMIGRATE`
 defaults to `false`. Startup applies pre-phase migrations, optionally runs
 development-only AutoMigrate when explicitly enabled, then applies
@@ -535,11 +535,11 @@ dashboard gateway or the optional ngrok tunnel. See
 ### Desktop resource defaults
 
 The ordinary local stack now applies explicit memory, CPU, and process ceilings
-to every always-on service: backend, frontend, IDP, gateway, nginx config
-manager, both Postgres databases, Redis, and the single Redpanda broker. The
-defaults are sized for a normal Windows 11 desktop and prevent idle HAI from
-claiming unrestricted host resources. Optional model, evaluation, document, and
-agent runners remain profile-gated and are not started by the standard command.
+to every always-on service: backend, frontend, IDP, gateway, both Postgres
+databases, and Redis. The Redpanda broker and nginx configuration consumer are
+an opt-in `event-bus` profile, so an idle local HAI installation does not pay
+for them. Optional model, evaluation, document, and agent runners remain
+profile-gated and are not started by the standard command.
 
 The limit variables are grouped in `.env.example` (`BACKEND_MEMORY_LIMIT`,
 `POSTGRES_AUTOMATION_MEMORY_LIMIT`, and similar). Change them only for an
@@ -547,6 +547,14 @@ observed workload, then validate the rendered configuration before restarting:
 
 ```powershell
 docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
+```
+
+To enable Kafka-compatible account/event delivery and dynamic gateway
+configuration deliberately, set `HAI_EVENT_BUS_ENABLED=true` in `.env.local`
+and start the additional profile:
+
+```powershell
+docker compose --env-file .env.local -f docker-compose.local.yml --profile event-bus up -d
 ```
 
 For a single-user local preview, set `LOCAL_LOGIN_BYPASS_ENABLED=true` and keep

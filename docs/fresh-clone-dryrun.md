@@ -35,8 +35,9 @@ curl.exe -i http://localhost/api/v1/llm/policy
 
 Expected result:
 
-- Backend, frontend, gateway, Postgres, Redis, Kafka, and their required
-  dependencies are running; services that define health checks report healthy.
+- Backend, frontend, gateway, Postgres, Redis, and their required dependencies
+  are running; services that define health checks report healthy. The optional
+  Kafka-compatible event bus is not part of this ordinary local run.
 - `GET /` returns the Angular dashboard shell.
 - `GET /healthz` returns the backend health JSON, and `GET /readyz` returns a
   ready response through the nginx gateway.
@@ -51,7 +52,7 @@ frontend or backend must not leave nginx pinned to a prior container IP.
 The Compose configuration, local topology, dashboard shell, gateway health and
 readiness routes, and protected-route rejection were exercised in the current
 repository on 2026-07-14. This does not prove a fresh clone on Robert's target
-Windows 11 machine, a signed-in browser journey, event publishing, or any
+Windows 11 machine, a signed-in browser journey, optional event publishing, or any
 third-party provider or account connector. Those checks remain required before
 the system is trusted for real operational work.
 
