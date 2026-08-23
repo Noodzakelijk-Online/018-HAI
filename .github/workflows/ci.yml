@@ -149,6 +149,15 @@ jobs:
             -v "$PWD/nginx-config/sites-enabled:/etc/nginx/sites-enabled:ro" \
             nginx:alpine nginx -t
 
+  provider-fixture:
+    name: Local provider fixture HTTP contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and exercise isolated fixture
+        run: bash scripts/smoke-provider-fixture.sh
+
   authenticated-smoke:
     name: Authenticated control-plane smoke
     runs-on: ubuntu-latest

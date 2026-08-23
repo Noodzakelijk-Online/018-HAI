@@ -440,6 +440,16 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertNotIn("ports:", fixture)
         self.assertIn("--healthcheck", fixture)
 
+    def test_ci_runs_provider_fixture_http_contract(self) -> None:
+        fixture_job = job_block("provider-fixture")
+        smoke = ROOT / "scripts" / "smoke-provider-fixture.sh"
+
+        self.assertTrue(smoke.is_file())
+        smoke_text = smoke.read_text(encoding="utf-8")
+        self.assertIn("bash scripts/smoke-provider-fixture.sh", fixture_job)
+        self.assertIn("--target provider-fixture", smoke_text)
+        self.assertIn("docker network create --internal", smoke_text)
+
     def test_phase2_control_state_and_safe_worker_paths_are_durable(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
