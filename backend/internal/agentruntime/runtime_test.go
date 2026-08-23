@@ -1591,6 +1591,24 @@ func TestDeepSeekHarnessAdapterRejectsWorkspaceOutsideRoot(t *testing.T) {
 	}
 }
 
+func TestDeepSeekHarnessAdapterRejectsMissingWorkspaceRoot(t *testing.T) {
+	workspace := t.TempDir()
+	adapter := &deepSeekHarnessAdapter{
+		enabled:       true,
+		executable:    os.Args[0],
+		workspace:     workspace,
+		workspaceRoot: "",
+		profile:       "headless",
+		timeout:       time.Second,
+		outputLimit:   defaultOutputLimit,
+	}
+
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "workspace root") {
+		t.Fatalf("result = %#v, want missing workspace root block", result)
+	}
+}
+
 func TestDeepSeekHarnessAdapterKeepsHarnessStateInsideDedicatedWorkspace(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "deepseek-harness")

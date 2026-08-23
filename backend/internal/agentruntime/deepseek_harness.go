@@ -226,8 +226,11 @@ func (a *deepSeekHarnessAdapter) StopTask(_ context.Context, taskID string) Stop
 }
 
 func (a *deepSeekHarnessAdapter) workspaceBlockedReason() string {
-	if strings.TrimSpace(a.workspace) == "" || strings.TrimSpace(a.workspaceRoot) == "" {
-		return ""
+	if strings.TrimSpace(a.workspace) == "" {
+		return "DEEPSEEK_HARNESS_WORKSPACE is required"
+	}
+	if strings.TrimSpace(a.workspaceRoot) == "" {
+		return "agent runtime workspace root is required"
 	}
 	root, err := filepath.Abs(filepath.Clean(a.workspaceRoot))
 	if err != nil {
