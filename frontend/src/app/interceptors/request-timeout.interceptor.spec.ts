@@ -31,4 +31,16 @@ describe('RequestTimeoutInterceptor', () => {
 
     expect(receivedError instanceof TimeoutError).toBeTrue();
   }));
+
+  it('keeps the reviewed archive upload aligned with the gateway timeout', fakeAsync(() => {
+    let receivedError: unknown;
+    http.post('/api/v1/agent-runtimes/openclaw/ecosystem/upload', new FormData())
+      .subscribe({ error: (error: unknown) => (receivedError = error) });
+    const request = controller.expectOne('/api/v1/agent-runtimes/openclaw/ecosystem/upload');
+
+    tick(RequestTimeoutInterceptor.operationTimeoutMs + 1);
+
+    expect(receivedError).toBeUndefined();
+    request.flush({ id: 'openclaw' });
+  }));
 });
