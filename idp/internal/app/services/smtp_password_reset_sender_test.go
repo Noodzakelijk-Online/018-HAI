@@ -20,6 +20,11 @@ func TestSMTPPasswordResetSenderRejectsInvalidPort(t *testing.T) {
 	require.False(t, sender.Configured())
 }
 
+func TestSMTPPasswordResetSenderRequiresSTARTTLSWhenAuthenticating(t *testing.T) {
+	sender := NewSMTPPasswordResetSender("smtp.example.com", "587", "operator@example.com", "app-password", "operator@example.com", false)
+	require.False(t, sender.Configured())
+}
+
 func TestSMTPPasswordResetSenderValidatesRecipientBeforeConnecting(t *testing.T) {
 	sender := NewSMTPPasswordResetSender("smtp.example.com", "587", "operator@example.com", "app-password", "operator@example.com", true)
 	require.True(t, sender.Configured())

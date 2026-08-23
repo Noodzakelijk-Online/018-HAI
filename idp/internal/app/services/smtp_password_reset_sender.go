@@ -46,7 +46,13 @@ func (s *SMTPPasswordResetSender) Configured() bool {
 	if _, err := mail.ParseAddress(s.from); err != nil {
 		return false
 	}
-	return (s.username == "") == (s.password == "")
+	if (s.username == "") != (s.password == "") {
+		return false
+	}
+	// This sender supports explicit STARTTLS (the common port-587 flow), not
+	// implicit TLS. Refuse authenticated SMTP without it so an accidental env
+	// override cannot send the mailbox credentials over a plaintext connection.
+	return s.username == "" || s.requireStartTLS
 }
 
 func (s *SMTPPasswordResetSender) SendPasswordReset(email, resetToken string, expiresAt time.Time) error {
