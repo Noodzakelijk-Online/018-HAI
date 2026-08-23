@@ -43,6 +43,7 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   lastUpdated?: Date;
 
   private pollSub?: Subscription;
+  private refreshInFlight = false;
 
   constructor(
     @Inject(SYSTEM_STATUS_SERVICE_TOKEN)
@@ -62,9 +63,13 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   }
 
   refresh(silent = false): void {
+    if (silent && this.refreshInFlight) {
+      return;
+    }
     if (!silent) {
       this.loading = true;
     }
+    this.refreshInFlight = true;
     this.systemStatusService.readiness().subscribe({
       next: (readiness) => {
         this.readiness = readiness;
@@ -73,10 +78,12 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
         this.lastUpdated = new Date();
         this.loading = false;
         this.loadError = false;
+        this.refreshInFlight = false;
       },
       error: () => {
         this.loading = false;
         this.loadError = true;
+        this.refreshInFlight = false;
         if (!silent) {
           this.notification.error(
             'System status unavailable',
