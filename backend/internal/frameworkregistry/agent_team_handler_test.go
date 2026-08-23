@@ -47,6 +47,7 @@ func TestAgentTeamHTTPRoutesAreOwnerScopedAndPermissionGated(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"GET /api/v1/framework-registry/teams",
+		"GET /api/v1/framework-registry/teams/message-attention",
 		"POST /api/v1/framework-registry/teams",
 		"POST /api/v1/framework-registry/teams/guided",
 		"POST /api/v1/framework-registry/teams/:id/versions/:version/messages",
@@ -78,6 +79,15 @@ func TestAgentTeamHTTPRoutesAreOwnerScopedAndPermissionGated(t *testing.T) {
 	}
 	if team.ID == "" || !team.AdvisoryOnly || team.GrantsExecutionAuthority || !team.ExecutionAuthorizationRequired {
 		t.Fatalf("unsafe or invalid HTTP team response: %#v", team)
+	}
+
+	attentionIndex := performAgentTeamRequest(engine, http.MethodGet, "/api/v1/framework-registry/teams/message-attention", nil, "robert", "viewer")
+	if attentionIndex.Code != http.StatusOK || !bytes.Contains(attentionIndex.Body.Bytes(), []byte(`"teamId":"`+team.ID+`"`)) {
+		t.Fatalf("viewer attention index status = %d: %s", attentionIndex.Code, attentionIndex.Body.String())
+	}
+	otherAttentionIndex := performAgentTeamRequest(engine, http.MethodGet, "/api/v1/framework-registry/teams/message-attention", nil, "alice", "viewer")
+	if otherAttentionIndex.Code != http.StatusOK || bytes.Contains(otherAttentionIndex.Body.Bytes(), []byte(team.ID)) {
+		t.Fatalf("cross-owner attention index status = %d: %s", otherAttentionIndex.Code, otherAttentionIndex.Body.String())
 	}
 
 	viewerList := performAgentTeamRequest(engine, http.MethodGet, "/api/v1/framework-registry/teams", nil, "robert", "viewer")
