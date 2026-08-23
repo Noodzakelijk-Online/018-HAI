@@ -468,6 +468,59 @@ func (r *PostgresAgentTeamRepository) ListMessageAcknowledgments(owner, teamID, 
 	return listPostgresMessageAcknowledgments(r.DB, owner, strings.TrimSpace(teamID), strings.TrimSpace(version), strings.TrimSpace(messageID))
 }
 
+// ListMessageAcknowledgmentsForMessages avoids a query per message when HAI
+// derives attention for one team/version.
+func (r *PostgresAgentTeamRepository) ListMessageAcknowledgmentsForMessages(owner, teamID, version string, messageIDs []string) (map[string][]agentcoordination.Acknowledgment, error) {
+	owner, err := normalizeOwner(owner)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.ready(); err != nil {
+		return nil, err
+	}
+	teamID = strings.TrimSpace(teamID)
+	version = strings.TrimSpace(version)
+	ids := make([]string, 0, len(messageIDs))
+	result := make(map[string][]agentcoordination.Acknowledgment, len(messageIDs))
+	seen := map[string]struct{}{}
+	for _, messageID := range messageIDs {
+		messageID = strings.TrimSpace(messageID)
+		if messageID == "" {
+			continue
+		}
+		if _, exists := seen[messageID]; exists {
+			continue
+		}
+		seen[messageID] = struct{}{}
+		ids = append(ids, messageID)
+		result[messageID] = []agentcoordination.Acknowledgment{}
+	}
+	if len(ids) == 0 {
+		return result, nil
+	}
+	rows, err := queryPostgresMessageAcknowledgments(r.DB, `
+		SELECT owner_identity, team_id::text AS team_id, team_version,
+			acknowledgment_id::text AS acknowledgment_id, message_id::text AS message_id,
+			correlation_id::text AS correlation_id, recipient_id, status,
+			idempotency_key::text AS idempotency_key, acknowledgment_digest,
+			created_at, retry_after, payload::text AS payload
+		FROM public.agent_team_message_acknowledgments
+		WHERE owner_identity = ? AND team_id = ? AND team_version = ?
+			AND message_id::text IN ?
+		ORDER BY message_id ASC, created_at ASC, acknowledgment_id ASC`, owner, teamID, version, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		acknowledgment, err := decodePostgresMessageAcknowledgment(row, owner, teamID, version)
+		if err != nil {
+			return nil, err
+		}
+		result[acknowledgment.MessageID] = append(result[acknowledgment.MessageID], acknowledgment)
+	}
+	return result, nil
+}
+
 func (r *PostgresAgentTeamRepository) RecordConsensusOutcome(owner string, outcome TeamConsensusOutcome, team AgentTeamContract, expectedRevision uint64, event TeamLifecycleEvent) (TeamConsensusOutcome, bool, error) {
 	owner, err := normalizeOwner(owner)
 	if err != nil {

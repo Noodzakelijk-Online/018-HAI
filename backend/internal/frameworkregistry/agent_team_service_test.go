@@ -256,6 +256,67 @@ func TestAgentTeamMessageAcknowledgmentsAreDurableAdvisoryAttentionState(t *test
 	}
 }
 
+func TestAgentTeamMessageAttentionBatchesAcknowledgmentReadsWhenSupported(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 10, 9, 0, 0, 0, time.UTC)
+	base := NewMemoryAgentTeamRepository()
+	repo := &batchAttentionRepository{AgentTeamRepository: base}
+	service := newAgentTeamService(repo, func() time.Time { return now }, deterministicTeamIDs("batch-attention"))
+	team := createActiveTestTeam(t, service, "robert", now)
+	for index := 0; index < 2; index++ {
+		message := decisionMessage(
+			t,
+			team,
+			now.Add(time.Duration(index)*time.Minute),
+			deterministicUUID(fmt.Sprintf("batch-attention-correlation-%d", index)),
+			team.Members[index],
+			team.Members[1-index],
+			TeamVoteSupport,
+			"Review the bounded plan.",
+			fmt.Sprintf("batch-attention-message-%d", index),
+		)
+		if _, created, err := service.StoreCoordinationMessage("robert", team.ID, team.Version, message); err != nil || !created {
+			t.Fatalf("store message %d: created=%t err=%v", index, created, err)
+		}
+	}
+
+	attention, err := service.MessageAttention("robert", team.ID, team.Version)
+	if err != nil {
+		t.Fatalf("MessageAttention: %v", err)
+	}
+	if len(attention.Messages) != 2 {
+		t.Fatalf("attention messages = %#v", attention.Messages)
+	}
+	if repo.batchCalls != 1 || repo.individualCalls != 0 {
+		t.Fatalf("attention reads must use one batch call: batch=%d individual=%d", repo.batchCalls, repo.individualCalls)
+	}
+}
+
+type batchAttentionRepository struct {
+	AgentTeamRepository
+	batchCalls      int
+	individualCalls int
+}
+
+func (r *batchAttentionRepository) ListMessageAcknowledgments(owner, teamID, version, messageID string) ([]agentcoordination.Acknowledgment, error) {
+	r.individualCalls++
+	return nil, errors.New("per-message acknowledgment reads are not allowed in this attention test")
+}
+
+func (r *batchAttentionRepository) ListMessageAcknowledgmentsForMessages(owner, teamID, version string, messageIDs []string) (map[string][]agentcoordination.Acknowledgment, error) {
+	r.batchCalls++
+	result := make(map[string][]agentcoordination.Acknowledgment, len(messageIDs))
+	for _, messageID := range messageIDs {
+		acknowledgments, err := r.AgentTeamRepository.ListMessageAcknowledgments(owner, teamID, version, messageID)
+		if err != nil {
+			return nil, err
+		}
+		result[messageID] = acknowledgments
+	}
+	return result, nil
+}
+
 func TestAgentTeamDeterministicValidationAndVersionProvenance(t *testing.T) {
 	t.Parallel()
 

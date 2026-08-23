@@ -522,12 +522,26 @@ func (s *AgentTeamService) MessageAttention(owner, teamID, version string) (*Tea
 	if err != nil {
 		return nil, err
 	}
+	acknowledgmentsByMessage := map[string][]agentcoordination.Acknowledgment{}
+	if batchReader, ok := s.repo.(teamMessageAcknowledgmentBatchReader); ok && len(messages) > 0 {
+		messageIDs := make([]string, 0, len(messages))
+		for _, message := range messages {
+			messageIDs = append(messageIDs, message.ID)
+		}
+		acknowledgmentsByMessage, err = batchReader.ListMessageAcknowledgmentsForMessages(owner, teamID, version, messageIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
 	now := s.now().UTC()
 	result := make([]TeamMessageAttention, 0, len(messages))
 	for _, message := range messages {
-		acknowledgments, err := s.repo.ListMessageAcknowledgments(owner, teamID, version, message.ID)
-		if err != nil {
-			return nil, err
+		acknowledgments, found := acknowledgmentsByMessage[message.ID]
+		if !found {
+			acknowledgments, err = s.repo.ListMessageAcknowledgments(owner, teamID, version, message.ID)
+			if err != nil {
+				return nil, err
+			}
 		}
 		var latest *agentcoordination.Acknowledgment
 		if len(acknowledgments) > 0 {
@@ -541,6 +555,10 @@ func (s *AgentTeamService) MessageAttention(owner, teamID, version string) (*Tea
 		result = append(result, attention)
 	}
 	return &TeamMessageAttentionPage{GeneratedAt: now, Messages: result}, nil
+}
+
+type teamMessageAcknowledgmentBatchReader interface {
+	ListMessageAcknowledgmentsForMessages(owner, teamID, version string, messageIDs []string) (map[string][]agentcoordination.Acknowledgment, error)
 }
 
 func deriveTeamMessageAttention(message agentcoordination.Message, acknowledgment *agentcoordination.Acknowledgment, now time.Time) (TeamMessageAttention, error) {
