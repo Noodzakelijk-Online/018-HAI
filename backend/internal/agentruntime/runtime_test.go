@@ -1601,6 +1601,29 @@ func TestDeepSeekHarnessAdapterRunsDocumentedHeadlessProfile(t *testing.T) {
 	}
 }
 
+func TestDeepSeekHarnessAdapterRejectsOptionLikePrompt(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:          true,
+		executionEnabled: true,
+		executable:       os.Args[0],
+		workspace:        workspace,
+		workspaceRoot:    root,
+		stateDir:         filepath.Join(workspace, ".dsh-state"),
+		timeout:          time.Second,
+		outputLimit:      defaultOutputLimit,
+	}
+
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "--install-plugin=untrusted"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "must not start with a command option") {
+		t.Fatalf("result = %#v, want option-like prompt rejection", result)
+	}
+}
+
 func TestDeepSeekHarnessAdapterRejectsWorkspaceOutsideRoot(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

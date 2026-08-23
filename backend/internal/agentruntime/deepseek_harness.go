@@ -151,6 +151,10 @@ func (a *deepSeekHarnessAdapter) ExecuteTask(parent context.Context, task Task) 
 	if reason := a.stateDirBlockedReason(); reason != "" {
 		return Result{RuntimeID: "deepseek-harness", Status: "blocked", Message: reason, ExitCode: -1}
 	}
+	if reason := deepSeekHarnessPromptBlockedReason(task.Prompt); reason != "" {
+		return Result{RuntimeID: "deepseek-harness", Status: "blocked", Message: reason, ExitCode: -1,
+			AuditEvents: []string{"DeepSeek Harness prompt rejected before CLI invocation"}}
+	}
 
 	ctx, cancel := context.WithTimeout(parent, a.timeout)
 	defer cancel()
@@ -201,6 +205,21 @@ func (a *deepSeekHarnessAdapter) ExecuteTask(parent context.Context, task Task) 
 			"dedicated workspace, state directory, timeout, output limit, environment allowlist, and secret redaction enforced by HAI",
 		},
 	}
+}
+
+// deepSeekHarnessPromptBlockedReason rejects values that a CLI parser could
+// mistake for an option. The documented upstream invocation accepts a prompt
+// as a positional argument, but it does not document an argument separator,
+// so HAI refuses ambiguous input instead of relying on parser-specific rules.
+func deepSeekHarnessPromptBlockedReason(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if strings.HasPrefix(prompt, "-") {
+		return "DeepSeek Harness task prompt must not start with a command option"
+	}
+	if strings.ContainsRune(prompt, '\x00') {
+		return "DeepSeek Harness task prompt contains an invalid null byte"
+	}
+	return ""
 }
 
 func (a *deepSeekHarnessAdapter) StopTask(_ context.Context, taskID string) StopResult {
