@@ -485,6 +485,22 @@ class CIWorkflowContractTest(unittest.TestCase):
             'sourceOAuth.GET("/oauth/google/callback", requirePermission(', routes
         )
 
+    def test_command_dashboard_names_all_registered_controlled_runtimes(self) -> None:
+        template = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "pages"
+            / "command-dashboard"
+            / "command-dashboard.component.html"
+        ).read_text(encoding="utf-8")
+
+        # The registry exposes four controlled runtime families. Do not leave
+        # DeepSeek Harness invisible in the operator-facing summary merely
+        # because OpenClaw has additional ecosystem-inspection controls.
+        self.assertIn("Hermes, DeepSeek Harness, Odysseus, and OpenClaw", template)
+
     def test_documented_provider_and_local_observability_settings_reach_backend(self) -> None:
         defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
