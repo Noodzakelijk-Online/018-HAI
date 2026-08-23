@@ -169,6 +169,29 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.syncTargetPlaceholder()).toContain('Trello board URL or ID');
   });
 
+  it('keeps unsupported source schedules out of the connect request', () => {
+    const { component } = createComponent();
+
+    component.sourceForm.patchValue({ syncFrequency: 'after-lunch' });
+    expect(component.sourceForm.invalid).toBeTrue();
+
+    component.sourceForm.patchValue({ syncFrequency: '30s' });
+    expect(component.sourceForm.invalid).toBeTrue();
+
+    component.sourceForm.patchValue({ syncFrequency: '1h30m' });
+    expect(component.sourceForm.valid).toBeTrue();
+  });
+
+  it('uses the same bounded schedule validation for Odoo source setup', () => {
+    const { component } = createComponent();
+
+    component.odooForm.patchValue({ syncFrequency: 'sometimes' });
+    expect(component.odooForm.invalid).toBeTrue();
+
+    component.odooForm.patchValue({ syncFrequency: 'daily' });
+    expect(component.odooForm.valid).toBeTrue();
+  });
+
   it('requires an explicit folder instead of defaulting local intake to the root', () => {
     const { component } = createComponent();
     component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only' } as any];

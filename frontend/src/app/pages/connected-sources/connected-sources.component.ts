@@ -1,5 +1,5 @@
 import { Component, Inject, OnDestroy, OnInit } from '@angular/core';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { AbstractControl, FormBuilder, FormGroup, ValidationErrors, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { forkJoin, of, Subscription } from 'rxjs';
@@ -41,6 +41,33 @@ interface SourceActionCard {
   tone: 'blue' | 'green' | 'gold';
 }
 
+const manualSyncValues = new Set(['', 'manual', 'off', 'disabled', 'none']);
+const syncDurationPart = /(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g;
+
+function syncFrequencyValidator(control: AbstractControl): ValidationErrors | null {
+  const value = String(control.value || '').trim().toLowerCase();
+  if (manualSyncValues.has(value) || value === 'hourly' || value === 'daily' || value === 'weekly') {
+    return null;
+  }
+  let totalMilliseconds = 0;
+  let consumed = '';
+  syncDurationPart.lastIndex = 0;
+  for (let match = syncDurationPart.exec(value); match; match = syncDurationPart.exec(value)) {
+    const amount = Number(match[1]);
+    const multiplier = ({
+      ns: 0.000001, us: 0.001, 'µs': 0.001, ms: 1, s: 1000, m: 60000, h: 3600000,
+    } as Record<string, number>)[match[2]];
+    if (!Number.isFinite(amount) || multiplier === undefined) {
+      return { syncFrequency: true };
+    }
+    totalMilliseconds += amount * multiplier;
+    consumed += match[0];
+  }
+  return consumed === value && totalMilliseconds >= 60000 && Number.isFinite(totalMilliseconds)
+    ? null
+    : { syncFrequency: true };
+}
+
 @Component({
     selector: 'app-connected-sources',
     templateUrl: './connected-sources.component.html',
@@ -80,7 +107,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
     connectorKey: ['local-folder', [Validators.required]],
     name: ['Selected local folder', [Validators.required]],
     localOnly: [true],
-    syncFrequency: ['manual'],
+    syncFrequency: ['manual', [syncFrequencyValidator]],
     syncTarget: [''],
     defaultProjectKey: ['018-HAI'],
     excludePatterns: ['spam,trash'],
@@ -123,7 +150,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
     apps: ['CRM, Sales, Invoicing and Accounting, Project, Helpdesk, Documents and Sign, Calendar and Appointments'],
     projectKey: ['Robert-life-os'],
     localOnly: [true],
-    syncFrequency: ['manual'],
+    syncFrequency: ['manual', [syncFrequencyValidator]],
   });
 
   searchForm: FormGroup = this.fb.group({
@@ -1089,7 +1116,8 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   }
 
   connectOdooSource(): void {
-	if (this.connecting) {
+	if (this.odooForm.invalid || this.connecting) {
+		this.odooForm.markAllAsTouched();
 		return;
 	}
     const connector = this.connectors.find((item) => item.connectorKey === 'odoo-herp');

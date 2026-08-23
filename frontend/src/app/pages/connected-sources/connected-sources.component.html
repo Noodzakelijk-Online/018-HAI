@@ -169,6 +169,7 @@
                 <label>
                   <span>Sync frequency</span>
                   <input nz-input formControlName="syncFrequency" />
+                  <small class="field-error" *ngIf="sourceForm.get('syncFrequency')?.invalid && sourceForm.get('syncFrequency')?.touched">Use manual, hourly, daily, weekly, or a duration of at least one minute.</small>
                 </label>
                 <label>
                   <span>Project key</span>
@@ -374,6 +375,7 @@
                 <label>
                   <span>Sync frequency</span>
                   <input nz-input formControlName="syncFrequency" />
+                  <small class="field-error" *ngIf="odooForm.get('syncFrequency')?.invalid && odooForm.get('syncFrequency')?.touched">Use manual, hourly, daily, weekly, or a duration of at least one minute.</small>
                 </label>
                 <label class="checkbox-field">
                   <span>Safety</span>

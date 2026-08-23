@@ -704,6 +704,14 @@ details {
   }
 }
 
+.field-error {
+  display: block;
+  margin-top: 5px;
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .search-results p {
   color: var(--muted);
   margin: 0 0 4px;
