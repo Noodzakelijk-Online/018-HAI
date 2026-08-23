@@ -34,7 +34,7 @@ func fetchFeedBytes(ctx context.Context, feed Feed, opts FetchOptions) ([]byte, 
 		if err != nil {
 			return nil, fmt.Errorf("accountfeed: %w", err)
 		}
-		return os.ReadFile(full)
+		return readBoundedLocalFeed(full)
 	case SourceHTTPJSONFeed:
 		if !opts.AllowHTTP {
 			return nil, fmt.Errorf("accountfeed: HTTP feeds are disabled (set the enable flag to allow %s)", feed.URL)
@@ -55,10 +55,33 @@ func fetchFeedBytes(ctx context.Context, feed Feed, opts FetchOptions) ([]byte, 
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("accountfeed: feed HTTP %d", resp.StatusCode)
 		}
-		return io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes+1))
+		if err != nil {
+			return nil, err
+		}
+		if len(body) > maxFeedBytes {
+			return nil, fmt.Errorf("accountfeed: HTTP feed exceeds %d bytes", maxFeedBytes)
+		}
+		return body, nil
 	default:
 		return nil, fmt.Errorf("accountfeed: unsupported sourceType %q", feed.SourceType)
 	}
+}
+
+func readBoundedLocalFeed(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	body, err := io.ReadAll(io.LimitReader(file, maxFeedBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxFeedBytes {
+		return nil, fmt.Errorf("accountfeed: local feed exceeds %d bytes", maxFeedBytes)
+	}
+	return body, nil
 }
 
 // validateFeedURL rejects link-local, metadata, and unspecified hosts. Localhost
