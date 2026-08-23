@@ -1,18 +1,19 @@
 import { FormBuilder } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { of } from 'rxjs';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { LoginComponent } from './login.component';
 
 describe('LoginComponent registration', () => {
-  function createComponent(): { component: LoginComponent; auth: jasmine.SpyObj<any>; notification: jasmine.SpyObj<any> } {
+  function createComponent(returnUrl: string | null = null): { component: LoginComponent; auth: jasmine.SpyObj<any>; notification: jasmine.SpyObj<any>; router: jasmine.SpyObj<Router> } {
     const auth = jasmine.createSpyObj('AuthService', ['getCapabilities', 'openLocalPreview', 'login', 'register', 'requestPasswordReset', 'confirmPasswordReset']);
     auth.getCapabilities.and.returnValue(of({ googleLoginEnabled: false, passwordRecoveryEmailEnabled: false, localPreviewEnabled: false }));
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error', 'warning', 'info', 'create']);
-    const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
-    const component = new LoginComponent(new FormBuilder(), notification as NzNotificationService, router, auth);
+    const router = jasmine.createSpyObj<Router>('Router', ['navigate', 'navigateByUrl']);
+    const route = { snapshot: { queryParamMap: { get: (key: string) => key === 'returnUrl' ? returnUrl : null } } } as unknown as ActivatedRoute;
+    const component = new LoginComponent(new FormBuilder(), notification as NzNotificationService, router, route, auth);
     component.ngOnInit();
-    return { component, auth, notification };
+    return { component, auth, notification, router };
   }
 
   it('creates an operator account and returns to login without authenticating', () => {
@@ -101,12 +102,33 @@ describe('LoginComponent registration', () => {
   });
 
   it('opens the dashboard through the explicit local preview session', () => {
-    const { component, auth } = createComponent();
+    const { component, auth, router } = createComponent('/connected-sources');
     auth.openLocalPreview.and.returnValue(of(void 0));
 
     component.openLocalPreview();
 
     expect(auth.openLocalPreview).toHaveBeenCalled();
+    expect(router.navigateByUrl).toHaveBeenCalledWith('/connected-sources');
+  });
+
+  it('returns to the requested internal route after password login', () => {
+    const { component, auth, router } = createComponent('/workflow-engine?view=advanced');
+    auth.login.and.returnValue(of(void 0));
+    component.validateForm.patchValue({ userName: 'operator@example.com', password: 'local-passphrase-2026' });
+
+    component.submitForm();
+
+    expect(router.navigateByUrl).toHaveBeenCalledWith('/workflow-engine?view=advanced');
+  });
+
+  it('rejects an unsafe login return path', () => {
+    const { component, auth, router } = createComponent('//untrusted.example');
+    auth.login.and.returnValue(of(void 0));
+    component.validateForm.patchValue({ userName: 'operator@example.com', password: 'local-passphrase-2026' });
+
+    component.submitForm();
+
+    expect(router.navigateByUrl).toHaveBeenCalledWith('/control-center');
   });
 
   it('does not request a reset code when email recovery is unavailable', () => {
