@@ -488,7 +488,7 @@ Postgres + Redis + optional event bus
 ```
 
 The local deployment targets Windows 11 with Docker Desktop. The control-plane
-backend, IDP, and nginx configuration manager use Go 1.25.12 and share an
+backend, IDP, and nginx configuration manager use Go 1.25.13 and share an
 executable CI alignment contract. They use Gin, Gorm, Postgres, and
 Sarama/Kafka when the optional event-bus profile is enabled. The frontend uses Angular 20 and ng-zorro-antd 20.
 Versioned SQL migrations are the schema source of truth and `DB_AUTOMIGRATE`
@@ -504,7 +504,7 @@ post-phase migrations. See
 - Windows 11 with Docker Desktop, or another Docker Compose-capable environment.
 - Git.
 - Node.js 20 for frontend development outside Docker.
-- Go 1.25.12 for control-plane backend, IDP, and nginx-config-manager
+- Go 1.25.13 for control-plane backend, IDP, and nginx-config-manager
   development outside Docker. Their modules, Docker builders, and CI toolchains
   are checked for version alignment.
 
@@ -811,17 +811,17 @@ model has been installed or accepted for real work.
 
 ```powershell
 # Backend (use Docker when Go is not installed locally)
-docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.25.12 go test ./...
-docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.25.12 go vet ./...
-docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.25.12 go build ./...
+docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.25.13 go test ./...
+docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.25.13 go vet ./...
+docker run --rm -v hai-go-module-cache:/go/pkg/mod -v "${PWD}/backend:/workspace" -w /workspace golang:1.25.13 go build ./...
 
-# Identity service (Go 1.25.12)
+# Identity service (Go 1.25.13)
 Set-Location idp
 go vet ./...
 go test ./...
 go build ./...
 
-# Nginx configuration service (Go 1.25.12)
+# Nginx configuration service (Go 1.25.13)
 Set-Location ..\nginx-config-manager
 go vet ./...
 go test ./...
