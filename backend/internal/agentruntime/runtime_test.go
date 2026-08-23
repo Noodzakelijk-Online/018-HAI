@@ -21,7 +21,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if len(os.Args) > 1 && (os.Args[1] == "chat" || os.Args[1] == "agent") {
+	if len(os.Args) > 1 && (os.Args[1] == "chat" || os.Args[1] == "agent" || os.Args[1] == "--profile") {
 		for _, arg := range os.Args[1:] {
 			fmt.Fprintln(os.Stdout, arg)
 		}
@@ -29,6 +29,7 @@ func TestMain(m *testing.M) {
 			"HERMES_HOME",
 			"HERMES_PROFILE",
 			"HERMES_IGNORE_USER_CONFIG",
+			"DSH_HOME",
 			"TERMINAL_CWD",
 			"OPENCLAW_STATE_DIR",
 			"OPENCLAW_HOME",
@@ -1587,6 +1588,31 @@ func TestDeepSeekHarnessAdapterRejectsWorkspaceOutsideRoot(t *testing.T) {
 	}
 	if reason := adapter.workspaceBlockedReason(); !strings.Contains(reason, "must stay inside") {
 		t.Fatalf("workspace block reason = %q", reason)
+	}
+}
+
+func TestDeepSeekHarnessAdapterKeepsHarnessStateInsideDedicatedWorkspace(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:       true,
+		executable:    os.Args[0],
+		workspace:     workspace,
+		workspaceRoot: root,
+		profile:       "headless",
+		timeout:       time.Second,
+		outputLimit:   defaultOutputLimit,
+	}
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "completed" {
+		t.Fatalf("result = %#v", result)
+	}
+	wantHome := filepath.Join(workspace, ".hai-dsh")
+	if !strings.Contains(result.Output, "DSH_HOME="+wantHome) {
+		t.Fatalf("output %q missing dedicated DSH_HOME %q", result.Output, wantHome)
 	}
 }
 

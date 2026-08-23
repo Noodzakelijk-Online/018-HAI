@@ -153,6 +153,10 @@ func (a *deepSeekHarnessAdapter) ExecuteTask(parent context.Context, task Task) 
 		"HAI_RUNTIME_TASK_ID": task.ID,
 		"HAI_PROJECT_KEY":     task.ProjectKey,
 		"TERMINAL_CWD":        a.workspace,
+		// The Harness persists profiles and one-shot sessions under DSH_HOME.
+		// Keep that state within the already-approved runtime workspace rather
+		// than allowing its default user-profile location to escape HAI's scope.
+		"DSH_HOME": filepath.Join(a.workspace, ".hai-dsh"),
 	})
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
