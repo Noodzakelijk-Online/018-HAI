@@ -7,7 +7,7 @@ import {en_US} from 'ng-zorro-antd/i18n';
 import {registerLocaleData} from '@angular/common';
 import en from '@angular/common/locales/en';
 import {HTTP_INTERCEPTORS, provideHttpClient, withInterceptorsFromDi} from '@angular/common/http';
-import {BrowserAnimationsModule} from '@angular/platform-browser/animations';
+import {provideAnimationsAsync} from '@angular/platform-browser/animations/async';
 import {BulbOutline, CalendarOutline, ContactsOutline, HeartOutline, NodeIndexOutline, StarOutline} from '@ant-design/icons-angular/icons';
 import {NZ_ICONS} from 'ng-zorro-antd/icon';
 import {AUTH_SERVICE_TOKEN} from './services/auth/auth.service.token';
@@ -27,7 +27,6 @@ export const HAI_ICONS = [BulbOutline, CalendarOutline, ContactsOutline, HeartOu
     imports: [
         BrowserModule,
         AppRoutingModule,
-        BrowserAnimationsModule,
         ControlRoomModule,
     ],
     providers: [
@@ -36,6 +35,7 @@ export const HAI_ICONS = [BulbOutline, CalendarOutline, ContactsOutline, HeartOu
         {provide: AUTH_SERVICE_TOKEN, useClass: AuthService},
         {provide: ErrorHandler, useClass: ChunkLoadRecoveryHandler},
         {provide: HTTP_INTERCEPTORS, useClass: RequestTimeoutInterceptor, multi: true},
+        provideAnimationsAsync(),
         provideHttpClient(withInterceptorsFromDi()),
     ],
     bootstrap: [AppComponent],
