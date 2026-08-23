@@ -78,6 +78,7 @@ func TestDiagnoseInvalidPortFails(t *testing.T) {
 
 func TestDiagnoseEmptySecretsWarnButDoNotFail(t *testing.T) {
 	cfg := healthyConfig()
+	cfg.RunMode = "demo"
 	cfg.BackendAPIKey = ""
 	cfg.MemoryEngineKey = ""
 	cfg.DbPassword = ""
@@ -89,6 +90,21 @@ func TestDiagnoseEmptySecretsWarnButDoNotFail(t *testing.T) {
 		if c, ok := find(r, name); !ok || c.Severity != SeverityWarn {
 			t.Fatalf("%s severity = %s (found=%v), want warn", name, c.Severity, ok)
 		}
+	}
+}
+
+func TestDiagnoseFailsPlaceholderDatabasePasswordInProduction(t *testing.T) {
+	cfg := healthyConfig()
+	cfg.RunMode = "production"
+	cfg.DbPassword = "change-this-local-db-password"
+
+	r := Diagnose(cfg)
+	check, ok := find(r, "database.password")
+	if !ok || check.Severity != SeverityFail {
+		t.Fatalf("database.password severity = %s (found=%v), want fail", check.Severity, ok)
+	}
+	if !r.HasFailures() {
+		t.Fatalf("a placeholder production database password must fail readiness: %+v", r.Checks)
 	}
 }
 

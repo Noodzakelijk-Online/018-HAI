@@ -75,6 +75,7 @@ func Diagnose(cfg config.Configuration) Report {
 	add := func(name string, sev Severity, detail string) {
 		checks = append(checks, Check{Name: name, Severity: sev, Detail: detail})
 	}
+	production := demomode.Parse(cfg.RunMode).IsProduction()
 
 	// Server / gateway.
 	if trimmedPort(cfg.ServerPort) == "" {
@@ -109,16 +110,27 @@ func Diagnose(cfg config.Configuration) Report {
 	} else {
 		add("database.user", SeverityOK, cfg.DbUser)
 	}
-	if strings.TrimSpace(cfg.DbPassword) == "" {
-		add("database.password", SeverityWarn, "DB_PASSWORD is empty; acceptable only with local trust authentication")
-	} else {
+	databasePassword := strings.TrimSpace(cfg.DbPassword)
+	switch {
+	case databasePassword == "":
+		severity := SeverityWarn
+		if production {
+			severity = SeverityFail
+		}
+		add("database.password", severity, "DB_PASSWORD is empty; acceptable only with local trust authentication")
+	case IsPlaceholderSecret(databasePassword):
+		severity := SeverityWarn
+		if production {
+			severity = SeverityFail
+		}
+		add("database.password", severity, "DB_PASSWORD still holds a shipped placeholder value; generate a real secret")
+	default:
 		add("database.password", SeverityOK, "set")
 	}
 
 	// Security-sensitive keys. A shipped placeholder is not a secret: treating
 	// "change-this-..." as OK is how a default credential reaches production,
 	// so it is reported as loudly as an empty one.
-	production := demomode.Parse(cfg.RunMode).IsProduction()
 	secretCheck := func(name, envVar, value, emptyDetail string) {
 		switch {
 		case strings.TrimSpace(value) == "":

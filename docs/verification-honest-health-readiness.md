@@ -138,10 +138,13 @@ exit=22 out=curl: (22) The requested URL returned error: 503
 `.env.example` ships `RUN_MODE=production` with `change-this-*` placeholder
 secrets. The doctor report now flags these instead of passing them:
 
-- In production mode: `security.backendApiKey` / `jwtSecret` / `memoryEncryptionKey`
-  report **FAIL** when the value is a known placeholder, so `/readyz` is
-  `not_ready` until real secrets are set.
-- Outside production: the same values report **WARN** (visible, non-blocking).
+- In production mode: `database.password`, `security.backendApiKey`,
+  `jwtSecret`, and `memoryEncryptionKey` report **FAIL** when a value is a
+  known placeholder, so `/readyz` is `not_ready` until real credentials and
+  secrets are set.
+- Outside production: the same placeholder values report **WARN** (visible,
+  non-blocking). An empty database password is likewise permitted only for
+  explicitly local trust-authentication setups.
 
 `scripts/generate-secrets.sh` writes real `openssl rand -hex 32` values for the
 backend signing/encryption keys, database password, and first-run owner password
