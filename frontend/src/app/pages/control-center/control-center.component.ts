@@ -78,7 +78,10 @@ interface NavigationItem {
     selector: 'app-control-center',
     templateUrl: './control-center.component.html',
     styleUrls: ['./control-center.component.scss'],
-    encapsulation: ViewEncapsulation.None,
+    // The stylesheet contains generic layout class names used by other
+    // operational modules. Keep Angular's component boundary so visiting the
+    // Control Center cannot restyle a later route.
+    encapsulation: ViewEncapsulation.Emulated,
     standalone: false
 })
 export class ControlCenterComponent implements OnInit, OnDestroy {

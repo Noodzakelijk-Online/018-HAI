@@ -59,6 +59,19 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertNotIn("backdrop-filter:", styles)
         self.assertNotIn("linear-gradient(180deg", styles)
 
+    def test_control_center_keeps_its_route_styles_isolated(self) -> None:
+        component = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "pages"
+            / "control-center"
+            / "control-center.component.ts"
+        ).read_text(encoding="utf-8")
+        self.assertIn("encapsulation: ViewEncapsulation.Emulated", component)
+        self.assertNotIn("encapsulation: ViewEncapsulation.None", component)
+
     def test_frontend_uses_one_direct_angular_cdk_dependency(self) -> None:
         frontend = ROOT / "frontend"
         package = json.loads((frontend / "package.json").read_text(encoding="utf-8"))
@@ -159,7 +172,8 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertNotIn("app-control-center{--bg", global_styles)
         self.assertIn("app-control-center{--bg", control_center_styles)
         self.assertIn(".operations-shell", control_center_styles)
-        self.assertIn("ViewEncapsulation.None", control_center_component)
+        self.assertIn("ViewEncapsulation.Emulated", control_center_component)
+        self.assertNotIn("ViewEncapsulation.None", control_center_component)
 
     def test_workflow_engine_styles_load_with_the_lazy_module(self) -> None:
         global_styles = (ROOT / "frontend" / "src" / "styles.scss").read_text(
