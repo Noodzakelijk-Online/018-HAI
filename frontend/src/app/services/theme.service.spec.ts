@@ -11,6 +11,13 @@ describe('ThemeService icon registration', () => {
     window.localStorage.clear()
   })
 
+  it('starts new local installations in dark mode while retaining an explicit light preference', () => {
+    expect(new ThemeService().mode()).toBe('dark')
+
+    window.localStorage.setItem('hai-theme-mode', 'light')
+    expect(new ThemeService().mode()).toBe('light')
+  })
+
   it('returns registered NG-Zorro icons for both theme modes', () => {
     const registeredNames = HAI_ICONS.map((icon) => icon.name)
     const service = new ThemeService()

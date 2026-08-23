@@ -8,7 +8,7 @@ export type ThemeMode = 'light' | 'dark'
 export class ThemeService {
   private readonly storageKey = 'hai-theme-mode'
   private readonly legacyStorageKey = 'hai-control-center-theme'
-  private currentMode: ThemeMode = 'light'
+  private currentMode: ThemeMode = 'dark'
 
   constructor() {
     this.currentMode = this.load()
@@ -43,9 +43,11 @@ export class ThemeService {
       const saved =
         window.localStorage.getItem(this.storageKey) ||
         window.localStorage.getItem(this.legacyStorageKey)
-      return saved === 'dark' ? 'dark' : 'light'
+      // The control room is dark-first. A saved explicit light preference
+      // remains valid, but a new or storage-restricted browser starts dark.
+      return saved === 'light' ? 'light' : 'dark'
     } catch {
-      return 'light'
+      return 'dark'
     }
   }
 
