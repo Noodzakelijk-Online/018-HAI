@@ -92,6 +92,23 @@ func TestWorkflowPollIntervalUsesSafeBounds(t *testing.T) {
 	}
 }
 
+func TestWorkflowSchedulerIntervalUsesSafeBounds(t *testing.T) {
+	for _, value := range []string{"", "1", "14", "86401", "invalid"} {
+		t.Setenv("WORKFLOW_SCHEDULER_INTERVAL_SECONDS", value)
+		if got := schedulerInterval("WORKFLOW_SCHEDULER_INTERVAL_SECONDS"); got != defaultSchedulerInterval {
+			t.Fatalf("schedulerInterval() with %q = %s, want default %s", value, got, defaultSchedulerInterval)
+		}
+	}
+	t.Setenv("WORKFLOW_SCHEDULER_INTERVAL_SECONDS", "15")
+	if got := schedulerInterval("WORKFLOW_SCHEDULER_INTERVAL_SECONDS"); got != minSchedulerInterval {
+		t.Fatalf("schedulerInterval() = %s, want %s", got, minSchedulerInterval)
+	}
+	t.Setenv("WORKFLOW_SCHEDULER_INTERVAL_SECONDS", "86400")
+	if got := schedulerInterval("WORKFLOW_SCHEDULER_INTERVAL_SECONDS"); got != maxSchedulerInterval {
+		t.Fatalf("schedulerInterval() = %s, want %s", got, maxSchedulerInterval)
+	}
+}
+
 type fakeScheduledWorkflowService struct {
 	calls          []string
 	openLoopLimit  int

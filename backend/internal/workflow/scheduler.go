@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+const (
+	defaultSchedulerInterval = 10 * time.Minute
+	minSchedulerInterval     = 15 * time.Second
+	maxSchedulerInterval     = 24 * time.Hour
+)
+
 type ScheduledWorkflowService interface {
 	RecoverStaleClaims(request RunDueRequest) (*ClaimRecoverySummary, error)
 	RunDue(request RunDueRequest) (*WorkflowRunSummary, error)
@@ -25,8 +31,8 @@ type Scheduler struct {
 }
 
 func NewScheduler(service ScheduledWorkflowService, interval time.Duration, limit int, allowed ...func() bool) *Scheduler {
-	if interval < 15*time.Second {
-		interval = 10 * time.Minute
+	if interval < minSchedulerInterval || interval > maxSchedulerInterval {
+		interval = defaultSchedulerInterval
 	}
 	if limit <= 0 {
 		limit = 2
@@ -131,11 +137,11 @@ func schedulerEnabled(name string, defaultEnabled bool) bool {
 func schedulerInterval(name string) time.Duration {
 	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
-		return 10 * time.Minute
+		return defaultSchedulerInterval
 	}
 	var seconds int64
-	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 15 {
-		return 10 * time.Minute
+	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < int64(minSchedulerInterval/time.Second) || seconds > int64(maxSchedulerInterval/time.Second) {
+		return defaultSchedulerInterval
 	}
 	return time.Duration(seconds) * time.Second
 }

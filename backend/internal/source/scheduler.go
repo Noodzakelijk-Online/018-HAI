@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+const (
+	defaultSchedulerInterval = 10 * time.Minute
+	minSchedulerInterval     = 15 * time.Second
+	maxSchedulerInterval     = 24 * time.Hour
+)
+
 type Scheduler struct {
 	service           Service
 	interval          time.Duration
@@ -18,8 +24,8 @@ type Scheduler struct {
 }
 
 func NewScheduler(service Service, interval time.Duration, allowed ...func() bool) *Scheduler {
-	if interval < 15*time.Second {
-		interval = 10 * time.Minute
+	if interval < minSchedulerInterval || interval > maxSchedulerInterval {
+		interval = defaultSchedulerInterval
 	}
 	return &Scheduler{service: service, interval: interval, backgroundAllowed: schedulerBackgroundGate(allowed)}
 }
@@ -106,11 +112,11 @@ func schedulerEnabled() bool {
 func schedulerInterval() time.Duration {
 	value := strings.TrimSpace(os.Getenv("SOURCE_SCHEDULER_INTERVAL_SECONDS"))
 	if value == "" {
-		return 10 * time.Minute
+		return defaultSchedulerInterval
 	}
 	var seconds int64
-	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 15 {
-		return 10 * time.Minute
+	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < int64(minSchedulerInterval/time.Second) || seconds > int64(maxSchedulerInterval/time.Second) {
+		return defaultSchedulerInterval
 	}
 	return time.Duration(seconds) * time.Second
 }
