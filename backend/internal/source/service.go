@@ -293,7 +293,7 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 	if !googleOAuthReady() {
 		for i := range connectors {
 			if isGoogleOAuthConnector(connectors[i].ConnectorKey) {
-				connectors[i].AdapterStatus = AdapterNotImplemented
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
 				connectors[i].StatusReason = "real read-only Google OAuth adapter is implemented but GOOGLE_OAUTH_* or the dedicated HAI OAuth encryption/signing keys are not set"
 			}
 		}
@@ -303,7 +303,7 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 	if !trelloConfigured() {
 		for i := range connectors {
 			if connectors[i].ConnectorKey == trelloConnectorKey {
-				connectors[i].AdapterStatus = AdapterNotImplemented
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
 				connectors[i].StatusReason = "real read-only Trello REST adapter is implemented but TRELLO_API_KEY/TRELLO_READ_TOKEN are not set, so it cannot connect yet"
 			}
 		}
@@ -518,7 +518,13 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 			return nil, fmt.Errorf("%s folder is not allowed: %w", label, err)
 		}
 	}
-	if !connector.Enabled || !adapterIsUsable(connector.AdapterStatus) {
+	if !connector.Enabled {
+		return nil, fmt.Errorf("connector %s is disabled", connectorKey)
+	}
+	if connector.AdapterStatus == AdapterConfigurationRequired {
+		return nil, fmt.Errorf("connector %s requires configuration before it can be connected", connectorKey)
+	}
+	if !adapterIsUsable(connector.AdapterStatus) {
 		return nil, fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", connectorKey)
 	}
 	category := firstNonEmpty(request.Category, connector.Category)

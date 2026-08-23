@@ -620,6 +620,30 @@ func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 	}
 }
 
+func TestConnectorsMarkUnconfiguredTrelloAsConfigurationRequired(t *testing.T) {
+	t.Setenv(trelloAPIKeyEnv, "")
+	t.Setenv(trelloReadTokenEnv, "")
+
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	connectors, err := service.Connectors()
+	if err != nil {
+		t.Fatalf("Connectors: %v", err)
+	}
+	for _, connector := range connectors {
+		if connector.ConnectorKey != trelloConnectorKey {
+			continue
+		}
+		if connector.AdapterStatus != AdapterConfigurationRequired {
+			t.Fatalf("Trello AdapterStatus = %q, want %q", connector.AdapterStatus, AdapterConfigurationRequired)
+		}
+		if !strings.Contains(connector.StatusReason, "implemented") {
+			t.Fatalf("Trello StatusReason = %q, want implemented adapter guidance", connector.StatusReason)
+		}
+		return
+	}
+	t.Fatal("Trello connector missing from catalog")
+}
+
 func TestCreateSourceAllowsOperationalEmailExportConnector(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	source, err := service.CreateSource(CreateSourceRequest{
