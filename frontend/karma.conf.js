@@ -25,7 +25,9 @@ module.exports = function (config) {
       reporters: [{ type: 'html' }, { type: 'text-summary' }],
     },
     reporters: ['progress', 'kjhtml'],
-    browsers: ['Chrome'],
+    // Keep the default deterministic and lightweight for local Windows and
+    // CI checks. Developers can still opt into interactive Chrome explicitly.
+    browsers: ['ChromeHeadlessNoSandbox'],
     customLaunchers: {
       // Used in CI: `ng test --browsers=ChromeHeadlessNoSandbox`.
       ChromeHeadlessNoSandbox: {
