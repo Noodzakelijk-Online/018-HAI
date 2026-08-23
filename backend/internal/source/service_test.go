@@ -626,6 +626,29 @@ func TestScheduledSourceDueHonorsSourceLifecycle(t *testing.T) {
 	}
 }
 
+func TestDueSourcesExcludesPausedSourcesBeforeScheduling(t *testing.T) {
+	now := time.Now().UTC()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{
+			ID: uuid.New(), ConnectorKey: "local-folder", Name: "Active source", Category: "local_folder",
+			Enabled: true, LocalOnly: true, Status: "active", SyncFrequency: "1m",
+		},
+		&models.ConnectedSource{
+			ID: uuid.New(), ConnectorKey: "local-folder", Name: "Paused source", Category: "local_folder",
+			Enabled: true, LocalOnly: true, Status: "paused", SyncFrequency: "1m",
+		},
+	)
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	due, err := service.DueSources(now)
+	if err != nil {
+		t.Fatalf("DueSources: %v", err)
+	}
+	if len(due) != 1 || due[0].Name != "Active source" {
+		t.Fatalf("DueSources = %#v, want only the active source", due)
+	}
+}
+
 func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	connectors, err := service.Connectors()
@@ -2444,7 +2467,7 @@ func (r *fakeSourceRepo) RevokeSource(
 func (r *fakeSourceRepo) FindSources(includeDisabled bool) ([]models.ConnectedSource, error) {
 	result := []models.ConnectedSource{}
 	for _, source := range r.sources {
-		if includeDisabled || (source.Enabled && source.Status != "revoked") {
+		if includeDisabled || (source.Enabled && source.Status != "paused" && source.Status != "revoked") {
 			result = append(result, *source)
 		}
 	}

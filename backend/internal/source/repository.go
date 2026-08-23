@@ -173,7 +173,11 @@ func (r *GormRepository) FindSources(includeDisabled bool) ([]models.ConnectedSo
 	var sources []models.ConnectedSource
 	query := r.DB.Order("updated_at desc")
 	if !includeDisabled {
-		query = query.Where("enabled = ? AND status <> ?", true, "revoked")
+		// Paused and revoked sources remain available to their owner through the
+		// explicit history view, but are not candidates for background work.
+		// Filtering them at the database keeps large, deliberately paused source
+		// inventories out of every scheduler sweep.
+		query = query.Where("enabled = ? AND status NOT IN ?", true, []string{"paused", "revoked"})
 	}
 	err := query.Find(&sources).Error
 	return sources, err
