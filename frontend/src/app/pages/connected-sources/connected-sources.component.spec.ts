@@ -8,15 +8,16 @@ import { ConnectedSourcesComponent } from './connected-sources.component';
 describe('ConnectedSourcesComponent pursuit handoff', () => {
   function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router>; sourceService: jasmine.SpyObj<any> } {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['info', 'error', 'warning']);
     const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
       'createSource', 'sync', 'transcribe', 'extractDocuments', 'runDueScheduledSyncs',
-      'connectors', 'sources', 'extractions', 'auditLogs', 'syncJobs', 'connectionHealth'
+      'connectors', 'sources', 'extractions', 'auditLogs', 'syncJobs', 'connectionHealth', 'startGoogleOAuth'
     ]);
     return {
       component: new ConnectedSourcesComponent(
         new FormBuilder(),
 		sourceService,
-        {} as NzNotificationService,
+		notification,
 		router,
         { mode: () => 'light' } as any,
       ),
@@ -124,6 +125,17 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 
     expect(component.googleConnectorCanConnect('gmail')).toBeFalse();
     expect(component.googleConnectorCanConnect('google-drive')).toBeTrue();
+  });
+
+  it('uses a reliable same-tab handoff for Google authorization', () => {
+    const { component, sourceService } = createComponent();
+    sourceService.startGoogleOAuth.and.returnValue(of({ authorizeUrl: 'https://accounts.google.test/authorize' }));
+    const navigate = spyOn<any>(component, 'navigateToGoogleAuthorization');
+
+    component.authorizeGoogleSource({ id: 'source-id', connectorKey: 'gmail' } as IConnectedSource);
+
+    expect(sourceService.startGoogleOAuth).toHaveBeenCalledWith('source-id');
+    expect(navigate).toHaveBeenCalledWith('https://accounts.google.test/authorize');
   });
 
   it('uses remote read-only defaults for a Trello board source', () => {

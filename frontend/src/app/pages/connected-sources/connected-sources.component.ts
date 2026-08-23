@@ -968,12 +968,19 @@ export class ConnectedSourcesComponent implements OnInit {
   authorizeGoogleSource(source: IConnectedSource): void {
     this.sourceService.startGoogleOAuth(source.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: ({ authorizeUrl }) => {
-        this.notification.info('Google authorization opened', 'Approve read-only access, then return here and refresh.');
-        window.open(authorizeUrl, '_blank', 'noopener,noreferrer');
+        this.notification.info('Continue with Google', 'Approve read-only access. HAI will return to this source after Google redirects back.');
+        this.navigateToGoogleAuthorization(authorizeUrl);
       },
       error: (error) =>
         this.notification.error('Authorization failed', error?.error?.error || 'Could not start Google authorization.'),
     });
+  }
+
+  // OAuth begins after the consent URL is returned, so opening a new window at
+  // this point is commonly blocked as an asynchronous popup. A same-tab
+  // navigation is deterministic and the signed callback restores this route.
+  private navigateToGoogleAuthorization(authorizeUrl: string): void {
+    window.location.assign(authorizeUrl);
   }
 
   private connectGoogleSource(connectorKey: 'gmail' | 'google-drive' | 'google-contacts' | 'google-calendar'): void {
