@@ -56,6 +56,7 @@ func initializeWithContext(ctx context.Context) error {
 	router.Use(securityHeadersMiddleware())
 	router.Use(rateLimitMiddleware(newRateLimitEnforcer()))
 	router.Use(idempotencyMiddleware(idempotency.New(10 * time.Minute)))
+	router.Use(jsonRequestBodyLimitMiddleware(maxJSONAPIRequestBytes))
 	router.Use(localCaptureCORSMiddleware())
 	metricsExporter, err := metrics.NewFromEnv()
 	if err != nil {
