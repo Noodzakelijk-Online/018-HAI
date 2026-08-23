@@ -121,6 +121,15 @@ if ($initializer -notmatch [Regex]::Escape('GATEWAY_HOST_BIND') -or
     throw "The first-run initializer does not enforce a loopback gateway."
 }
 
+$initializerEnvironmentKeys = [Regex]::Matches($initializer, 'Set-DotEnvValue\s+\$content\s+"([A-Z0-9_]+)"') |
+    ForEach-Object { $_.Groups[1].Value } |
+    Select-Object -Unique
+foreach ($key in $initializerEnvironmentKeys) {
+    if ($exampleEnvironment -notmatch "(?m)^$([Regex]::Escape($key))=") {
+        throw "The first-run initializer writes '$key', but .env.example does not define it."
+    }
+}
+
 foreach ($required in @(
     "ComposeProjectName",
     "Assert-HaiComposeProjectAvailable",

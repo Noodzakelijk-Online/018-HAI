@@ -120,7 +120,6 @@ $content = Set-DotEnvValue $content "HAI_MEMORY_ENCRYPTION_KEY" (New-HaiSecret)
 $content = Set-DotEnvValue $content "JWT_SECRET" (New-HaiSecret)
 $content = Set-DotEnvValue $content "HAI_APPROVAL_PROOF_SIGNING_KEY" (New-HaiSecret)
 $content = Set-DotEnvValue $content "DB_PASSWORD" (New-HaiSecret)
-$content = Set-DotEnvValue $content "DB_RUNTIME_PASSWORD" (New-HaiSecret)
 $content = Set-DotEnvValue $content "FIRST_RUN_ADMIN_EMAIL" $AdminEmail
 $content = Set-DotEnvValue $content "FIRST_RUN_ADMIN_PASSWORD" ("'" + $AdminPasswordPlainText + "'")
 $a2aLocalPort = 8091
