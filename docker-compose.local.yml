@@ -915,9 +915,9 @@ services:
       frontend:
         condition: service_healthy
       backend:
-        condition: service_started
+        condition: service_healthy
       idp:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "${GATEWAY_HOST_BIND:-127.0.0.1}:${GATEWAY_HOST_PORT:-8088}:80"
     volumes:
@@ -960,7 +960,7 @@ services:
       - envsubst '$$BACKEND_API_SHARED_KEY' < /etc/nginx/a2a-local.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "127.0.0.1:${HAI_A2A_LOCAL_PORT:-8091}:80"
     volumes:

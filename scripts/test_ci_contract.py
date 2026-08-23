@@ -286,6 +286,28 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertIn(f"{prefix}_CPU_LIMIT=", defaults)
                 self.assertIn(f"{prefix}_PIDS_LIMIT=", defaults)
 
+    def test_gateway_waits_for_ready_control_plane_dependencies(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        gateway = compose_service_block(compose, "nginx")
+
+        # The browser gateway is the first endpoint a local or ngrok user sees.
+        # Starting it before the IDP or API is healthy creates an intermittent
+        # blank/login failure window even though Compose eventually recovers.
+        self.assertIn(
+            "backend:\n        condition: service_healthy",
+            gateway,
+        )
+        self.assertIn(
+            "idp:\n        condition: service_healthy",
+            gateway,
+        )
+
+        a2a_gateway = compose_service_block(compose, "a2a-gateway")
+        self.assertIn(
+            "backend:\n        condition: service_healthy",
+            a2a_gateway,
+        )
+
     def test_optional_ngrok_tunnel_is_profiled_and_fail_closed(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
