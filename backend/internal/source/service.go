@@ -167,6 +167,12 @@ type ConnectionHealthService interface {
 	ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error)
 }
 
+// ConnectionHealthBatchService derives overview health from sources already
+// loaded for the authenticated owner. It avoids one HTTP request per source.
+type ConnectionHealthBatchService interface {
+	ConnectionHealths(sources []models.ConnectedSource) ([]ConnectionHealth, error)
+}
+
 type ContextSyncService interface {
 	SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
 }
@@ -698,6 +704,22 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 	if err != nil {
 		return nil, err
 	}
+	return s.connectionHealthForSource(*source)
+}
+
+func (s *service) ConnectionHealths(sources []models.ConnectedSource) ([]ConnectionHealth, error) {
+	health := make([]ConnectionHealth, 0, len(sources))
+	for _, source := range sources {
+		item, err := s.connectionHealthForSource(source)
+		if err != nil {
+			return nil, err
+		}
+		health = append(health, *item)
+	}
+	return health, nil
+}
+
+func (s *service) connectionHealthForSource(source models.ConnectedSource) (*ConnectionHealth, error) {
 	health := &ConnectionHealth{
 		SourceID: source.ID, ConnectorKey: source.ConnectorKey,
 		Status: source.Status, Configured: true, LastSyncedAt: source.LastSyncedAt,
@@ -766,7 +788,7 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 		health.Reason = "Google OAuth client, token encryption key, or state signing key is not configured"
 		return health, nil
 	}
-	token, err := s.repo.FindOAuthToken(sourceID)
+	token, err := s.repo.FindOAuthToken(source.ID)
 	if err != nil {
 		health.Status = "disconnected"
 		health.Reason = "no Google account grant is stored for this source"

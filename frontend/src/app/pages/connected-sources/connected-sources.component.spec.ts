@@ -11,7 +11,7 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['info', 'error', 'warning']);
     const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
       'createSource', 'sync', 'transcribe', 'extractDocuments', 'runDueScheduledSyncs',
-      'connectors', 'sources', 'extractions', 'auditLogs', 'syncJobs', 'connectionHealth', 'startGoogleOAuth'
+      'connectors', 'sources', 'extractions', 'auditLogs', 'syncJobs', 'connectionHealth', 'connectionHealths', 'startGoogleOAuth'
     ]);
     return {
       component: new ConnectedSourcesComponent(
@@ -224,13 +224,14 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.hasLoadWarnings()).toBeTrue();
   });
 
-  it('marks an unavailable source health check instead of treating it as absent health', () => {
+  it('marks an unavailable source health batch instead of treating it as absent health', () => {
     const { component, sourceService } = createComponent();
     const source = { id: 'gmail-source', connectorKey: 'gmail', name: 'Personal Gmail' } as IConnectedSource;
-    sourceService.connectionHealth.and.returnValue(throwError(() => new Error('health unavailable')));
+    sourceService.connectionHealths.and.returnValue(throwError(() => new Error('health unavailable')));
 
     (component as any).loadConnectionHealth([source]);
 
+    expect(sourceService.connectionHealths).toHaveBeenCalledTimes(1);
     expect(component.sourceHealthUnavailable(source)).toBeTrue();
     expect(component.sourceHealth(source)).toBeUndefined();
   });

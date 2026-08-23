@@ -166,6 +166,28 @@ func (h *Handler) ConnectionHealth(c *gin.Context) {
 	c.JSON(http.StatusOK, health)
 }
 
+// ConnectionHealths returns overview health only for sources visible to the
+// authenticated owner. It is a local status derivation; it never probes or
+// synchronizes external accounts.
+func (h *Handler) ConnectionHealths(c *gin.Context) {
+	healthService, ok := h.service.(ConnectionHealthBatchService)
+	if !ok {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "connection health is not available"})
+		return
+	}
+	sources, err := h.service.Sources(true)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load connected sources"})
+		return
+	}
+	health, err := healthService.ConnectionHealths(filterVisibleSources(sources, sourceOwner(c)))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not derive connection health"})
+		return
+	}
+	c.JSON(http.StatusOK, health)
+}
+
 func (h *Handler) UpdateSource(c *gin.Context) {
 	id, ok := parseUUID(c)
 	if !ok {

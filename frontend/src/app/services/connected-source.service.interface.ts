@@ -19,6 +19,7 @@ export interface IConnectedSourceService {
   connectors(): Observable<ISourceConnector[]>;
   sources(includeDisabled: boolean): Observable<IConnectedSource[]>;
   connectionHealth(sourceId: string): Observable<ISourceConnectionHealth>;
+  connectionHealths(): Observable<ISourceConnectionHealth[]>;
   syncJobs(sourceId?: string): Observable<ISourceSyncJob[]>;
   createSource(request: ICreateSourceRequest): Observable<IConnectedSource>;
   startGoogleOAuth(sourceId: string): Observable<{ authorizeUrl: string }>;

@@ -1399,21 +1399,18 @@ export class ConnectedSourcesComponent implements OnInit {
       return;
     }
     this.connectionHealthUnavailable = {};
-    forkJoin(
-      sources.map((source) =>
-        this.sourceService.connectionHealth(source.id).pipe(
-          timeout(this.loadTimeoutMs),
-          catchError(() => {
-            this.connectionHealthUnavailable = { ...this.connectionHealthUnavailable, [source.id]: true };
-            return of(undefined);
-          })
-        )
-      )
+    this.sourceService.connectionHealths().pipe(
+      timeout(this.loadTimeoutMs),
+      catchError(() => {
+        this.connectionHealthUnavailable = sources.reduce<Record<string, boolean>>((unavailable, source) => {
+          unavailable[source.id] = true;
+          return unavailable;
+        }, {});
+        return of([] as ISourceConnectionHealth[]);
+      })
     ).subscribe((results) => {
       this.connectionHealth = results.reduce<Record<string, ISourceConnectionHealth>>((health, item) => {
-        if (item) {
-          health[item.sourceId] = item;
-        }
+        health[item.sourceId] = item;
         return health;
       }, {});
     });
