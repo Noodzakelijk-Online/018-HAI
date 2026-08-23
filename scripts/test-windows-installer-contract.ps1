@@ -182,6 +182,8 @@ foreach ($required in @(
 foreach ($required in @(
     '{{json .Config.Labels}}',
     'ConvertFrom-Json',
+    'COMPOSE_PROJECT_NAME',
+    'Assert-HaiComposeOwnership -ProjectName $composeProjectName',
     'Refusing to manage cloud access until ownership can be verified'
 )) {
     if ($ngrokStart -notmatch [Regex]::Escape($required)) {

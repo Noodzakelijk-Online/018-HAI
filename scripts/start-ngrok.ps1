@@ -48,10 +48,14 @@ function Require-PositiveInteger($Values, [string]$Name) {
     return $parsed
 }
 
-function Assert-HaiComposeOwnership {
-    $ids = @(docker ps -aq --filter 'label=com.docker.compose.project=018-hai')
+function Assert-HaiComposeOwnership([string]$ProjectName) {
+    if ($ProjectName -notmatch '^[a-z0-9][a-z0-9_-]*$') {
+        throw 'COMPOSE_PROJECT_NAME must contain only lowercase letters, numbers, hyphens, or underscores before public access can start.'
+    }
+
+    $ids = @(docker ps -aq --filter "label=com.docker.compose.project=$ProjectName")
     if ($LASTEXITCODE -ne 0) {
-        throw "Unable to inspect existing 018-hai containers. Refusing to manage cloud access until Docker ownership can be verified."
+        throw "Unable to inspect existing Docker Compose containers for '$ProjectName'. Refusing to manage cloud access until ownership can be verified."
     }
     if (!$ids.Count) { return }
     # Query labels only. Passing a template with nested quoted keys breaks in
@@ -59,14 +63,14 @@ function Assert-HaiComposeOwnership {
     # container inspection could expose environment values unnecessarily.
     $inspection = @(docker inspect @ids --format '{{json .Config.Labels}}' 2>&1)
     if ($LASTEXITCODE -ne 0) {
-        throw "Unable to inspect existing 018-hai container ownership. Refusing to manage cloud access until ownership can be verified."
+        throw "Unable to inspect existing Docker Compose container ownership for '$ProjectName'. Refusing to manage cloud access until ownership can be verified."
     }
     $workingDirs = @()
     foreach ($labelJson in $inspection) {
         try {
             $labels = $labelJson | ConvertFrom-Json -ErrorAction Stop
         } catch {
-            throw "Unable to parse existing 018-hai container ownership labels. Refusing to manage cloud access until ownership can be verified."
+            throw "Unable to parse existing Docker Compose ownership labels for '$ProjectName'. Refusing to manage cloud access until ownership can be verified."
         }
         $workingDirectory = [string]$labels.'com.docker.compose.project.working_dir'
         if (![string]::IsNullOrWhiteSpace($workingDirectory)) {
@@ -76,7 +80,7 @@ function Assert-HaiComposeOwnership {
     $workingDirs = @($workingDirs | Select-Object -Unique)
     foreach ($workingDir in $workingDirs) {
         if (([System.IO.Path]::GetFullPath($workingDir)).TrimEnd('\\') -ne $repoRoot.TrimEnd('\\')) {
-            throw "Refusing to manage 018-hai containers owned by $workingDir. Use that checkout instead."
+            throw "Refusing to manage Docker project '$ProjectName' owned by $workingDir. Use that checkout instead."
         }
     }
 }
@@ -86,13 +90,14 @@ $composePath = Resolve-RepoFile $ComposeFile
 if (!(Test-Path -LiteralPath $envPath)) { throw "Environment file not found: $envPath" }
 if (!(Test-Path -LiteralPath $composePath)) { throw "Compose file not found: $composePath" }
 
-Assert-HaiComposeOwnership
+$settings = Read-DotEnv $envPath
+$composeProjectName = ([string]$settings['COMPOSE_PROJECT_NAME']).Trim()
+Assert-HaiComposeOwnership -ProjectName $composeProjectName
 if ($Stop) {
     docker compose --env-file $envPath --profile cloud-tunnel -f $composePath stop ngrok
     exit $LASTEXITCODE
 }
 
-$settings = Read-DotEnv $envPath
 Require-Value $settings 'RUN_MODE' 'production'
 Require-Value $settings 'LOCAL_LOGIN_BYPASS_ENABLED' 'false'
 Require-Value $settings 'IDP_COOKIE_SECURE' 'true'
