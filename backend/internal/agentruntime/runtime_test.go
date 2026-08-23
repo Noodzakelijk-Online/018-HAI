@@ -1624,6 +1624,58 @@ func TestDeepSeekHarnessAdapterRejectsOptionLikePrompt(t *testing.T) {
 	}
 }
 
+func TestDeepSeekHarnessAdapterRejectsLauncherSubcommandPrompt(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:          true,
+		executionEnabled: true,
+		executable:       os.Args[0],
+		workspace:        workspace,
+		workspaceRoot:    root,
+		stateDir:         filepath.Join(workspace, ".dsh-state"),
+		timeout:          time.Second,
+		outputLimit:      defaultOutputLimit,
+	}
+
+	for _, prompt := range []string{"web", "plugin"} {
+		result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", prompt))
+		if result.Status != "blocked" || !strings.Contains(result.Message, "launcher subcommand") {
+			t.Fatalf("prompt %q result = %#v, want launcher subcommand rejection", prompt, result)
+		}
+	}
+}
+
+func TestDeepSeekHarnessAdapterBoundsWaitingForSharedState(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:          true,
+		executionEnabled: true,
+		executable:       os.Args[0],
+		workspace:        workspace,
+		workspaceRoot:    root,
+		stateDir:         filepath.Join(workspace, ".dsh-state"),
+		timeout:          10 * time.Millisecond,
+		outputLimit:      defaultOutputLimit,
+	}
+	if !adapter.acquireExecutionGate(context.Background()) {
+		t.Fatal("could not acquire test execution gate")
+	}
+	defer adapter.releaseExecutionGate()
+
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "already running") {
+		t.Fatalf("result = %#v, want bounded shared-state wait", result)
+	}
+}
+
 func TestDeepSeekHarnessAdapterRejectsWorkspaceOutsideRoot(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

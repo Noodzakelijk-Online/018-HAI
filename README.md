@@ -775,7 +775,10 @@ that documented process boundary. It is disabled by default and requires both
 and state directory under `AGENT_RUNTIME_WORKSPACE_ROOT`, plus HAI's
 server-side approval and consumed final-effect proof. The adapter applies a
 timeout, output cap, environment allowlist, cancellation path, and secret
-redaction. It does not launch the Harness Web UI or ACP server, install plugins,
+redaction. HAI serializes its own Harness runs per backend process so concurrent
+headless tasks cannot race over the shared Harness state directory; do not
+horizontally scale this optional adapter against the same `DSH_HOME`. It does
+not launch the Harness Web UI or ACP server, install plugins,
 control a browser, or supply model credentials; model keys and permissions stay
 operator-managed. Because the upstream may introduce breaking changes, the
 health check makes configuration drift visible and an unavailable or failed

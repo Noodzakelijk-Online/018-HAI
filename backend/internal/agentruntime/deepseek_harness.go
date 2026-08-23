@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"automation-hub-backend/internal/safety"
@@ -16,15 +17,17 @@ import (
 // DeepSeek still labels the harness a developer preview, so execution remains
 // separately opt-in and stays behind HAI's final-effect proof boundary.
 type deepSeekHarnessAdapter struct {
-	enabled          bool
-	executionEnabled bool
-	executable       string
-	workspace        string
-	workspaceRoot    string
-	stateDir         string
-	timeout          time.Duration
-	outputLimit      int64
-	envAllow         []string
+	enabled           bool
+	executionEnabled  bool
+	executable        string
+	workspace         string
+	workspaceRoot     string
+	stateDir          string
+	timeout           time.Duration
+	outputLimit       int64
+	envAllow          []string
+	executionGate     chan struct{}
+	executionGateOnce sync.Once
 }
 
 func (*deepSeekHarnessAdapter) RuntimeID() string { return "deepseek-harness" }
@@ -158,6 +161,18 @@ func (a *deepSeekHarnessAdapter) ExecuteTask(parent context.Context, task Task) 
 
 	ctx, cancel := context.WithTimeout(parent, a.timeout)
 	defer cancel()
+	if !a.acquireExecutionGate(ctx) {
+		return Result{
+			RuntimeID: "deepseek-harness",
+			Status:    "blocked",
+			Message:   "DeepSeek Harness is already running an approved task against its shared state directory; the queued run timed out before it could start",
+			ExitCode:  -1,
+			AuditEvents: []string{
+				"DeepSeek Harness run blocked before invocation because its shared DSH_HOME is busy",
+			},
+		}
+	}
+	defer a.releaseExecutionGate()
 	cmd := exec.CommandContext(ctx, a.executable, "--profile", "headless", task.Prompt)
 	cmd.Dir = a.workspace
 	cmd.Env = safeEnvironment(a.envAllow, map[string]string{
@@ -202,9 +217,27 @@ func (a *deepSeekHarnessAdapter) ExecuteTask(parent context.Context, task Task) 
 			"server-side approval and final-effect proof verified by HAI before adapter execution",
 			"DeepSeek Harness invoked only through documented --profile headless without shell interpolation",
 			"Web UI, ACP server, browser control, and plugin installation were not invoked",
-			"dedicated workspace, state directory, timeout, output limit, environment allowlist, and secret redaction enforced by HAI",
+			"dedicated workspace, state directory, serialized state access, timeout, output limit, environment allowlist, and secret redaction enforced by HAI",
 		},
 	}
+}
+
+// acquireExecutionGate serializes HAI-owned runs because the upstream preview
+// currently initializes and rewrites shared profile state under DSH_HOME.
+// The caller's timeout includes queueing time, so a busy runtime cannot leave
+// a workflow waiting forever.
+func (a *deepSeekHarnessAdapter) acquireExecutionGate(ctx context.Context) bool {
+	a.executionGateOnce.Do(func() { a.executionGate = make(chan struct{}, 1) })
+	select {
+	case a.executionGate <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (a *deepSeekHarnessAdapter) releaseExecutionGate() {
+	<-a.executionGate
 }
 
 // deepSeekHarnessPromptBlockedReason rejects values that a CLI parser could
@@ -215,6 +248,9 @@ func deepSeekHarnessPromptBlockedReason(prompt string) string {
 	prompt = strings.TrimSpace(prompt)
 	if strings.HasPrefix(prompt, "-") {
 		return "DeepSeek Harness task prompt must not start with a command option"
+	}
+	if prompt == "web" || prompt == "plugin" {
+		return "DeepSeek Harness task prompt must not be an upstream launcher subcommand"
 	}
 	if strings.ContainsRune(prompt, '\x00') {
 		return "DeepSeek Harness task prompt contains an invalid null byte"
