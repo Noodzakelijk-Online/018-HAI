@@ -574,6 +574,58 @@ func TestRunDueScheduledSyncsSkipsManualAndNotDueSources(t *testing.T) {
 	}
 }
 
+func TestScheduledSourceDueHonorsSourceLifecycle(t *testing.T) {
+	now := time.Now().UTC()
+	revokedAt := now.Add(-time.Minute)
+	base := models.ConnectedSource{
+		ID:            uuid.New(),
+		ConnectorKey:  "local-folder",
+		Name:          "Lifecycle-controlled source",
+		Category:      "local_folder",
+		Enabled:       true,
+		LocalOnly:     true,
+		Status:        "active",
+		SyncFrequency: "1m",
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(*models.ConnectedSource)
+		reason string
+	}{
+		{
+			name:   "disabled",
+			mutate: func(source *models.ConnectedSource) { source.Enabled = false },
+			reason: "source is disabled",
+		},
+		{
+			name:   "paused",
+			mutate: func(source *models.ConnectedSource) { source.Status = "paused" },
+			reason: "source is paused",
+		},
+		{
+			name:   "revoked status",
+			mutate: func(source *models.ConnectedSource) { source.Status = "revoked" },
+			reason: "source access was revoked",
+		},
+		{
+			name:   "revocation timestamp",
+			mutate: func(source *models.ConnectedSource) { source.RevokedAt = &revokedAt },
+			reason: "source access was revoked",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			source := base
+			testCase.mutate(&source)
+			if due, reason := scheduledSourceDue(source, now); due || reason != testCase.reason {
+				t.Fatalf("scheduledSourceDue() = (%v, %q), want (false, %q)", due, reason, testCase.reason)
+			}
+		})
+	}
+}
+
 func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	connectors, err := service.Connectors()

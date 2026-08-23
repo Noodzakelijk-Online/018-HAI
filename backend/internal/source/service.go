@@ -2751,6 +2751,21 @@ func scoreExtraction(extraction models.SourceExtraction, request SearchRequest) 
 }
 
 func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, string) {
+	// Scheduling must honour the source lifecycle before considering an
+	// adapter or frequency. A paused, revoked, or disabled source is retained
+	// for audit/history, but must never create recurring failed sync jobs.
+	if !source.Enabled {
+		return false, "source is disabled"
+	}
+	switch strings.ToLower(strings.TrimSpace(source.Status)) {
+	case "paused":
+		return false, "source is paused"
+	case "revoked":
+		return false, "source access was revoked"
+	}
+	if source.RevokedAt != nil {
+		return false, "source access was revoked"
+	}
 	if source.ConnectorKey == "whisper-audio" {
 		return false, "whisper-audio transcription is operator-triggered only"
 	}
