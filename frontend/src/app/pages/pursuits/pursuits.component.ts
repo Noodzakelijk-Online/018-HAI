@@ -115,6 +115,10 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   private requestedEvidenceUri = '';
   highlightedDecisionId = '';
   private routeSub?: Subscription;
+  private dashboardSub?: Subscription;
+  private pursuitsSub?: Subscription;
+  private pursuitDetailSub?: Subscription;
+  private decisionDetailSub?: Subscription;
   private resourceEventsSub?: Subscription;
   private portfolioAllocationHistorySub?: Subscription;
   private portfolioExecutionProposalHistoryReadSub?: Subscription;
@@ -352,6 +356,10 @@ export class PursuitsComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.routeSub?.unsubscribe();
+    this.dashboardSub?.unsubscribe();
+    this.pursuitsSub?.unsubscribe();
+    this.pursuitDetailSub?.unsubscribe();
+    this.decisionDetailSub?.unsubscribe();
     this.resourceEventsSub?.unsubscribe();
     this.portfolioAllocationHistorySub?.unsubscribe();
     this.portfolioExecutionProposalHistoryReadSub?.unsubscribe();
@@ -368,8 +376,9 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   }
 
   load(): void {
+    this.dashboardSub?.unsubscribe();
     this.loading = true;
-    this.pursuitsService.dashboard().subscribe({
+    this.dashboardSub = this.pursuitsService.dashboard().subscribe({
       next: (dashboard) => {
         this.dashboard = dashboard;
         this.loadPursuits();
@@ -382,7 +391,8 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   }
 
   loadPursuits(): void {
-    this.pursuitsService.list(this.includeArchived).subscribe({
+    this.pursuitsSub?.unsubscribe();
+    this.pursuitsSub = this.pursuitsService.list(this.includeArchived).subscribe({
       next: (pursuits) => {
         this.pursuits = pursuits || [];
         this.loading = false;
@@ -2500,7 +2510,8 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       return;
     }
     this.detailLoading = true;
-    this.pursuitsService.get(card.pursuit.id).subscribe({
+    this.decisionDetailSub?.unsubscribe();
+    this.decisionDetailSub = this.pursuitsService.get(card.pursuit.id).subscribe({
       next: (detail) => {
         this.selected = detail;
         this.detailLoading = false;
@@ -2532,11 +2543,12 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   }
 
   private loadPursuitDetail(id: string, updateRoute: boolean): void {
+    this.pursuitDetailSub?.unsubscribe();
     this.detailLoading = true;
     this.delegationPackage = undefined;
     this.showContextEditor = false;
     this.resetResourceLedger(id);
-    this.pursuitsService.get(id).subscribe({
+    this.pursuitDetailSub = this.pursuitsService.get(id).subscribe({
       next: (detail) => {
         this.selected = detail;
         this.detailLoading = false;

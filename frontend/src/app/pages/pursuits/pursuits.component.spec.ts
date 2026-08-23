@@ -146,6 +146,24 @@ describe('PursuitsComponent action lanes', () => {
     expect(router.navigate).toHaveBeenCalledWith(['/pursuits'], { queryParams: { selected: 'pursuit-2' } });
   });
 
+  it('ignores a stale pursuit detail response after the user selects another pursuit', () => {
+    const firstResponse = new Subject<IPursuitDetail>();
+    const secondResponse = new Subject<IPursuitDetail>();
+    const pursuitService = (component as any).pursuitsService;
+    pursuitService.get = jasmine.createSpy('get').and.returnValues(firstResponse, secondResponse);
+    const router = (component as any).router;
+    router.navigate = jasmine.createSpy('navigate');
+
+    component.selectPursuit({ id: 'first' } as any);
+    component.selectPursuit({ id: 'second' } as any);
+
+    firstResponse.next({ pursuit: { id: 'first' } } as IPursuitDetail);
+    secondResponse.next({ pursuit: { id: 'second' } } as IPursuitDetail);
+
+    expect(component.selected?.pursuit.id).toBe('second');
+    expect(pursuitService.get).toHaveBeenCalledTimes(2);
+  });
+
   it('creates a structured outcome contract from the basic pursuit form', () => {
     const pursuitService = (component as any).pursuitsService;
     const created = { id: 'pursuit-1', title: 'Operational outcome' } as any;
