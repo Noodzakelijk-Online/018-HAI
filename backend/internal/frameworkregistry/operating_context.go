@@ -600,35 +600,20 @@ func buildCoordinationPlan(request SelectionRequest, cards []AgentCard) (Coordin
 		}
 	}
 	verified = sortedUnique(verified)
-	preferred := normalizeIdentifier(request.PreferredCoordinationMode)
-	// A caller that explicitly asks for a multi-agent execution has declared
-	// that a specialist team is required. Do not silently downgrade that request
-	// to the embedded coordinator when no verified specialist is present. Plain
-	// single-engine tasks retain their normal approval and runtime safeguards.
-	requiredSpecialistUnverified := request.ExecuteRequested && preferred != "" && preferred != "single_engine" && len(verified) < 2
 	mode := "single_engine"
 	rationale := "The embedded HAI task engine is the only verified participant; specialist roles remain requirements, not live workers."
-	if requiredSpecialistUnverified {
-		// A framework-required specialist is not optional merely because the
-		// embedded coordinator can still plan. Keep planning available, but
-		// surface a non-executable coordination state so task execution cannot
-		// fall through to the generic engine without the required capability.
-		mode = "blocked_pending_assignment"
-		rationale = "Execution is blocked until every framework-required specialist has fresh verified capability and health evidence."
-	} else if len(verified) >= 3 && request.Difficulty >= 4 {
+	if len(verified) >= 3 && request.Difficulty >= 4 {
 		mode = "hierarchical"
 		rationale = "A verified coordinator and multiple verified specialists are available for a difficult task."
 	} else if len(verified) >= 2 {
 		mode = "sequential"
 		rationale = "Verified specialists can hand work off through an ordered, auditable sequence."
 	}
-	if preferred != "" {
+	if preferred := normalizeIdentifier(request.PreferredCoordinationMode); preferred != "" {
 		if !validCoordinationMode(preferred) {
 			return CoordinationPlan{}, fmt.Errorf("unsupported coordination mode %q", preferred)
 		}
-		if requiredSpecialistUnverified {
-			rationale = "Requested coordination cannot bypass framework-required specialists that are unassigned or lack fresh verification."
-		} else if preferred != "single_engine" && len(verified) < 2 {
+		if preferred != "single_engine" && len(verified) < 2 {
 			rationale = "Requested multi-agent coordination is unavailable because fewer than two participants have fresh verification."
 		} else {
 			mode = preferred
