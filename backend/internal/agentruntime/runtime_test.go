@@ -1653,6 +1653,30 @@ func TestDeepSeekHarnessAdapterRejectsStateDirectoryOutsideRoot(t *testing.T) {
 	}
 }
 
+func TestDeepSeekHarnessAdapterRejectsStateDirectorySymlinkOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	stateDir := filepath.Join(workspace, ".dsh-state")
+	if err := os.Symlink(outside, stateDir); err != nil {
+		t.Skipf("symlink creation is unavailable in this test environment: %v", err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:          true,
+		executionEnabled: true,
+		executable:       os.Args[0],
+		workspace:        workspace,
+		workspaceRoot:    root,
+		stateDir:         stateDir,
+	}
+	if reason := adapter.stateDirBlockedReason(); !strings.Contains(reason, "must not be a symbolic link") {
+		t.Fatalf("state directory block reason = %q", reason)
+	}
+}
+
 func TestDeepSeekHarnessHealthReportsPreviewReadiness(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "deepseek-harness")

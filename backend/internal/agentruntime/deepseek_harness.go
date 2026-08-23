@@ -226,6 +226,20 @@ func (a *deepSeekHarnessAdapter) stateDirBlockedReason() string {
 	if err != nil {
 		return "DeepSeek Harness state directory is invalid"
 	}
+	if info, err := os.Lstat(stateDir); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "DeepSeek Harness state directory must not be a symbolic link"
+		}
+		if !info.IsDir() {
+			return "DeepSeek Harness state directory must be a directory"
+		}
+		stateDir, err = filepath.EvalSymlinks(stateDir)
+		if err != nil {
+			return "DeepSeek Harness state directory is not accessible"
+		}
+	} else if !os.IsNotExist(err) {
+		return "DeepSeek Harness state directory cannot be inspected"
+	}
 	parent := filepath.Dir(stateDir)
 	parent, err = filepath.EvalSymlinks(parent)
 	if err != nil {
