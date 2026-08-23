@@ -1544,12 +1544,12 @@ func TestDeepSeekHarnessAdapterIsRegisteredAndDisabledByDefault(t *testing.T) {
 	if !containsString(info.MissingConfiguration, "DEEPSEEK_HARNESS_WORKSPACE") {
 		t.Fatalf("missing configuration = %#v, want workspace", info.MissingConfiguration)
 	}
-	if skills, err := registry.Skills(context.Background(), "deepseek-harness"); err != nil || len(skills) != 1 || skills[0].ExecutionMode != "approved_headless_cli" {
+	if skills, err := registry.Skills(context.Background(), "deepseek-harness"); err != nil || len(skills) != 1 || skills[0].ExecutionMode != "preview_readiness_only" {
 		t.Fatalf("skills = %#v, err = %v", skills, err)
 	}
 }
 
-func TestDeepSeekHarnessAdapterRejectsNonHeadlessProfile(t *testing.T) {
+func TestDeepSeekHarnessAdapterIsNeverExecutionEnabledDuringPreview(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "deepseek-harness")
 	if err := os.Mkdir(workspace, 0o755); err != nil {
@@ -1560,17 +1560,14 @@ func TestDeepSeekHarnessAdapterRejectsNonHeadlessProfile(t *testing.T) {
 		executable:    "dsh",
 		workspace:     workspace,
 		workspaceRoot: root,
-		profile:       "web",
-		timeout:       time.Second,
-		outputLimit:   defaultOutputLimit,
 	}
 	info := adapter.Info()
-	if info.Configured || info.ExecutionEnabled || !containsString(info.MissingConfiguration, "DEEPSEEK_HARNESS_PROFILE=headless") {
-		t.Fatalf("non-headless adapter must fail closed: %#v", info)
+	if !info.Configured || info.ExecutionEnabled {
+		t.Fatalf("preview adapter configuration = %#v, want configured but execution disabled", info)
 	}
 	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
-	if result.Status != "blocked" || !strings.Contains(result.Message, "headless") {
-		t.Fatalf("result = %#v, want headless profile block", result)
+	if result.Status != "blocked" || !strings.Contains(result.Message, "developer preview") {
+		t.Fatalf("result = %#v, want preview execution block", result)
 	}
 }
 
@@ -1582,9 +1579,6 @@ func TestDeepSeekHarnessAdapterRejectsWorkspaceOutsideRoot(t *testing.T) {
 		executable:    "dsh",
 		workspace:     outside,
 		workspaceRoot: root,
-		profile:       "headless",
-		timeout:       time.Second,
-		outputLimit:   defaultOutputLimit,
 	}
 	if reason := adapter.workspaceBlockedReason(); !strings.Contains(reason, "must stay inside") {
 		t.Fatalf("workspace block reason = %q", reason)
@@ -1598,9 +1592,6 @@ func TestDeepSeekHarnessAdapterRejectsMissingWorkspaceRoot(t *testing.T) {
 		executable:    os.Args[0],
 		workspace:     workspace,
 		workspaceRoot: "",
-		profile:       "headless",
-		timeout:       time.Second,
-		outputLimit:   defaultOutputLimit,
 	}
 
 	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
@@ -1609,7 +1600,7 @@ func TestDeepSeekHarnessAdapterRejectsMissingWorkspaceRoot(t *testing.T) {
 	}
 }
 
-func TestDeepSeekHarnessAdapterKeepsHarnessStateInsideDedicatedWorkspace(t *testing.T) {
+func TestDeepSeekHarnessAdapterDoesNotCreateHarnessStateDuringPreview(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "deepseek-harness")
 	if err := os.Mkdir(workspace, 0o755); err != nil {
@@ -1620,21 +1611,17 @@ func TestDeepSeekHarnessAdapterKeepsHarnessStateInsideDedicatedWorkspace(t *test
 		executable:    os.Args[0],
 		workspace:     workspace,
 		workspaceRoot: root,
-		profile:       "headless",
-		timeout:       time.Second,
-		outputLimit:   defaultOutputLimit,
 	}
 	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
-	if result.Status != "completed" {
-		t.Fatalf("result = %#v", result)
+	if result.Status != "blocked" || !strings.Contains(result.Message, "developer preview") {
+		t.Fatalf("result = %#v, want preview execution block", result)
 	}
-	wantHome := filepath.Join(workspace, ".hai-dsh")
-	if !strings.Contains(result.Output, "DSH_HOME="+wantHome) {
-		t.Fatalf("output %q missing dedicated DSH_HOME %q", result.Output, wantHome)
+	if _, err := os.Stat(filepath.Join(workspace, ".hai-dsh")); !os.IsNotExist(err) {
+		t.Fatalf("preview adapter must not create harness state, stat err = %v", err)
 	}
 }
 
-func TestDeepSeekHarnessHealthProbesTheRequiredHeadlessProfile(t *testing.T) {
+func TestDeepSeekHarnessHealthReportsPreviewReadiness(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "deepseek-harness")
 	if err := os.Mkdir(workspace, 0o755); err != nil {
@@ -1645,13 +1632,10 @@ func TestDeepSeekHarnessHealthProbesTheRequiredHeadlessProfile(t *testing.T) {
 		executable:    os.Args[0],
 		workspace:     workspace,
 		workspaceRoot: root,
-		profile:       "headless",
-		timeout:       time.Second,
-		outputLimit:   defaultOutputLimit,
 	}
 	health := adapter.HealthCheck(context.Background())
-	if health.Status != "ready" || !strings.Contains(health.Reason, "headless profile") {
-		t.Fatalf("health = %#v, want ready headless profile probe", health)
+	if health.Status != "blocked" || !strings.Contains(health.Reason, "developer preview") {
+		t.Fatalf("health = %#v, want preview execution block", health)
 	}
 }
 
