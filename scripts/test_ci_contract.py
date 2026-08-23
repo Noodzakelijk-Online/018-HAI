@@ -49,6 +49,29 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertNotIn("angular-mixed-cdk-drag-drop", package_lock)
         self.assertNotIn("angular-mixed-cdk-drag-drop", pnpm_lock)
 
+    def test_frontend_theme_excludes_unused_ng_zorro_components(self) -> None:
+        theme = (ROOT / "frontend" / "src" / "theme.less").read_text(
+            encoding="utf-8"
+        )
+
+        # Importing ng-zorro-antd.less expands the complete component catalog
+        # into HAI's initial CSS chunk. Keep this explicit list aligned with
+        # application module usage so a new UI dependency has a deliberate
+        # styling and payload review.
+        self.assertNotIn("ng-zorro-antd/ng-zorro-antd.less", theme)
+        expected_components = {
+            "icon", "alert", "button", "card", "checkbox", "drawer",
+            "dropdown", "empty", "form", "input", "input-number",
+            "layout", "list", "modal", "radio", "select", "spin",
+            "steps", "table", "tag", "timeline", "tooltip", "upload",
+        }
+        imported_components = set(
+            re.findall(r'ng-zorro-antd/([^/]+)/style/entry\.less', theme)
+        )
+        self.assertEqual(imported_components, expected_components)
+        self.assertIn('ng-zorro-antd/style/default.less', theme)
+        self.assertIn('ng-zorro-antd/style/patch.less', theme)
+
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:
