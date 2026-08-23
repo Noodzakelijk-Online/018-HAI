@@ -216,6 +216,17 @@ func fetchTrelloSource(ctx context.Context, source *models.ConnectedSource) ([]I
 	if len(cards) >= trelloCardFetchLimit {
 		return nil, "", fmt.Errorf("trello board returned %d cards at the fetch limit of %d; sync is potentially truncated", len(cards), trelloCardFetchLimit)
 	}
+	// The nested card response caps commentCard actions at trelloCommentLimit.
+	// An exactly full response could be complete, but Trello does not provide a
+	// total in this response to prove that. Do not turn a partial conversation
+	// into source evidence or advance the board cursor. Keeping this fail-closed
+	// also makes the recovery path explicit instead of silently dropping older
+	// comments from a card that may drive an operational decision.
+	for _, card := range cards {
+		if len(card.Actions) >= trelloCommentLimit {
+			return nil, "", fmt.Errorf("trello card %q returned %d comments at the per-card limit of %d; sync is potentially truncated", firstNonEmpty(strings.TrimSpace(card.Name), strings.TrimSpace(card.ID)), len(card.Actions), trelloCommentLimit)
+		}
+	}
 
 	boardName := firstNonEmpty(strings.TrimSpace(board.Name), boardID)
 	projectKey := firstNonEmpty(source.DefaultProjectKey, slugText(boardName))

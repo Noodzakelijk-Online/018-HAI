@@ -250,6 +250,37 @@ func TestFetchTrelloSourceRejectsPotentiallyTruncatedBoard(t *testing.T) {
 	}
 }
 
+func TestFetchTrelloSourceRejectsPotentiallyTruncatedCardComments(t *testing.T) {
+	actions := make([]map[string]any, trelloCommentLimit)
+	for index := range actions {
+		actions[index] = map[string]any{
+			"id":   fmt.Sprintf("comment-%d", index),
+			"type": "commentCard",
+			"date": "2026-07-12T00:00:00Z",
+			"data": map[string]any{"text": fmt.Sprintf("Comment %d", index)},
+		}
+	}
+	payload, err := json.Marshal([]map[string]any{{
+		"id": "card-with-many-comments", "name": "Evidence record", "dateLastActivity": "2026-07-12T00:00:00Z", "idList": "list-1", "actions": actions,
+	}})
+	if err != nil {
+		t.Fatalf("Marshal cards: %v", err)
+	}
+	server, _, _ := trelloTestServer(t, string(payload))
+	defer server.Close()
+
+	t.Setenv(trelloBaseURLEnv, server.URL)
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+	t.Setenv(trelloAPIKeyEnv, "test-key")
+	t.Setenv(trelloReadTokenEnv, "test-read-token")
+
+	_, _, err = fetchTrelloSource(t.Context(), newTrelloSource(uuid.New(), "abc123XY", ""))
+	if err == nil || !strings.Contains(err.Error(), "per-card limit") {
+		t.Fatalf("fetchTrelloSource error = %v, want potential comment truncation error", err)
+	}
+}
+
 func TestSyncTrelloRequiresCredentials(t *testing.T) {
 	server, _, _ := trelloTestServer(t, `[]`)
 	defer server.Close()
