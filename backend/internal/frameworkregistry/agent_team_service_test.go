@@ -308,14 +308,14 @@ func TestAgentTeamMessageAttentionIndexIsOwnerScopedAndUsesOneOverviewRead(t *te
 	if err != nil {
 		t.Fatalf("MessageAttentionIndex: %v", err)
 	}
-	if len(index.Teams) != 1 || index.Teams[0].TeamID != team.ID || index.Teams[0].TeamVersion != team.Version || len(index.Teams[0].Messages) != 1 {
+	if len(index.Contracts) != 1 || index.Contracts[0].ID != team.ID || len(index.Teams) != 1 || index.Teams[0].TeamID != team.ID || index.Teams[0].TeamVersion != team.Version || len(index.Teams[0].Messages) != 1 {
 		t.Fatalf("unexpected owner-scoped attention index: %#v", index)
 	}
 	other, err := service.MessageAttentionIndex("someone-else")
 	if err != nil {
 		t.Fatalf("MessageAttentionIndex(other owner): %v", err)
 	}
-	if len(other.Teams) != 0 {
+	if len(other.Contracts) != 0 || len(other.Teams) != 0 {
 		t.Fatalf("owner-scoped attention leaked teams: %#v", other)
 	}
 }

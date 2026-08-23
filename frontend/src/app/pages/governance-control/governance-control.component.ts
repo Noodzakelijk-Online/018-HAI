@@ -498,13 +498,9 @@ export class GovernanceControlComponent implements OnInit, OnDestroy {
     if (!open || !this.shouldLoadAdvisory('teams', force)) return
     this.beginAdvisoryLoad('teams')
     this.advisorySubscriptions.teams?.unsubscribe()
-    this.advisorySubscriptions.teams = forkJoin({
-      teams: this.service.listAgentTeams(),
-      attention: this.service.agentTeamMessageAttentionIndex(),
-    }).subscribe({
-      next: ({ teams: response, attention }) => {
-        const teams = response.teams || []
-        this.agentTeams = teams
+    this.advisorySubscriptions.teams = this.service.agentTeamMessageAttentionIndex().subscribe({
+      next: (attention) => {
+        this.agentTeams = attention.contracts || []
         this.agentTeamAttention = Object.fromEntries((attention.teams || []).map((item) => [
           this.agentTeamAttentionKey({ id: item.teamId, version: item.teamVersion } as AgentTeamContract),
           { generatedAt: attention.generatedAt, messages: item.messages || [] } as AgentTeamMessageAttentionPage,

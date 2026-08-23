@@ -228,6 +228,7 @@ type TeamMessageAttentionPage struct {
 // overview avoid one HTTP request and team lookup per team.
 type TeamMessageAttentionIndex struct {
 	GeneratedAt time.Time                    `json:"generatedAt"`
+	Contracts   []AgentTeamContract          `json:"contracts"`
 	Teams       []TeamMessageAttentionByTeam `json:"teams"`
 }
 

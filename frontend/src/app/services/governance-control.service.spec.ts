@@ -236,11 +236,6 @@ describe('GovernanceControlService', () => {
   })
 
   it('loads advisory teams and whole-life context from registered read APIs', () => {
-    service.listAgentTeams().subscribe()
-    const teams = http.expectOne('/api/v1/framework-registry/teams')
-    expect(teams.request.method).toBe('GET')
-    teams.flush({ teams: [] })
-
     service.agentTeamMessageAttention('team 1', '1.0.0').subscribe()
     const attention = http.expectOne('/api/v1/framework-registry/teams/team%201/versions/1.0.0/message-attention')
     expect(attention.request.method).toBe('GET')
@@ -249,7 +244,7 @@ describe('GovernanceControlService', () => {
     service.agentTeamMessageAttentionIndex().subscribe()
     const attentionIndex = http.expectOne('/api/v1/framework-registry/teams/message-attention')
     expect(attentionIndex.request.method).toBe('GET')
-    attentionIndex.flush({ generatedAt: '2026-08-08T10:00:00Z', teams: [] })
+    attentionIndex.flush({ generatedAt: '2026-08-08T10:00:00Z', contracts: [], teams: [] })
 
     service.listLifeEntities(25, false).subscribe()
     const entities = http.expectOne((request) =>

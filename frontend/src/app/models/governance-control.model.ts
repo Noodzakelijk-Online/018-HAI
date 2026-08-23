@@ -754,6 +754,7 @@ export interface AgentTeamMessageAttentionIndexTeam {
 
 export interface AgentTeamMessageAttentionIndex {
   generatedAt: string
+  contracts: AgentTeamContract[]
   teams: AgentTeamMessageAttentionIndexTeam[]
 }
 

@@ -540,7 +540,7 @@ func (s *AgentTeamService) MessageAttentionIndex(owner string) (*TeamMessageAtte
 			TeamID: team.ID, TeamVersion: team.Version, Messages: page.Messages,
 		})
 	}
-	return &TeamMessageAttentionIndex{GeneratedAt: now, Teams: result}, nil
+	return &TeamMessageAttentionIndex{GeneratedAt: now, Contracts: teams, Teams: result}, nil
 }
 
 func (s *AgentTeamService) messageAttention(owner, teamID, version string, now time.Time) (*TeamMessageAttentionPage, error) {

@@ -273,7 +273,6 @@ describe('GovernanceControlComponent', () => {
         'effectiveDomainPack',
         'classifyDomain',
         'decideLearningProposal',
-        'listAgentTeams',
         'agentTeamMessageAttention',
         'agentTeamMessageAttentionIndex',
         'listLifeEntities',
@@ -334,9 +333,8 @@ describe('GovernanceControlComponent', () => {
     )
     service.listMandateDecisions.and.returnValue(of({ decisions: [] }))
     service.effectiveDomainPack.and.returnValue(of(domain))
-    service.listAgentTeams.and.returnValue(of({ teams: [] }))
     service.agentTeamMessageAttention.and.returnValue(of({ generatedAt: '2026-08-08T10:00:00Z', messages: [] }))
-    service.agentTeamMessageAttentionIndex.and.returnValue(of({ generatedAt: '2026-08-08T10:00:00Z', teams: [] }))
+    service.agentTeamMessageAttentionIndex.and.returnValue(of({ generatedAt: '2026-08-08T10:00:00Z', contracts: [], teams: [] }))
     service.listLifeEntities.and.returnValue(of({ entities: [] }))
     service.listLifeRelations.and.returnValue(of({ relations: [] }))
     service.listLifeMergeProposals.and.returnValue(of({ proposals: [] }))
@@ -707,7 +705,7 @@ describe('GovernanceControlComponent', () => {
   it('loads source-backed advisory engines while leaving scoped engines unconfigured', () => {
     component.ngOnInit()
 
-    expect(service.listAgentTeams).toHaveBeenCalled()
+    expect(service.agentTeamMessageAttentionIndex).toHaveBeenCalled()
     expect(service.listLifeEntities).toHaveBeenCalledWith(50, false)
     expect(service.listLifeRelations).toHaveBeenCalledWith(50, false)
     expect(service.listLifeMergeProposals).toHaveBeenCalledWith(50)
@@ -1535,16 +1533,16 @@ describe('GovernanceControlComponent', () => {
   })
 
   it('marks retained advisory data stale when a refresh fails', () => {
-    service.listAgentTeams.and.returnValue(of({ teams: [{
+    service.agentTeamMessageAttentionIndex.and.returnValue(of({ generatedAt: '2026-08-08T10:00:00Z', contracts: [{
       id: 'team-1', key: 'review', version: '1.0.0', revision: 1, status: 'active',
       name: 'Review team', purpose: 'Review evidence', authorityCeiling: 0,
       riskCeiling: 'low', advisoryOnly: true, grantsExecutionAuthority: false,
       executionAuthorizationRequired: true, members: [], evidenceRefs: [],
       contractDigest: 'digest', createdAt: '2026-08-01T00:00:00Z',
       updatedAt: '2026-08-01T00:00:00Z',
-    }] }))
+    }], teams: [] }))
     component.loadAgentTeams(true, true)
-    service.listAgentTeams.and.returnValue(throwError(() => ({
+    service.agentTeamMessageAttentionIndex.and.returnValue(throwError(() => ({
       status: 503,
       error: { error: 'agent team service unavailable' },
     })))
@@ -1565,9 +1563,9 @@ describe('GovernanceControlComponent', () => {
       contractDigest: 'digest', createdAt: '2026-08-01T00:00:00Z',
       updatedAt: '2026-08-01T00:00:00Z',
     }
-    service.listAgentTeams.and.returnValue(of({ teams: [team] }))
     service.agentTeamMessageAttentionIndex.and.returnValue(of({
       generatedAt: '2026-08-08T10:00:00Z',
+      contracts: [team],
       teams: [{ teamId: 'team-1', teamVersion: '1.0.0', messages: [{
         messageId: 'message-1', correlationId: 'correlation-1', recipientId: 'reviewer',
         subject: 'Review evidence', requiresAcknowledgment: true, state: 'overdue',
