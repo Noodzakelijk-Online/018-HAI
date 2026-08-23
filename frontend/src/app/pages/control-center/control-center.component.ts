@@ -32,7 +32,6 @@ import { AUTOMATIONS_SERVICE_TOKEN } from '../../services/automations/automation
 import { IAutomationsService } from '../../services/automations.service.interface'
 import { ContextMemoryService } from '../../services/context-memory/context-memory.service'
 import { PursuitService } from '../../services/pursuit.service'
-import { ThemeMode, ThemeService } from '../../services/theme.service'
 import { WorkflowService } from '../../services/workflow/workflow.service'
 
 interface ActivityEntry {
@@ -66,13 +65,6 @@ type ControlCenterSection =
   | 'activity'
   | 'memory'
   | 'diagnostics'
-
-interface NavigationItem {
-  label: string
-  icon: string
-  route?: string
-  section?: ControlCenterSection
-}
 
 @Component({
     selector: 'app-control-center',
@@ -114,7 +106,6 @@ export class ControlCenterComponent implements OnInit, OnDestroy {
   resolvingId = ''
   archivingMemoryId = ''
   diagnosticsExpanded = false
-  mobileNavigationOpen = false
   private readonly operationTimeoutMs = 30000
   private dashboardRefreshSubscription?: Subscription
   private checkingIds = new Set<string>()
@@ -126,46 +117,6 @@ export class ControlCenterComponent implements OnInit, OnDestroy {
   diagnosticsName = ''
   selectedAction?: CommandAction
   activeSection: ControlCenterSection = 'overview'
-  themeMode: ThemeMode = 'light'
-
-  readonly navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
-    {
-      label: 'Work',
-      items: [
-        { label: 'Command Center', icon: 'appstore', section: 'overview' },
-        { label: 'Background Ops', icon: 'thunderbolt', route: '/background-operations' },
-        { label: 'Pursuits', icon: 'flag', route: '/pursuits' },
-        { label: 'Approvals', icon: 'check-square', section: 'attention' },
-        { label: 'Workflows', icon: 'unordered-list', route: '/workflow-engine' },
-        { label: 'Automations', icon: 'setting', route: '/home' },
-      ],
-    },
-    {
-      label: 'Intelligence',
-      items: [
-        { label: 'Priorities', icon: 'heart', section: 'priorities' },
-        { label: 'Sources', icon: 'cluster', route: '/connected-sources' },
-        { label: 'Account Bridges', icon: 'link', route: '/account-bridges' },
-        { label: 'Memory', icon: 'database', route: '/memory' },
-        { label: 'Task Planning', icon: 'partition', route: '/task-blueprint' },
-        { label: 'Frameworks', icon: 'apartment', route: '/framework-registry' },
-        { label: 'Verified Answers', icon: 'safety-certificate', route: '/grounded-answers' },
-        { label: 'Activity', icon: 'history', section: 'activity' },
-      ],
-    },
-    {
-      label: 'System',
-      items: [
-        { label: 'System Status', icon: 'heart', route: '/system-status' },
-        { label: 'Runtime Control', icon: 'poweroff', route: '/runtime-control' },
-        { label: 'Brain Settings', icon: 'safety-certificate', route: '/ambient-brain' },
-        { label: 'Models', icon: 'deployment-unit', route: '/llm-policy' },
-        { label: 'Model Intelligence', icon: 'experiment', route: '/model-intelligence' },
-        { label: 'Runtime Lab', icon: 'api', route: '/runtime-lab' },
-      ],
-    },
-  ]
-
   constructor(
     @Inject(AUTOMATIONS_SERVICE_TOKEN)
     private automationsService: IAutomationsService,
@@ -175,30 +126,16 @@ export class ControlCenterComponent implements OnInit, OnDestroy {
     private agentRuntimeService: AgentRuntimeService,
     private ambientService: AmbientService,
     private memoryService: ContextMemoryService,
-    private themeService: ThemeService,
     private notification: NzNotificationService,
     private router: Router
   ) {}
 
   ngOnInit(): void {
-    this.themeMode = this.themeService.mode()
     this.refresh()
   }
 
   ngOnDestroy(): void {
     this.dashboardRefreshSubscription?.unsubscribe()
-  }
-
-  toggleTheme(): void {
-    this.themeMode = this.themeService.toggle()
-  }
-
-  themeLabel(): string {
-    return this.themeService.label()
-  }
-
-  themeIcon(): string {
-    return this.themeService.icon()
   }
 
   refresh(): void {
@@ -852,7 +789,6 @@ export class ControlCenterComponent implements OnInit, OnDestroy {
   }
 
   navigate(route: string): void {
-    this.mobileNavigationOpen = false
     if (route === '/control-center') {
       this.activeSection = 'overview'
       setTimeout(() => this.scrollToSection('overview'))
@@ -860,47 +796,7 @@ export class ControlCenterComponent implements OnInit, OnDestroy {
     this.router.navigate([route])
   }
 
-  activateNavigationItem(item: NavigationItem): void {
-    if (item.route) {
-      this.navigate(item.route)
-      return
-    }
-    if (item.section) {
-      this.navigateToSection(item.section)
-    }
-  }
-
-  isNavigationItemActive(item: NavigationItem): boolean {
-    if (item.section && !item.route) {
-      return this.activeSection === item.section
-    }
-    return !!item.route && this.router.url.split('?')[0] === item.route
-  }
-
-  navigationBadge(item: NavigationItem): string | undefined {
-    switch (item.label) {
-      case 'Approvals':
-        return this.attentionItems().length ? `${this.attentionItems().length}` : undefined
-      case 'Pursuits':
-        return this.pursuitAttentionCount() ? `${this.pursuitAttentionCount()}` : undefined
-      case 'Priorities':
-        return this.lifePriorities().length ? `${this.lifePriorities().length}` : undefined
-      case 'Activity':
-        return this.recentActivity().length ? `${this.recentActivity().length}` : undefined
-      default:
-        return undefined
-    }
-  }
-
-  menuKey(label: string): string {
-    return label
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '')
-  }
-
   navigateToSection(section: ControlCenterSection): void {
-    this.mobileNavigationOpen = false
     this.activeSection = section
     this.openContainingDisclosure(section)
     if (section === 'diagnostics' && !this.diagnosticsExpanded) {

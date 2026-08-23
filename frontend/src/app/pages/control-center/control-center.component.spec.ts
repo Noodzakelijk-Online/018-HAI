@@ -21,7 +21,6 @@ describe('ControlCenterComponent', () => {
       {} as any,
       {} as any,
       {} as any,
-      {} as any,
       notifications as any,
       {} as any
     )
