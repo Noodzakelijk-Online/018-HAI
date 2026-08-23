@@ -991,11 +991,13 @@ export class ConnectedSourcesComponent implements OnInit {
       'google-contacts': 'Google Contacts',
       'google-calendar': 'Google Calendar',
     };
-    const scopes: Record<typeof connectorKey, string> = {
-      gmail: 'gmail.readonly',
-      'google-drive': 'drive.readonly',
-      'google-contacts': 'contacts.readonly',
-      'google-calendar': 'calendar.readonly',
+    // These are HAI's normalized permissions. The backend owns the provider
+    // OAuth scope selection and never trusts client-supplied Google scopes.
+    const permissions: Record<typeof connectorKey, string> = {
+      gmail: 'email:read',
+      'google-drive': 'cloud_document:read',
+      'google-contacts': 'contact:read',
+      'google-calendar': 'calendar:read',
     };
     const label = labels[connectorKey];
 	if (!connector) {
@@ -1018,7 +1020,7 @@ export class ConnectedSourcesComponent implements OnInit {
         enabled: true,
         localOnly: false,
         syncFrequency: '15m',
-        permissions: ['metadata:read', scopes[connectorKey]],
+        permissions: ['metadata:read', permissions[connectorKey]],
       })
       .pipe(
         timeout(this.operationTimeoutMs),

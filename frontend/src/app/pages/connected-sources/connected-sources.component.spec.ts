@@ -138,6 +138,22 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(navigate).toHaveBeenCalledWith('https://accounts.google.test/authorize');
   });
 
+  it('records HAI normalized read permissions before Gmail OAuth starts', () => {
+    const { component, sourceService } = createComponent();
+    component.connectors = [{ connectorKey: 'gmail', category: 'email', enabled: true, adapterStatus: 'operational' } as any];
+    sourceService.createSource.and.returnValue(of({ id: 'gmail-source', connectorKey: 'gmail' }));
+    sourceService.startGoogleOAuth.and.returnValue(of({ authorizeUrl: 'https://accounts.google.test/authorize' }));
+    spyOn<any>(component, 'navigateToGoogleAuthorization');
+    spyOn(component, 'refresh');
+
+    component.connectGmail();
+
+    expect(sourceService.createSource).toHaveBeenCalledWith(jasmine.objectContaining({
+      connectorKey: 'gmail',
+      permissions: ['metadata:read', 'email:read'],
+    }));
+  });
+
   it('uses remote read-only defaults for a Trello board source', () => {
     const { component } = createComponent();
 
