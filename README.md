@@ -490,7 +490,7 @@ Postgres + Redis + optional event bus
 The local deployment targets Windows 11 with Docker Desktop. The control-plane
 backend, IDP, and nginx configuration manager use Go 1.25.13 and share an
 executable CI alignment contract. They use Gin, Gorm, Postgres, and
-Sarama/Kafka when the optional event-bus profile is enabled. The frontend uses Angular 20 and ng-zorro-antd 20.
+Sarama/Kafka when the optional event-bus profile is enabled. The frontend uses Angular 20 and ng-zorro-antd 20. Use Node 20.19 or later within the Node 20 LTS line for frontend development and verification; the repository `.nvmrc` and frontend package engine contract declare the supported frontend runtime.
 Versioned SQL migrations are the schema source of truth and `DB_AUTOMIGRATE`
 defaults to `false`. Startup applies pre-phase migrations, optionally runs
 development-only AutoMigrate when explicitly enabled, then applies
