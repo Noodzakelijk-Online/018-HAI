@@ -51,7 +51,7 @@ describe('LifeOpsComponent', () => {
 
   beforeEach(() => {
     service = jasmine.createSpyObj<LifeOpsService>('LifeOpsService', [
-      'domains', 'needs', 'latestCapacity', 'goals', 'goalForest',
+      'overview', 'domains', 'needs', 'latestCapacity', 'goals', 'goalForest',
       'recordNeed', 'recordCapacity', 'linkEntity', 'entityDomains',
       'createGoal', 'updateGoal', 'assessPriority',
     ])
@@ -61,6 +61,10 @@ describe('LifeOpsComponent', () => {
     service.latestCapacity.and.returnValue(of(null))
     service.goals.and.returnValue(of([goal]))
     service.goalForest.and.returnValue(of([{ goal, children: [] }]))
+    service.overview.and.returnValue(of({
+      domains: [domain], needs: [need('newest'), need('older')], capacity: null,
+      goals: [goal], forest: [{ goal, children: [] }],
+    }))
     component = new LifeOpsComponent(service, notification)
   })
 
@@ -93,8 +97,10 @@ describe('LifeOpsComponent', () => {
       needsReview: true,
       createdAt: '2026-07-28T10:00:00Z',
     } as CapacitySnapshot
-    service.latestCapacity.and.returnValue(of(capacity))
-    service.needs.and.returnValue(of([need('review', { needsReview: true })]))
+    service.overview.and.returnValue(of({
+      domains: [domain], needs: [need('review', { needsReview: true })], capacity,
+      goals: [goal], forest: [{ goal, children: [] }],
+    }))
 
     component.refresh()
 
@@ -117,7 +123,7 @@ describe('LifeOpsComponent', () => {
   })
 
   it('preserves a useful API failure state instead of showing empty data', () => {
-    service.domains.and.returnValue(throwError(() => new HttpErrorResponse({
+    service.overview.and.returnValue(throwError(() => new HttpErrorResponse({
       status: 503,
       error: { error: 'whole-life context operation failed' },
     })))

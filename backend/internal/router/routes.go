@@ -842,6 +842,7 @@ func initializeLifeOpsRoutes(apiVersion *gin.RouterGroup, handler *lifeops.Handl
 	routes := apiVersion.Group("/life")
 	routes.Use(requireAuthenticatedOwner())
 	{
+		routes.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
 		routes.GET("/domains", requirePermission(rbac.PermRead), handler.Domains)
 		routes.POST("/entities/link", requirePermission(rbac.PermWrite), handler.LinkEntity)
 		routes.GET("/entities/:entityType/:entityId/domains", requirePermission(rbac.PermRead), handler.EntityDomains)
