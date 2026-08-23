@@ -21,6 +21,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
   navigationMode: HaiNavigationMode = 'auto'
   mobileNavigationOpen = false
   private routerSubscription?: Subscription
+  private detailRestoreTimer?: number
   private readonly advancedDetailSelector = [
     'details.advanced-section',
     'details.advanced-block',
@@ -48,6 +49,9 @@ export class AppShellComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.routerSubscription?.unsubscribe()
+    if (this.detailRestoreTimer !== undefined) {
+      window.clearTimeout(this.detailRestoreTimer)
+    }
     document.removeEventListener('toggle', this.onDetailsToggle, true)
   }
 
@@ -93,7 +97,13 @@ export class AppShellComponent implements OnInit, OnDestroy {
     this.viewMode = preferences.mode
     this.navigationMode = preferences.navigationMode
     document.body.classList.toggle('hai-view-advanced', this.viewMode === 'advanced')
-    window.setTimeout(() => this.restoreDetailState())
+    if (this.detailRestoreTimer !== undefined) {
+      window.clearTimeout(this.detailRestoreTimer)
+    }
+    this.detailRestoreTimer = window.setTimeout(() => {
+      this.detailRestoreTimer = undefined
+      this.restoreDetailState()
+    })
   }
 
   private persistDetailState(event: Event): void {
