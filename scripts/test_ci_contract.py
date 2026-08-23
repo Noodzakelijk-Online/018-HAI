@@ -464,6 +464,27 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertIn(f"{setting}=", defaults)
                 self.assertIn(f"{setting}: ${{{setting}:-}}", compose)
 
+    def test_google_oauth_callback_uses_signed_state_not_session_rbac(self) -> None:
+        routes = (ROOT / "backend" / "internal" / "router" / "routes.go").read_text(
+            encoding="utf-8"
+        )
+
+        # The provider returns through a browser navigation that may not carry
+        # HAI's session cookie. Start remains permission-gated; the callback
+        # must reach the source service so its signed, short-lived OAuth state
+        # can be verified before any code is exchanged.
+        self.assertIn(
+            'sourceOAuth.GET("/oauth/google/start", requirePermission(rbac.PermWrite), sourceHandler.StartGoogleOAuth)',
+            routes,
+        )
+        self.assertIn(
+            'sourceOAuth.GET("/oauth/google/callback", sourceHandler.GoogleOAuthCallback)',
+            routes,
+        )
+        self.assertNotIn(
+            'sourceOAuth.GET("/oauth/google/callback", requirePermission(', routes
+        )
+
     def test_documented_provider_and_local_observability_settings_reach_backend(self) -> None:
         defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")

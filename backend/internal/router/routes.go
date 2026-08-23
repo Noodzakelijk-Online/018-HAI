@@ -1311,7 +1311,13 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 	sourceOAuth := apiVersion.Group("/sources")
 	{
 		sourceOAuth.GET("/oauth/google/start", requirePermission(rbac.PermWrite), sourceHandler.StartGoogleOAuth)
-		sourceOAuth.GET("/oauth/google/callback", requirePermission(rbac.PermRead), sourceHandler.GoogleOAuthCallback)
+		// Google returns to this route after leaving HAI's authenticated origin.
+		// Authorization for the callback comes exclusively from the signed,
+		// short-lived OAuth state verified by the source service. Requiring an
+		// HAI role here would reject a valid browser return before that proof can
+		// be checked, while leaving a no-session callback as the least-privilege
+		// viewer identity does not add any protection.
+		sourceOAuth.GET("/oauth/google/callback", sourceHandler.GoogleOAuthCallback)
 	}
 }
 
