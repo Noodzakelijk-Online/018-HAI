@@ -68,7 +68,11 @@ export class LoginComponent implements OnInit {
   // browser must follow Google's redirects and land back on the app with the
   // session cookies set by the callback.
   loginWithGoogle(): void {
-    window.location.href = '/api/v1/auth/google/login';
+    window.location.href = this.googleLoginURL();
+  }
+
+  private googleLoginURL(): string {
+    return `/api/v1/auth/google/login?returnUrl=${encodeURIComponent(this.authenticationDestination())}`;
   }
 
   openLocalPreview(): void {

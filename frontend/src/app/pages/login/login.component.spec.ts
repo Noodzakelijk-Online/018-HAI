@@ -131,6 +131,12 @@ describe('LoginComponent registration', () => {
     expect(router.navigateByUrl).toHaveBeenCalledWith('/control-center');
   });
 
+  it('passes the requested internal route to Google sign-in', () => {
+    const { component } = createComponent('/connected-sources?source=gmail');
+
+    expect((component as any).googleLoginURL()).toBe('/api/v1/auth/google/login?returnUrl=%2Fconnected-sources%3Fsource%3Dgmail');
+  });
+
   it('does not request a reset code when email recovery is unavailable', () => {
     const { component, auth, notification } = createComponent();
     component.validateForm.patchValue({ userName: 'operator@example.com' });
