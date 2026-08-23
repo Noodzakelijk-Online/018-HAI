@@ -229,13 +229,18 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   ];
 
   readonly domains = [
-    'legal_government', 'emergency_continuity', 'health_wellbeing', 'financial',
-    'work_venture', 'home_assets', 'relationships_care', 'learning_growth',
-    'travel_mobility', 'personal_productivity', 'identity_roles', 'family_household',
-    'food_nutrition', 'communication_correspondence', 'digital_accounts',
-    'possessions_inventory', 'animals_dependants', 'community_civic',
-    'leisure_recreation', 'creativity_expression', 'meaning_values',
-    'environment_sustainability', 'legacy_long_term', 'safety_security',
+    ['legal_government', 'Legal and government'], ['emergency_continuity', 'Emergency and continuity'],
+    ['health_wellbeing', 'Health and wellbeing'], ['financial', 'Financial'],
+    ['work_venture', 'Work and ventures'], ['home_assets', 'Home and assets'],
+    ['relationships_care', 'Relationships and care'], ['learning_growth', 'Learning and growth'],
+    ['travel_mobility', 'Travel and mobility'], ['personal_productivity', 'Personal productivity'],
+    ['identity_roles', 'Identity and roles'], ['family_household', 'Family and household'],
+    ['food_nutrition', 'Food and nutrition'], ['communication_correspondence', 'Communication and correspondence'],
+    ['digital_accounts', 'Digital accounts'], ['possessions_inventory', 'Possessions and inventory'],
+    ['animals_dependants', 'Animals and dependants'], ['community_civic', 'Community and civic life'],
+    ['leisure_recreation', 'Leisure and recreation'], ['creativity_expression', 'Creativity and expression'],
+    ['meaning_values', 'Meaning and values'], ['environment_sustainability', 'Environment and sustainability'],
+    ['legacy_long_term', 'Legacy and long term'], ['safety_security', 'Safety and security'],
   ];
 
   readonly linkTypes = [

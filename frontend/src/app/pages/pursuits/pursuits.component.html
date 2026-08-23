@@ -170,7 +170,7 @@
           <input nz-input formControlName="title" placeholder="Pursuit title" data-testid="pursuit-title">
           <input nz-input formControlName="projectKey" placeholder="Project key" data-testid="pursuit-project-key">
           <nz-select formControlName="domain" nzPlaceHolder="Domain">
-            <nz-option *ngFor="let domain of domains" [nzValue]="domain" [nzLabel]="domain"></nz-option>
+            <nz-option *ngFor="let domain of domains" [nzValue]="domain[0]" [nzLabel]="domain[1]"></nz-option>
           </nz-select>
           <textarea nz-input formControlName="description" rows="2" placeholder="Background context (optional)"></textarea>
           <textarea nz-input formControlName="whyItMatters" rows="2" placeholder="Why this matters"></textarea>
