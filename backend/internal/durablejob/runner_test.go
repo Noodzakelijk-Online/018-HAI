@@ -129,6 +129,19 @@ func (f *fakeRepo) MarkForRetry(id uuid.UUID, workerID string, leaseGeneration i
 	return true, nil
 }
 
+func (f *fakeRepo) MarkDeferred(id uuid.UUID, workerID string, leaseGeneration int64, runAt time.Time, reason string) (bool, error) {
+	job := f.jobs[id]
+	if !fakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, nil
+	}
+	job.Status = models.DurableJobPending
+	job.RunAt = runAt
+	job.LastError = reason
+	job.LockedBy = ""
+	job.LockedAt = nil
+	return true, nil
+}
+
 func (f *fakeRepo) MarkDead(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, attempts int, lastErr string) (bool, error) {
 	job := f.jobs[id]
 	if !fakeLeaseOwned(job, workerID, leaseGeneration) {
@@ -280,6 +293,36 @@ func TestRunnerRetriesWithBackoffAndSurvivesRestart(t *testing.T) {
 	stored, _ = repo.Find(job.ID)
 	if stored.Status != models.DurableJobSucceeded {
 		t.Fatalf("status after restart = %q, want succeeded", stored.Status)
+	}
+}
+
+func TestRunnerDefersPausedWorkWithoutConsumingRetryBudget(t *testing.T) {
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	repo := newFakeRepo()
+	runner := NewRunner(repo, Options{WorkerID: "w1", Now: fixedClock(&now)})
+	runner.Register("paused", func(context.Context, models.DurableJob) error {
+		return Defer("background processing is paused by safety policy")
+	})
+	job, err := runner.Enqueue("paused", "{}", now, 3)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	if processed, err := runner.RunOnce(context.Background()); err != nil || processed != 1 {
+		t.Fatalf("RunOnce = %d, %v; want 1, nil", processed, err)
+	}
+	stored, err := repo.Find(job.ID)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if stored.Status != models.DurableJobPending || stored.Attempts != 0 {
+		t.Fatalf("deferred state = %q attempts=%d, want pending/0", stored.Status, stored.Attempts)
+	}
+	if !stored.RunAt.Equal(now.Add(DefaultDeferDelay)) {
+		t.Fatalf("deferred RunAt = %v, want %v", stored.RunAt, now.Add(DefaultDeferDelay))
+	}
+	if stored.LastError != "job deferred: background processing is paused by safety policy" {
+		t.Fatalf("deferred reason = %q", stored.LastError)
 	}
 }
 

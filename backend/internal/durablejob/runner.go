@@ -2,6 +2,7 @@ package durablejob
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -22,6 +23,28 @@ type Handler func(ctx context.Context, job Job) error
 // DefaultLease is how long a claimed job may be held before another worker is
 // allowed to assume the holder died and reclaim it.
 const DefaultLease = 5 * time.Minute
+
+// DefaultDeferDelay prevents a paused policy gate from repeatedly claiming the
+// same job while retaining it for the next permitted worker pass.
+const DefaultDeferDelay = time.Minute
+
+// DeferredError tells the runner that work was deliberately postponed by a
+// safety or availability gate. It is neither a success nor a retryable failure:
+// attempts remain unchanged and the job stays pending for a later pass.
+type DeferredError struct {
+	Reason string
+}
+
+func (e *DeferredError) Error() string {
+	if e == nil || e.Reason == "" {
+		return "job deferred"
+	}
+	return "job deferred: " + e.Reason
+}
+
+// Defer returns a typed handler result for work that must wait without
+// consuming the job retry budget, such as an emergency stop or paused mode.
+func Defer(reason string) error { return &DeferredError{Reason: reason} }
 
 // Runner claims due jobs, executes their handler, and applies the retry policy.
 // It is safe to run several Runners (in one process or many) against the same
@@ -232,6 +255,11 @@ func (r *Runner) execute(ctx context.Context, job models.DurableJob) error {
 	}
 	if err == nil {
 		_, markErr := r.repo.MarkSucceeded(job.ID, r.workerID, job.LeaseGeneration, r.now())
+		return markErr
+	}
+	var deferred *DeferredError
+	if errors.As(err, &deferred) {
+		_, markErr := r.repo.MarkDeferred(job.ID, r.workerID, job.LeaseGeneration, r.now().Add(DefaultDeferDelay), deferred.Error())
 		return markErr
 	}
 	if attempt >= job.MaxAttempts {

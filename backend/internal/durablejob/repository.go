@@ -34,6 +34,9 @@ type Repository interface {
 	MarkSucceeded(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error)
 	// MarkForRetry returns a job to pending with a future RunAt.
 	MarkForRetry(id uuid.UUID, workerID string, leaseGeneration int64, runAt time.Time, attempts int, lastErr string) (bool, error)
+	// MarkDeferred returns a deliberately paused job to pending without
+	// incrementing attempts. Policy gates use it to preserve work for resume.
+	MarkDeferred(id uuid.UUID, workerID string, leaseGeneration int64, runAt time.Time, reason string) (bool, error)
 	MarkDead(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, attempts int, lastErr string) (bool, error)
 	// ExtendLease heartbeats a running job only while the caller still owns its
 	// current lease generation.
@@ -191,6 +194,17 @@ func (r *gormRepository) MarkForRetry(id uuid.UUID, workerID string, leaseGenera
 		"run_at":     runAt,
 		"attempts":   attempts,
 		"last_error": lastErr,
+		"locked_by":  "",
+		"locked_at":  nil,
+	})
+	return result.RowsAffected == 1, result.Error
+}
+
+func (r *gormRepository) MarkDeferred(id uuid.UUID, workerID string, leaseGeneration int64, runAt time.Time, reason string) (bool, error) {
+	result := r.ownedLease(id, workerID, leaseGeneration).Updates(map[string]any{
+		"status":     models.DurableJobPending,
+		"run_at":     runAt,
+		"last_error": reason,
 		"locked_by":  "",
 		"locked_at":  nil,
 	})

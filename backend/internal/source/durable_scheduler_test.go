@@ -100,6 +100,16 @@ func (f *fakeJobRepo) MarkForRetry(id uuid.UUID, workerID string, leaseGeneratio
 	return true, nil
 }
 
+func (f *fakeJobRepo) MarkDeferred(id uuid.UUID, workerID string, leaseGeneration int64, runAt time.Time, reason string) (bool, error) {
+	job := f.jobs[id]
+	if !sourceFakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, nil
+	}
+	job.Status, job.RunAt, job.LastError = models.DurableJobPending, runAt, reason
+	job.LockedBy, job.LockedAt = "", nil
+	return true, nil
+}
+
 func (f *fakeJobRepo) MarkDead(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, attempts int, lastErr string) (bool, error) {
 	job := f.jobs[id]
 	if !sourceFakeLeaseOwned(job, workerID, leaseGeneration) {
@@ -274,6 +284,31 @@ func TestDurableSyncJobActuallySyncsTheSource(t *testing.T) {
 		if job.Status != models.DurableJobSucceeded {
 			t.Fatalf("sync job status = %q (%s), want succeeded", job.Status, job.LastError)
 		}
+	}
+}
+
+func TestDurableSchedulerDoesNotProcessQueuedWorkWhenBackgroundIsStopped(t *testing.T) {
+	source, _ := localFolderSource(t, "alice")
+	repo := newFakeSourceRepo(source)
+	service := NewService(repo, &fakeSourceMemoryService{})
+	jobs := newFakeJobRepo()
+	runner := durablejob.NewRunner(jobs, durablejob.Options{WorkerID: "w1"})
+
+	if err := RegisterDurableScheduling(runner, service, time.Minute, func() bool { return false }); err != nil {
+		t.Fatalf("RegisterDurableScheduling: %v", err)
+	}
+	if _, err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if got := len(jobs.byKind(JobKindSync)); got != 0 {
+		t.Fatalf("queued sync jobs = %d, want none while background is stopped", got)
+	}
+	updated, err := repo.FindSource(source.ID)
+	if err != nil {
+		t.Fatalf("FindSource: %v", err)
+	}
+	if updated.LastSyncedAt != nil {
+		t.Fatal("stopped background scheduler must not sync the source")
 	}
 }
 
