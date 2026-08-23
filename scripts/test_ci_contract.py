@@ -391,6 +391,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "SOURCE_WORKER_POLL_SECONDS",
             "WORKFLOW_SCHEDULER_DURABLE",
             "WORKFLOW_WORKER_POLL_SECONDS",
+            "WORKFLOW_REMINDER_DELIVERY_ENABLED",
             "AMBIENT_SCHEDULER_DURABLE",
             "AMBIENT_WORKER_POLL_SECONDS",
             "WHATSAPP_EXPORT_CHUNK_MESSAGES",
@@ -401,6 +402,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "HAI_CATALOG_REVALIDATION_BATCH_SIZE",
             "HAI_CATALOG_REVALIDATION_SCHEDULER_ENABLED",
             "HAI_CATALOG_REVALIDATION_SCHEDULER_INTERVAL_MINUTES",
+            "LLM_PROVIDER_PROBE_TIMEOUT_SECONDS",
             "OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS",
         ):
             with self.subTest(setting=setting):
