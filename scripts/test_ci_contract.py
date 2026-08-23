@@ -273,6 +273,26 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertEqual(component_budget["maximumWarning"], "20kb")
         self.assertEqual(component_budget["maximumError"], "48kb")
 
+    def test_frontend_copies_only_runtime_icon_assets(self) -> None:
+        angular = json.loads(
+            (ROOT / "frontend" / "angular.json").read_text(encoding="utf-8")
+        )
+        assets = angular["projects"]["app"]["architect"]["build"]["options"][
+            "assets"
+        ]
+        icon_asset = next(
+            asset
+            for asset in assets
+            if isinstance(asset, dict)
+            and asset.get("input")
+            == "./node_modules/@ant-design/icons-angular/src/inline-svg/"
+        )
+
+        # The package directory also contains source JavaScript modules. They
+        # are not browser assets and publishing them inflates every Windows
+        # installer and container image without helping nz-icon resolve SVGs.
+        self.assertEqual(icon_asset["glob"], "**/*.svg")
+
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:
