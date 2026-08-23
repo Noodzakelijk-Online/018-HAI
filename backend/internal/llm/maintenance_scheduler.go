@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ func StartModelMaintenanceScheduler(ctx context.Context, service *Service, backg
 		if backgroundAllowed != nil && !backgroundAllowed() {
 			return
 		}
-		service.RunDueModelMaintenance()
+		reportModelMaintenanceRun(service.RunDueModelMaintenance())
 	}
 	go func() {
 		run()
@@ -39,6 +40,26 @@ func StartModelMaintenanceScheduler(ctx context.Context, service *Service, backg
 			}
 		}
 	}()
+}
+
+// reportModelMaintenanceRun emits only aggregate state. It intentionally does
+// not log provider endpoints, model output, or individual failure details.
+func reportModelMaintenanceRun(run ModelMaintenanceRun) {
+	if !modelMaintenanceNeedsReport(run) {
+		return
+	}
+	log.Printf(
+		"model maintenance eligible=%d checked=%d updated=%d failed=%d reused=%d",
+		run.Eligible,
+		run.Checked,
+		run.Updated,
+		run.Failed,
+		run.Reused,
+	)
+}
+
+func modelMaintenanceNeedsReport(run ModelMaintenanceRun) bool {
+	return run.Failed > 0 || run.Updated > 0
 }
 
 func modelMaintenanceSchedulerEnabled() bool {
