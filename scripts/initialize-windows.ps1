@@ -5,6 +5,8 @@ param(
     [string]$AdminPasswordPlainText = "",
     [ValidateRange(1, 65535)]
     [int]$GatewayPort = 8088,
+    [ValidatePattern('^[a-z0-9][a-z0-9_-]*$')]
+    [string]$ComposeProjectName = "018-hai",
     [switch]$Force
 )
 
@@ -79,7 +81,40 @@ function Set-DotEnvValue {
     return [Regex]::Replace($Content, $pattern, $replacement)
 }
 
+function Assert-HaiComposeProjectAvailable {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectName,
+        [Parameter(Mandatory = $true)][string]$ExpectedWorkingDirectory
+    )
+
+    if ($null -eq (Get-Command docker -ErrorAction SilentlyContinue)) {
+        return
+    }
+
+    $containerIds = @(& docker ps -aq --filter "label=com.docker.compose.project=$ProjectName" 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $containerIds.Count -eq 0) {
+        return
+    }
+
+    foreach ($containerId in $containerIds) {
+        $workingDirectory = & docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' $containerId 2>$null
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($workingDirectory)) {
+            continue
+        }
+
+        if (-not [string]::Equals(
+            [IO.Path]::GetFullPath($workingDirectory),
+            [IO.Path]::GetFullPath($ExpectedWorkingDirectory),
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "Another HAI installation already owns Docker project '$ProjectName' at '$workingDirectory'. Stop it first or rerun with a different -ComposeProjectName."
+        }
+    }
+}
+
 $content = [IO.File]::ReadAllText($examplePath)
+Assert-HaiComposeProjectAvailable -ProjectName $ComposeProjectName -ExpectedWorkingDirectory $repositoryRoot
+$content = Set-DotEnvValue $content "COMPOSE_PROJECT_NAME" $ComposeProjectName
 $content = Set-DotEnvValue $content "BACKEND_API_SHARED_KEY" (New-HaiSecret)
 $content = Set-DotEnvValue $content "HAI_MEMORY_ENCRYPTION_KEY" (New-HaiSecret)
 $content = Set-DotEnvValue $content "JWT_SECRET" (New-HaiSecret)

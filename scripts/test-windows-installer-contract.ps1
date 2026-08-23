@@ -114,6 +114,17 @@ if ($initializer -notmatch [Regex]::Escape('GATEWAY_HOST_BIND') -or
     throw "The first-run initializer does not enforce a loopback gateway."
 }
 
+foreach ($required in @(
+    "ComposeProjectName",
+    "Assert-HaiComposeProjectAvailable",
+    "com.docker.compose.project.working_dir",
+    "Another HAI installation already owns Docker project"
+)) {
+    if ($initializer -notmatch [Regex]::Escape($required)) {
+        throw "The first-run initializer does not protect Docker project ownership: '$required'."
+    }
+}
+
 foreach ($forbidden in @(
     "Copy-Item -Path (Join-Path $repositoryRoot '.env.local')",
     "GATEWAY_HOST_BIND=0.0.0.0",
