@@ -111,6 +111,35 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn(".resource-reservations {", pursuit_styles)
         self.assertIn(".resource-reservation--stale", pursuit_styles)
 
+    def test_control_center_styles_load_with_the_lazy_module(self) -> None:
+        global_styles = (ROOT / "frontend" / "src" / "styles.scss").read_text(
+            encoding="utf-8"
+        )
+        control_center_styles = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "pages"
+            / "control-center"
+            / "control-center.component.scss"
+        ).read_text(encoding="utf-8")
+        control_center_component = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "pages"
+            / "control-center"
+            / "control-center.component.ts"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("/* HAI Control Center design system */", global_styles)
+        self.assertNotIn("app-control-center{--bg", global_styles)
+        self.assertIn("app-control-center{--bg", control_center_styles)
+        self.assertIn(".operations-shell", control_center_styles)
+        self.assertIn("ViewEncapsulation.None", control_center_component)
+
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:

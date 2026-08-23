@@ -1,4 +1,4 @@
-import { Component, Inject, OnInit } from '@angular/core'
+import { Component, Inject, OnInit, ViewEncapsulation } from '@angular/core'
 import { Router } from '@angular/router'
 import { forkJoin, of } from 'rxjs'
 import { catchError, finalize, timeout } from 'rxjs/operators'
@@ -78,6 +78,7 @@ interface NavigationItem {
     selector: 'app-control-center',
     templateUrl: './control-center.component.html',
     styleUrls: ['./control-center.component.scss'],
+    encapsulation: ViewEncapsulation.None,
     standalone: false
 })
 export class ControlCenterComponent implements OnInit {
