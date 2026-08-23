@@ -9,7 +9,7 @@ import {
 } from '../models/context-memory.model.interface';
 
 export interface IContextMemoryService {
-  list(projectKey?: string, includeArchived?: boolean): Observable<IContextMemory[]>;
+  list(projectKey?: string, includeArchived?: boolean, limit?: number): Observable<IContextMemory[]>;
   create(request: IContextMemoryRequest): Observable<IContextMemory>;
   update(id: string, request: IContextMemoryRequest): Observable<IContextMemory>;
   archive(id: string): Observable<IContextMemory>;

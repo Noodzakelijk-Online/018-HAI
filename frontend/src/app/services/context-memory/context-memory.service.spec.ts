@@ -33,4 +33,12 @@ describe('ContextMemoryService', () => {
       explanation: 'Two visible records were indexed locally.',
     });
   });
+
+  it('requests only the recent memory slice when a limit is supplied', () => {
+    service.list(undefined, false, 20).subscribe();
+
+    const request = http.expectOne('/api/v1/memory/?includeArchived=false&limit=20');
+    expect(request.request.method).toBe('GET');
+    request.flush([]);
+  });
 });

@@ -141,4 +141,15 @@ describe('ControlCenterComponent', () => {
       .find((action: any) => action.id === 'automation')
     expect(automation.primaryMetric).toBe('Unavailable')
   })
+
+  it('loads only the bounded recent-memory slice for the overview', () => {
+    const run = jasmine.createSpy('run').and.returnValue(new Subject<any>().asObservable())
+    const { component } = createComponent({ run })
+    const list = jasmine.createSpy('list').and.returnValue(new Subject<any[]>().asObservable())
+    ;(component as any).memoryService = { list }
+
+    component.loadMemories()
+
+    expect(list).toHaveBeenCalledWith(undefined, false, 20)
+  })
 })

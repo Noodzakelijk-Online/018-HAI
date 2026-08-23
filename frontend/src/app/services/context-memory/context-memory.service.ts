@@ -19,10 +19,13 @@ export class ContextMemoryService implements IContextMemoryService {
 
   constructor(private http: HttpClient) {}
 
-  list(projectKey?: string, includeArchived: boolean = false): Observable<IContextMemory[]> {
+  list(projectKey?: string, includeArchived: boolean = false, limit?: number): Observable<IContextMemory[]> {
     let params = new HttpParams().set('includeArchived', String(includeArchived));
     if (projectKey) {
       params = params.set('projectKey', projectKey);
+    }
+    if (limit !== undefined) {
+      params = params.set('limit', String(Math.min(Math.max(Math.trunc(limit), 1), 100)));
     }
     return this.http.get<IContextMemory[]>(`${this.apiUrl}/`, { params });
   }

@@ -372,6 +372,18 @@ func (r *ownerScopedFakeRepository) FindByIDForOwner(ownerIdentity string, id uu
 	return memory, nil
 }
 
+func (r *ownerScopedFakeRepository) FindRecentForOwner(ownerIdentity, projectKey string, includeArchived bool, limit int) ([]models.ContextMemory, error) {
+	all, err := r.fakeRepository.FindAll(projectKey, includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	visible := filterReadableMemories(all, ownerIdentity)
+	if len(visible) > limit {
+		return visible[:limit], nil
+	}
+	return visible, nil
+}
+
 func newFakeRepository() *fakeRepository {
 	return &fakeRepository{memories: map[uuid.UUID]models.ContextMemory{}}
 }

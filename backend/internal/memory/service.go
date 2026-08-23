@@ -133,6 +133,12 @@ type MemoryHealthService interface {
 	MemoryHealthForOwner(ownerIdentity, projectKey string) (*MemoryHealthReport, error)
 }
 
+// RecentMemoryService is a bounded, chronological listing for operational
+// surfaces. It intentionally has no search or total count semantics.
+type RecentMemoryService interface {
+	RecentForOwner(ownerIdentity, projectKey string, includeArchived bool, limit int) ([]models.ContextMemory, error)
+}
+
 type service struct {
 	repo            Repository
 	semanticService semantic.Service
@@ -386,6 +392,24 @@ func (s *service) FindAll(projectKey string, includeArchived bool) ([]models.Con
 
 func (s *service) FindAllForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
 	return s.findAllReadable(ownerIdentity, projectKey, includeArchived)
+}
+
+func (s *service) RecentForOwner(ownerIdentity, projectKey string, includeArchived bool, limit int) ([]models.ContextMemory, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if scoped, ok := s.repo.(RecentOwnerScopedRepository); ok && ownerIdentity != "" {
+		return scoped.FindRecentForOwner(ownerIdentity, projectKey, includeArchived, limit)
+	}
+	memories, err := s.findAllReadable(ownerIdentity, projectKey, includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	if len(memories) > limit {
+		return memories[:limit], nil
+	}
+	return memories, nil
 }
 
 func (s *service) FindByID(id uuid.UUID) (*models.ContextMemory, error) {

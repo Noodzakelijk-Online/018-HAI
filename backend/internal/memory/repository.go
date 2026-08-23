@@ -25,6 +25,10 @@ type OwnerScopedRepository interface {
 	FindByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.ContextMemory, error)
 }
 
+type RecentOwnerScopedRepository interface {
+	FindRecentForOwner(ownerIdentity, projectKey string, includeArchived bool, limit int) ([]models.ContextMemory, error)
+}
+
 type GormRepository struct {
 	DB *gorm.DB
 }
@@ -102,6 +106,24 @@ func (r *GormRepository) FindByIDForOwner(ownerIdentity string, id uuid.UUID) (*
 		return nil, err
 	}
 	return &memory, nil
+}
+
+func (r *GormRepository) FindRecentForOwner(ownerIdentity, projectKey string, includeArchived bool, limit int) ([]models.ContextMemory, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	var memories []models.ContextMemory
+	query := r.DB.Where("owner_identity = ?", ownerIdentity).Order("updated_at desc").Limit(limit)
+	if projectKey != "" {
+		query = query.Where("project_key = ?", projectKey)
+	}
+	if !includeArchived {
+		query = query.Where("archived = ?", false)
+	}
+	if err := query.Find(&memories).Error; err != nil {
+		return nil, err
+	}
+	return memories, nil
 }
 
 func (r *GormRepository) FindByHash(projectKey, kind, contentHash string) (*models.ContextMemory, error) {

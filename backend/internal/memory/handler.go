@@ -2,6 +2,8 @@ package memory
 
 import (
 	"automation-hub-backend/internal/identity"
+	"automation-hub-backend/internal/models"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -38,12 +40,27 @@ func (h *Handler) Create(c *gin.Context) {
 
 func (h *Handler) List(c *gin.Context) {
 	includeArchived, _ := strconv.ParseBool(c.Query("includeArchived"))
-	memories, err := h.ownerService(c).FindAllForOwner(memoryOwner(c), c.Query("projectKey"), includeArchived)
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	var memories []models.ContextMemory
+	var err error
+	if limit > 0 {
+		memories, err = RecentForOwner(h.service, memoryOwner(c), c.Query("projectKey"), includeArchived, limit)
+	} else {
+		memories, err = h.ownerService(c).FindAllForOwner(memoryOwner(c), c.Query("projectKey"), includeArchived)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, memories)
+}
+
+func RecentForOwner(service Service, ownerIdentity, projectKey string, includeArchived bool, limit int) ([]models.ContextMemory, error) {
+	recent, ok := service.(RecentMemoryService)
+	if !ok {
+		return nil, fmt.Errorf("bounded recent memory listing is unavailable")
+	}
+	return recent.RecentForOwner(ownerIdentity, projectKey, includeArchived, limit)
 }
 
 func (h *Handler) Health(c *gin.Context) {

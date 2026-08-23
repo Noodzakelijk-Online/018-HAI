@@ -271,15 +271,9 @@ export class ControlCenterComponent implements OnInit {
       return
     }
     this.memoryLoading = true
-    this.memoryService.list(undefined, false).subscribe({
+    this.memoryService.list(undefined, false, 20).subscribe({
       next: (memories) => {
         this.memories = memories
-          .sort(
-            (a, b) =>
-              new Date(b.updatedAt || b.createdAt || 0).getTime() -
-              new Date(a.updatedAt || a.createdAt || 0).getTime()
-          )
-          .slice(0, 20)
         this.memoriesLoaded = true
         this.memoryLoading = false
         this.rebuildViewModel()
