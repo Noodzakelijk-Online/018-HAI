@@ -102,6 +102,13 @@ type IsolatedOllamaMaintenanceGate interface {
 	EnsureMiniSWEOllamaModel(endpointURL, modelID string) error
 }
 
+// modelMaintenanceLeaseRepository is optional so policy-only and focused-test
+// services remain dependency-light. The production GORM history repository
+// supplies a PostgreSQL-backed lease for each provider/model pair.
+type modelMaintenanceLeaseRepository interface {
+	AcquireModelMaintenanceLease(ctx context.Context, providerID, modelID string) (release func(), acquired bool, err error)
+}
+
 // EnsureConfiguredLocalModel verifies that an optional local planning runner
 // is using an enabled local provider/model pair from the canonical LLM policy
 // and applies the same durable daily maintenance gate used by normal routing.
@@ -322,6 +329,37 @@ func (s *Service) ensureModelFresh(
 		configurationChanged = true
 	} else if err != nil {
 		return s.recordMaintenance(ModelMaintenanceResult{ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.Name, Status: "failed", Reason: "could not re-read daily model maintenance history after waiting for the model refresh lock", ConfigurationFingerprint: fingerprint, BlocksExecution: true, CheckedAt: now})
+	}
+	if leaseRepository, ok := s.maintenanceHistory.(modelMaintenanceLeaseRepository); ok {
+		leaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		release, acquired, err := leaseRepository.AcquireModelMaintenanceLease(leaseCtx, provider.ID, model.ID)
+		cancel()
+		if err != nil {
+			return s.recordMaintenance(ModelMaintenanceResult{ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.Name, Status: "failed", Reason: "could not acquire the daily model maintenance lease", ConfigurationFingerprint: fingerprint, BlocksExecution: true, CheckedAt: time.Now().UTC()})
+		}
+		if !acquired {
+			return ModelMaintenanceResult{ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.Name, Status: "in_progress", Reason: "daily model maintenance is already running on another backend process", ConfigurationFingerprint: fingerprint, BlocksExecution: true, CheckedAt: time.Now().UTC()}
+		}
+		if release != nil {
+			defer release()
+		}
+
+		// A different process may have completed maintenance between the local
+		// re-check and our successful lease acquisition. Reuse its durable record
+		// instead of probing or pulling a model a second time.
+		now = time.Now().UTC()
+		latest, err := s.maintenanceHistory.FindLatestModelMaintenance(provider.ID, model.ID)
+		if err != nil {
+			return s.recordMaintenance(ModelMaintenanceResult{ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.Name, Status: "failed", Reason: "could not read daily model maintenance history after acquiring the model lease", ConfigurationFingerprint: fingerprint, BlocksExecution: true, CheckedAt: now})
+		}
+		if latest != nil && latest.ConfigurationFingerprint == fingerprint && maintenanceRecordReusable(*latest, now, interval) {
+			result := modelMaintenanceResult(*latest)
+			result.Reused = true
+			return result
+		}
+		if latest != nil && latest.ConfigurationFingerprint != fingerprint {
+			configurationChanged = true
+		}
 	}
 
 	var effectContext *EffectContext
