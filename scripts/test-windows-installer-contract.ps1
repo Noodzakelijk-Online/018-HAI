@@ -24,6 +24,7 @@ $support = [IO.File]::ReadAllText($supportScript)
 $initializer = [IO.File]::ReadAllText($initializerScript)
 $startScript = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"))
 $connectorTest = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Test-HAI-LocalConnector.ps1"))
+$ngrokStart = [IO.File]::ReadAllText((Join-Path $repositoryRoot "scripts\start-ngrok.ps1"))
 $docs = [IO.File]::ReadAllText($documentation)
 $gitignore = [IO.File]::ReadAllText((Join-Path $repositoryRoot ".gitignore"))
 
@@ -164,6 +165,16 @@ foreach ($required in @(
 )) {
     if ($docs -notmatch [Regex]::Escape($required)) {
         throw "Installer documentation is missing '$required'."
+    }
+}
+
+foreach ($required in @(
+    '{{json .Config.Labels}}',
+    'ConvertFrom-Json',
+    'Refusing to manage cloud access until ownership can be verified'
+)) {
+    if ($ngrokStart -notmatch [Regex]::Escape($required)) {
+        throw "The cloud-tunnel ownership gate is missing '$required'."
     }
 }
 

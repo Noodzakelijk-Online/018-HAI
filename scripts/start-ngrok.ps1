@@ -50,8 +50,30 @@ function Require-PositiveInteger($Values, [string]$Name) {
 
 function Assert-HaiComposeOwnership {
     $ids = @(docker ps -aq --filter 'label=com.docker.compose.project=018-hai')
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect existing 018-hai containers. Refusing to manage cloud access until Docker ownership can be verified."
+    }
     if (!$ids.Count) { return }
-    $workingDirs = @(docker inspect $ids --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' | Where-Object { $_ }) | Select-Object -Unique
+    # Query labels only. Passing a template with nested quoted keys breaks in
+    # Windows PowerShell's legacy native-command argument mode, and full
+    # container inspection could expose environment values unnecessarily.
+    $inspection = @(docker inspect @ids --format '{{json .Config.Labels}}' 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect existing 018-hai container ownership. Refusing to manage cloud access until ownership can be verified."
+    }
+    $workingDirs = @()
+    foreach ($labelJson in $inspection) {
+        try {
+            $labels = $labelJson | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            throw "Unable to parse existing 018-hai container ownership labels. Refusing to manage cloud access until ownership can be verified."
+        }
+        $workingDirectory = [string]$labels.'com.docker.compose.project.working_dir'
+        if (![string]::IsNullOrWhiteSpace($workingDirectory)) {
+            $workingDirs += $workingDirectory
+        }
+    }
+    $workingDirs = @($workingDirs | Select-Object -Unique)
     foreach ($workingDir in $workingDirs) {
         if (([System.IO.Path]::GetFullPath($workingDir)).TrimEnd('\\') -ne $repoRoot.TrimEnd('\\')) {
             throw "Refusing to manage 018-hai containers owned by $workingDir. Use that checkout instead."
