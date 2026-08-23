@@ -23,6 +23,7 @@ import (
 	"automation-hub-backend/internal/autogencompat"
 	"automation-hub-backend/internal/automation"
 	"automation-hub-backend/internal/autonomy"
+	"automation-hub-backend/internal/autonomypolicy"
 	"automation-hub-backend/internal/braincatalog"
 	"automation-hub-backend/internal/browserverify"
 	"automation-hub-backend/internal/config"
@@ -135,9 +136,7 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 		phase2Module := phase2.DefaultModuleWithModelIntel(modelIntelService)
 		opsControlService := phase2Module.OpsControl()
 		safety.SetEmergencyStopProvider(opsControlService.Control())
-		backgroundAllowed := func() bool {
-			return opsControlService.Control().Mode().AllowsBackgroundProcessing()
-		}
+		backgroundAllowed := func() bool { return backgroundProcessingAllowed(opsControlService.Control().Mode()) }
 		initializeMCPPreflightRoutes(v1, mcppreflight.NewHandler(mcppreflight.NewServiceFromEnv()))
 		initializePlanningOptimizerRoutes(v1, planningoptimizer.NewHandler(planningoptimizer.DefaultService()))
 		planGraphRepository, err := plangraph.DefaultRepository()
@@ -790,6 +789,13 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil
+}
+
+// backgroundProcessingAllowed is the single gate shared by every autonomous
+// scheduler created by the router. A paused mode and an engaged or unreadable
+// emergency stop are both fail-closed conditions.
+func backgroundProcessingAllowed(mode autonomypolicy.Mode) bool {
+	return mode.AllowsBackgroundProcessing() && !safety.EvaluateEmergencyStop().Active
 }
 
 func initializeExecutionAuthorizationRoutes(
