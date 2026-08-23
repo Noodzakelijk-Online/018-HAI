@@ -81,7 +81,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
     name: ['Selected local folder', [Validators.required]],
     localOnly: [true],
     syncFrequency: ['manual'],
-    syncTarget: ['.'],
+    syncTarget: [''],
     defaultProjectKey: ['018-HAI'],
     excludePatterns: ['spam,trash'],
   });
@@ -220,7 +220,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   }
 
   connectSource(): void {
-    if (this.sourceForm.invalid || this.connecting) {
+    if (!this.sourceCanConnect() || this.connecting) {
       return;
     }
     const connector = this.connectors.find(
@@ -629,6 +629,18 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
 		));
 	}
 
+  sourceCanConnect(): boolean {
+    const connectorKey = String(this.sourceForm.value.connectorKey || '').trim();
+    const syncTarget = String(this.sourceForm.value.syncTarget || '').trim();
+    return this.sourceForm.valid
+      && this.selectedConnectorCanConnect()
+      && (!this.connectorRequiresSelectedFolder(connectorKey) || syncTarget.length > 0);
+  }
+
+  private connectorRequiresSelectedFolder(connectorKey: string): boolean {
+    return ['local-folder', 'email', 'calendar', 'cloud-documents', 'project-board'].includes(connectorKey);
+  }
+
   connectorChanged(connectorKey: string): void {
     if (connectorKey === 'json-feed') {
       this.sourceForm.patchValue({
@@ -643,7 +655,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       this.sourceForm.patchValue({
         name: 'Selected local folder',
         syncFrequency: 'manual',
-        syncTarget: '.',
+        syncTarget: '',
         localOnly: true,
       });
       return;
@@ -787,7 +799,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
     if (this.sourceForm.value.connectorKey === 'odoo-herp') {
       return 'Odoo URL or app list, e.g. https://.../odoo?apps=CRM,Sales';
     }
-    return 'Folder target, e.g. .';
+    return 'Selected folder under connected-source root, e.g. projects/018-hai';
   }
 
   syncSource(source: IConnectedSource): void {

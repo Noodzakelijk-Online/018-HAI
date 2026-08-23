@@ -169,6 +169,16 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.syncTargetPlaceholder()).toContain('Trello board URL or ID');
   });
 
+  it('requires an explicit folder instead of defaulting local intake to the root', () => {
+    const { component } = createComponent();
+    component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only' } as any];
+
+    component.connectorChanged('local-folder');
+
+    expect(component.sourceForm.value.syncTarget).toBe('');
+    expect(component.sourceCanConnect()).toBeFalse();
+  });
+
   it('does not prefill a manual import with synthetic source content', () => {
     const { component } = createComponent();
 
@@ -193,7 +203,7 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 	it('marks generic source creation as in progress until the request completes', () => {
 		const { component, sourceService } = createComponent();
 		component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only', category: 'local_folder' } as any];
-		component.sourceForm.patchValue({ connectorKey: 'local-folder' });
+		component.sourceForm.patchValue({ connectorKey: 'local-folder', syncTarget: 'projects/018-hai' });
 		const pending = new Subject<any>();
 		sourceService.createSource.and.returnValue(pending.asObservable());
 		component.connectSource();

@@ -192,7 +192,7 @@
                   data-testid="source-connect"
                   (click)="connectSource()"
                   [nzLoading]="connecting"
-				  [disabled]="sourceForm.invalid || connecting || !selectedConnectorCanConnect()"
+				  [disabled]="!sourceCanConnect() || connecting"
                 >
                   Connect source
                 </button>

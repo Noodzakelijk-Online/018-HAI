@@ -1024,6 +1024,20 @@ func TestCreateSourceAllowsOperationalLocalFolder(t *testing.T) {
 	}
 }
 
+func TestCreateSourceRequiresExplicitLocalFolderTarget(t *testing.T) {
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	_, err := service.CreateSource(CreateSourceRequest{
+		ConnectorKey:  "local-folder",
+		Name:          "Local folder",
+		Enabled:       true,
+		LocalOnly:     true,
+		SyncFrequency: "manual",
+	})
+	if err == nil || !strings.Contains(err.Error(), "explicit selected folder") {
+		t.Fatalf("CreateSource error = %v, want explicit folder requirement", err)
+	}
+}
+
 func TestCreateTrelloSourceRequiresConfiguredRemoteBoard(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	request := CreateSourceRequest{

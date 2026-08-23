@@ -552,8 +552,8 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 		ExcludePatterns:   joinValues(request.ExcludePatterns),
 		Status:            "active",
 	}
-	if sourceUsesLocalFolder(connectorKey) && source.SyncTarget == "" {
-		source.SyncTarget = "."
+	if sourceUsesLocalFolder(connectorKey) && strings.TrimSpace(source.SyncTarget) == "" {
+		return nil, fmt.Errorf("connector %s requires an explicit selected folder under CONNECTED_SOURCE_LOCAL_ROOT", connectorKey)
 	}
 	if !request.Enabled {
 		source.Status = "paused"
