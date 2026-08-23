@@ -14,7 +14,7 @@
         <i nz-icon nzType="reload" nzTheme="outline"></i>
         Refresh
       </button>
-      <button type="button" nz-button nzType="primary" (click)="runDueScheduledSyncs()" [nzLoading]="syncing" title="Refresh due scheduled source sync jobs that belong to your signed-in account">
+      <button type="button" nz-button nzType="primary" (click)="runDueScheduledSyncs()" [nzLoading]="syncing" [disabled]="syncing" title="Refresh due scheduled source sync jobs that belong to your signed-in account">
         <i nz-icon nzType="sync" nzTheme="outline"></i>
         Sync due
       </button>
@@ -231,7 +231,7 @@
               </div>
               <div class="form-footer">
                 <span>Local files stay source-linked and reviewable.</span>
-                <button type="button" nz-button nzType="primary" (click)="syncFolder()" [nzLoading]="syncing">Scan folder</button>
+                <button type="button" nz-button nzType="primary" (click)="syncFolder()" [nzLoading]="syncing" [disabled]="folderForm.invalid || syncing">Scan folder</button>
               </div>
             </form>
           </div>
@@ -423,7 +423,7 @@
               </label>
               <div class="form-footer">
                 <span>Manual imports are logged with provenance.</span>
-                <button type="button" nz-button nzType="primary" (click)="sync()" [nzLoading]="syncing">Sync and extract</button>
+                <button type="button" nz-button nzType="primary" (click)="sync()" [nzLoading]="syncing" [disabled]="importForm.invalid || syncing">Sync and extract</button>
               </div>
             </form>
           </div>

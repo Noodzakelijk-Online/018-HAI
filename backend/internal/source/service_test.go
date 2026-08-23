@@ -691,6 +691,142 @@ func TestSyncGitHubImportsReadOnlyRepositoryRecords(t *testing.T) {
 	}
 }
 
+func TestGitHubSourcePaginatesBeforeCompletingAnImport(t *testing.T) {
+	var issuePages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/acme/demo":
+			if r.URL.Query().Get("page") != "1" {
+				http.Error(w, "repository page must be one", http.StatusBadRequest)
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":1,"full_name":"acme/demo","updated_at":"2026-07-09T10:00:00Z"}`))
+		case "/repos/acme/demo/issues":
+			page := r.URL.Query().Get("page")
+			issuePages = append(issuePages, page)
+			if page == "1" {
+				records := make([]string, 100)
+				for i := range records {
+					records[i] = fmt.Sprintf(`{"id":%d,"number":%d,"title":"Issue %d","updated_at":"2026-07-09T10:01:00Z"}`, i+10, i+10, i+10)
+				}
+				_, _ = w.Write([]byte("[" + strings.Join(records, ",") + "]"))
+				return
+			}
+			if page == "2" {
+				_, _ = w.Write([]byte(`[{"id":999,"number":999,"title":"Final issue","updated_at":"2026-07-09T10:02:00Z"}]`))
+				return
+			}
+			http.Error(w, "unexpected issue page", http.StatusBadRequest)
+		case "/repos/acme/demo/pulls", "/repos/acme/demo/commits":
+			_, _ = w.Write([]byte(`[]`))
+		case "/repos/acme/demo/actions/runs":
+			_, _ = w.Write([]byte(`{"workflow_runs":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("GITHUB_SOURCE_API_BASE_URL", server.URL)
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+
+	items, cursor, err := fetchGitHubSource(context.Background(), &models.ConnectedSource{ConnectorKey: "github", SyncTarget: "acme/demo"})
+	if err != nil {
+		t.Fatalf("fetchGitHubSource: %v", err)
+	}
+	if len(items) != 102 || cursor != "2026-07-09T10:02:00Z" {
+		t.Fatalf("items/cursor = %d/%q, want 102/latest issue timestamp", len(items), cursor)
+	}
+	if strings.Join(issuePages, ",") != "1,2" {
+		t.Fatalf("issue pages = %v, want [1 2]", issuePages)
+	}
+}
+
+func TestGitHubSourceFailsInsteadOfSilentlyTruncatingAtPageLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/acme/demo":
+			_, _ = w.Write([]byte(`{"id":1,"full_name":"acme/demo","updated_at":"2026-07-09T10:00:00Z"}`))
+		case "/repos/acme/demo/issues":
+			records := make([]string, githubSourcePageSize)
+			for i := range records {
+				records[i] = fmt.Sprintf(`{"id":%d,"number":%d,"title":"Issue %d","updated_at":"2026-07-09T10:01:00Z"}`, i+10, i+10, i+10)
+			}
+			_, _ = w.Write([]byte("[" + strings.Join(records, ",") + "]"))
+		default:
+			_, _ = w.Write([]byte(`[]`))
+		}
+	}))
+	defer server.Close()
+	t.Setenv("GITHUB_SOURCE_API_BASE_URL", server.URL)
+	t.Setenv("GITHUB_SOURCE_MAX_PAGES", "1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+
+	_, _, err := fetchGitHubSource(context.Background(), &models.ConnectedSource{ConnectorKey: "github", SyncTarget: "acme/demo"})
+	if err == nil || !strings.Contains(err.Error(), "safety limit") {
+		t.Fatalf("fetchGitHubSource error = %v, want explicit pagination safety limit", err)
+	}
+}
+
+func TestGitHubIssueRecordsExcludePullRequestsHandledByTheirOwnEndpoint(t *testing.T) {
+	records := githubRecords([]any{
+		map[string]any{"id": float64(1), "title": "Issue"},
+		map[string]any{"id": float64(2), "title": "Pull request", "pull_request": map[string]any{"url": "https://api.github.com/repos/acme/demo/pulls/2"}},
+	}, "issue")
+	if len(records) != 1 || githubString(records[0], "title") != "Issue" {
+		t.Fatalf("issue records = %#v, want only the standalone issue", records)
+	}
+}
+
+func TestGitHubIssuePaginationUsesTheUnfilteredPageSize(t *testing.T) {
+	var issuePages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/acme/demo":
+			_, _ = w.Write([]byte(`{"id":1,"full_name":"acme/demo","updated_at":"2026-07-09T10:00:00Z"}`))
+		case "/repos/acme/demo/issues":
+			page := r.URL.Query().Get("page")
+			issuePages = append(issuePages, page)
+			if page == "1" {
+				records := make([]string, githubSourcePageSize)
+				for i := 0; i < githubSourcePageSize-1; i++ {
+					records[i] = fmt.Sprintf(`{"id":%d,"number":%d,"title":"Issue %d","updated_at":"2026-07-09T10:01:00Z"}`, i+10, i+10, i+10)
+				}
+				records[githubSourcePageSize-1] = `{"id":999,"number":999,"title":"Pull request","pull_request":{"url":"https://api.github.com/repos/acme/demo/pulls/999"},"updated_at":"2026-07-09T10:01:00Z"}`
+				_, _ = w.Write([]byte("[" + strings.Join(records, ",") + "]"))
+				return
+			}
+			if page == "2" {
+				_, _ = w.Write([]byte(`[{"id":1000,"number":1000,"title":"Later issue","updated_at":"2026-07-09T10:02:00Z"}]`))
+				return
+			}
+			http.Error(w, "unexpected issue page", http.StatusBadRequest)
+		case "/repos/acme/demo/pulls", "/repos/acme/demo/commits":
+			_, _ = w.Write([]byte(`[]`))
+		case "/repos/acme/demo/actions/runs":
+			_, _ = w.Write([]byte(`{"workflow_runs":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("GITHUB_SOURCE_API_BASE_URL", server.URL)
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+
+	items, _, err := fetchGitHubSource(context.Background(), &models.ConnectedSource{ConnectorKey: "github", SyncTarget: "acme/demo"})
+	if err != nil {
+		t.Fatalf("fetchGitHubSource: %v", err)
+	}
+	if len(items) != 101 || strings.Join(issuePages, ",") != "1,2" {
+		t.Fatalf("items/pages = %d/%v, want 101 records including page two and issue pages [1 2]", len(items), issuePages)
+	}
+}
+
 func TestSourceHTTPTransportReusesConnectionsOnlyWithinTheSamePolicy(t *testing.T) {
 	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
 	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")

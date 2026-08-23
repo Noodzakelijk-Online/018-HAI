@@ -241,7 +241,7 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   sync(): void {
-    if (this.importForm.invalid) {
+    if (this.importForm.invalid || this.syncing) {
       return;
     }
     this.syncing = true;
@@ -756,6 +756,9 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   syncSource(source: IConnectedSource): void {
+    if (this.syncing) {
+      return;
+    }
     if (source.connectorKey === 'whisper-audio') {
       this.transcribeSource(source);
       return;
@@ -786,6 +789,9 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   transcribeSource(source: IConnectedSource): void {
+    if (this.syncing) {
+      return;
+    }
     this.syncing = true;
     this.sourceService
       .transcribe(source.id)
@@ -807,6 +813,9 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   extractDocuments(source: IConnectedSource): void {
+    if (this.syncing) {
+      return;
+    }
     this.syncing = true;
     this.sourceService
       .extractDocuments(source.id)
@@ -849,7 +858,7 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   syncFolder(): void {
-    if (this.folderForm.invalid) {
+    if (this.folderForm.invalid || this.syncing) {
       return;
     }
     this.syncing = true;
@@ -877,6 +886,9 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   runDueScheduledSyncs(): void {
+    if (this.syncing) {
+      return;
+    }
     this.syncing = true;
     this.sourceService.runDueScheduledSyncs().pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (result) => {

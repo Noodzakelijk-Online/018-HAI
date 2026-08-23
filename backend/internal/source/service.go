@@ -2756,6 +2756,8 @@ func fetchJSONFeed(ctx context.Context, source *models.ConnectedSource) ([]Impor
 	return normalizeFeedItems(envelope.Items, source), firstNonEmpty(strings.TrimSpace(envelope.NextCursor), source.Cursor), nil
 }
 
+const githubSourcePageSize = 100
+
 func fetchGitHubSource(ctx context.Context, source *models.ConnectedSource) ([]ImportItem, string, error) {
 	if source == nil {
 		return nil, "", fmt.Errorf("source is required")
@@ -2785,34 +2787,45 @@ func fetchGitHubSource(ctx context.Context, source *models.ConnectedSource) ([]I
 	}
 	items := []ImportItem{}
 	latest := strings.TrimSpace(source.Cursor)
+	maxPages := githubSourceMaxPages()
 	for _, endpoint := range endpoints {
-		if err := ctx.Err(); err != nil {
-			return nil, "", err
-		}
-		value, err := fetchGitHubJSON(ctx, parsedBase, endpoint.path, source.Cursor)
-		if err != nil {
-			return nil, "", fmt.Errorf("fetch github %s: %w", endpoint.kind, err)
-		}
-		records := githubRecords(value, endpoint.kind)
-		for _, record := range records {
-			item, updated := githubImportItem(record, endpoint.kind, source.DefaultProjectKey, repository)
-			if item.ExternalID == "" || item.Content == "" {
-				continue
+		for page := 1; page <= maxPages; page++ {
+			if err := ctx.Err(); err != nil {
+				return nil, "", err
 			}
-			items = append(items, item)
-			if updated > latest {
-				latest = updated
+			value, err := fetchGitHubJSON(ctx, parsedBase, endpoint.path, source.Cursor, page)
+			if err != nil {
+				return nil, "", fmt.Errorf("fetch github %s page %d: %w", endpoint.kind, page, err)
+			}
+			pageRecordCount := githubRecordCount(value, endpoint.kind)
+			records := githubRecords(value, endpoint.kind)
+			for _, record := range records {
+				item, updated := githubImportItem(record, endpoint.kind, source.DefaultProjectKey, repository)
+				if item.ExternalID == "" || item.Content == "" {
+					continue
+				}
+				items = append(items, item)
+				if updated > latest {
+					latest = updated
+				}
+			}
+			if pageRecordCount < githubSourcePageSize {
+				break
+			}
+			if page == maxPages {
+				return nil, "", fmt.Errorf("github %s sync reached the %d-page safety limit; raise GITHUB_SOURCE_MAX_PAGES (maximum 20) and retry to avoid an incomplete import", endpoint.kind, maxPages)
 			}
 		}
 	}
 	return items, latest, nil
 }
 
-func fetchGitHubJSON(ctx context.Context, base *url.URL, resourcePath, cursor string) (any, error) {
+func fetchGitHubJSON(ctx context.Context, base *url.URL, resourcePath, cursor string, page int) (any, error) {
 	target := *base
 	target.Path = strings.TrimRight(base.Path, "/") + resourcePath
 	query := target.Query()
-	query.Set("per_page", "100")
+	query.Set("per_page", strconv.Itoa(githubSourcePageSize))
+	query.Set("page", strconv.Itoa(page))
 	query.Set("state", "all")
 	query.Set("sort", "updated")
 	query.Set("direction", "asc")
@@ -2855,6 +2868,14 @@ func fetchGitHubJSON(ctx context.Context, base *url.URL, resourcePath, cursor st
 	return value, nil
 }
 
+func githubSourceMaxPages() int {
+	pages, err := strconv.Atoi(strings.TrimSpace(os.Getenv("GITHUB_SOURCE_MAX_PAGES")))
+	if err != nil || pages < 1 || pages > 20 {
+		return 5
+	}
+	return pages
+}
+
 func githubRecords(value any, kind string) []map[string]any {
 	if object, ok := value.(map[string]any); ok {
 		if kind == "workflow_run" {
@@ -2862,12 +2883,45 @@ func githubRecords(value any, kind string) []map[string]any {
 				return githubRecordSlice(runs)
 			}
 		}
+		if kind == "issue" && isGitHubPullRequest(object) {
+			return nil
+		}
 		return []map[string]any{object}
 	}
 	if list, ok := value.([]any); ok {
-		return githubRecordSlice(list)
+		records := githubRecordSlice(list)
+		if kind != "issue" {
+			return records
+		}
+		issues := make([]map[string]any, 0, len(records))
+		for _, record := range records {
+			if !isGitHubPullRequest(record) {
+				issues = append(issues, record)
+			}
+		}
+		return issues
 	}
 	return nil
+}
+
+func githubRecordCount(value any, kind string) int {
+	if object, ok := value.(map[string]any); ok {
+		if kind == "workflow_run" {
+			if runs, ok := object["workflow_runs"].([]any); ok {
+				return len(runs)
+			}
+		}
+		return 1
+	}
+	if list, ok := value.([]any); ok {
+		return len(list)
+	}
+	return 0
+}
+
+func isGitHubPullRequest(record map[string]any) bool {
+	_, found := record["pull_request"]
+	return found
 }
 
 func githubRecordSlice(items []any) []map[string]any {

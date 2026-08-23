@@ -8,7 +8,9 @@ import { ConnectedSourcesComponent } from './connected-sources.component';
 describe('ConnectedSourcesComponent pursuit handoff', () => {
   function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router>; sourceService: jasmine.SpyObj<any> } {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
-	const sourceService = jasmine.createSpyObj('ConnectedSourceService', ['createSource']);
+	const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
+      'createSource', 'sync', 'transcribe', 'extractDocuments', 'runDueScheduledSyncs'
+    ]);
     return {
       component: new ConnectedSourcesComponent(
         new FormBuilder(),
@@ -150,4 +152,28 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 		pending.complete();
 		expect(component.connecting).toBeFalse();
 	});
+
+  it('does not start duplicate source work while another sync is running', () => {
+    const { component, sourceService } = createComponent();
+    const pending = new Subject<any>();
+    sourceService.sync.and.returnValue(pending.asObservable());
+    sourceService.transcribe.and.returnValue(pending.asObservable());
+    sourceService.extractDocuments.and.returnValue(pending.asObservable());
+    sourceService.runDueScheduledSyncs.and.returnValue(pending.asObservable());
+    component.importForm.patchValue({ sourceId: 'import-source' });
+    component.folderForm.patchValue({ sourceId: 'folder-source' });
+    component.syncing = true;
+
+    component.sync();
+    component.syncFolder();
+    component.runDueScheduledSyncs();
+    component.syncSource({ id: 'github-source', connectorKey: 'github' } as IConnectedSource);
+    component.syncSource({ id: 'audio-source', connectorKey: 'whisper-audio' } as IConnectedSource);
+    component.syncSource({ id: 'document-source', connectorKey: 'docling-documents' } as IConnectedSource);
+
+    expect(sourceService.sync).not.toHaveBeenCalled();
+    expect(sourceService.transcribe).not.toHaveBeenCalled();
+    expect(sourceService.extractDocuments).not.toHaveBeenCalled();
+    expect(sourceService.runDueScheduledSyncs).not.toHaveBeenCalled();
+  });
 });
