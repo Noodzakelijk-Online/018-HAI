@@ -93,6 +93,24 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn('loading="lazy"', home_template)
         self.assertIn('decoding="async"', home_template)
 
+    def test_pursuit_reservation_styles_load_with_the_lazy_module(self) -> None:
+        global_styles = (ROOT / "frontend" / "src" / "styles.scss").read_text(
+            encoding="utf-8"
+        )
+        pursuit_styles = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "pages"
+            / "pursuits"
+            / "pursuits.component.scss"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn(".resource-reservations {", global_styles)
+        self.assertIn(".resource-reservations {", pursuit_styles)
+        self.assertIn(".resource-reservation--stale", pursuit_styles)
+
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:

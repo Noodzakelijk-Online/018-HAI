@@ -1099,6 +1099,52 @@ button.next-action:focus-visible {
   color: #667085;
 }
 
+.resource-reservations {
+  display: grid;
+  gap: 10px;
+}
+
+.resource-reservations > article {
+  background: var(--hai-surface);
+  border: 1px solid var(--hai-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.resource-reservations > article.resource-reservation--stale {
+  border-color: var(--hai-warning);
+}
+
+.resource-reservation__summary,
+.resource-reservation__release {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.resource-reservation__summary > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.resource-reservation__summary strong,
+.resource-reservation__summary span,
+.resource-reservations p {
+  overflow-wrap: anywhere;
+}
+
+.resource-reservation__release input {
+  min-width: 0;
+}
+
+.resource-reservation__release button {
+  flex: 0 0 auto;
+}
+
 :host ::ng-deep .ant-card-head {
   min-height: 44px;
 }
@@ -1193,6 +1239,12 @@ button.next-action:focus-visible {
   .resource-summary__metrics,
   .resource-ledger__form {
     grid-template-columns: 1fr;
+  }
+
+  .resource-reservation__summary,
+  .resource-reservation__release {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .runtime-evidence {
