@@ -90,10 +90,10 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
     sourceId: ['', [Validators.required]],
     mode: ['manual_import'],
     projectKey: ['018-HAI'],
-    externalId: ['sample-1'],
-    title: ['Sample connected source item'],
-    sourceUri: ['local://sample/source-item'],
-    content: ['Decision: use connected sources as structured context. Follow up: verify extracted context before task planning.', [Validators.required]],
+    externalId: ['', [Validators.required]],
+    title: ['', [Validators.required]],
+    sourceUri: ['', [Validators.required]],
+    content: ['', [Validators.required]],
   });
 
   folderForm: FormGroup = this.fb.group({
@@ -106,14 +106,12 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   });
 
   whatsappForm: FormGroup = this.fb.group({
-    sourceId: [''],
+    sourceId: ['', [Validators.required]],
     name: ['WhatsApp exports for Robert'],
-    projectKey: ['Robert-life-os'],
+    projectKey: ['Robert-life-os', [Validators.required]],
     folderPath: ['whatsapp'],
-    chatTitle: ['WhatsApp selected chat'],
-    pastedExport: [
-      '31/05/2026, 09:10 - Robert Velhorst: Kun jij morgen de offerte opvolgen?\n31/05/2026, 09:11 - Contact: Ja, ik moet eerst de documenten controleren.',
-    ],
+    chatTitle: ['', [Validators.required]],
+    pastedExport: ['', [Validators.required]],
     chunkMessages: [40],
     maxBytes: [2097152],
   });
@@ -1143,8 +1141,8 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   importWhatsAppPaste(): void {
     const sourceId = this.selectedWhatsAppSourceId();
     const content = String(this.whatsappForm.value.pastedExport || '').trim();
-    if (!sourceId || !content) {
-      this.notification.warning('WhatsApp import missing input', 'Connect a WhatsApp source and paste an exported chat first.');
+    if (this.whatsappForm.invalid || !sourceId || !content) {
+      this.notification.warning('WhatsApp import missing input', 'Select a source, add a chat label and project, then paste an exported chat.');
       return;
     }
     this.syncing = true;
@@ -1156,7 +1154,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
         items: [
           {
             externalId: `whatsapp-manual-${Date.now()}`,
-            title: this.whatsappForm.value.chatTitle || 'WhatsApp selected chat',
+            title: this.whatsappForm.value.chatTitle,
             content,
             sourceUri: `whatsapp-export://manual/${Date.now()}`,
             itemType: 'whatsapp_export',

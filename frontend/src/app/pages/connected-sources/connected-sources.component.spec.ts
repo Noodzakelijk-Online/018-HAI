@@ -169,6 +169,27 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.syncTargetPlaceholder()).toContain('Trello board URL or ID');
   });
 
+  it('does not prefill a manual import with synthetic source content', () => {
+    const { component } = createComponent();
+
+    expect(component.importForm.invalid).toBeTrue();
+    expect(component.importForm.value).toEqual(jasmine.objectContaining({
+      externalId: '',
+      title: '',
+      sourceUri: '',
+      content: '',
+    }));
+  });
+
+  it('requires a real selected WhatsApp export before it can be imported', () => {
+    const { component, sourceService } = createComponent();
+
+    component.importWhatsAppPaste();
+
+    expect(component.whatsappForm.invalid).toBeTrue();
+    expect(sourceService.sync).not.toHaveBeenCalled();
+  });
+
 	it('marks generic source creation as in progress until the request completes', () => {
 		const { component, sourceService } = createComponent();
 		component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only', category: 'local_folder' } as any];

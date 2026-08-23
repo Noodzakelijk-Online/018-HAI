@@ -333,7 +333,7 @@
               <div class="form-footer">
 				<button type="button" nz-button nzType="default" (click)="connectWhatsAppSource()" [nzLoading]="connecting" [disabled]="connecting">Connect source</button>
                 <button type="button" nz-button nzType="default" (click)="syncWhatsAppFolder()" [nzLoading]="syncing">Scan folder</button>
-                <button type="button" nz-button nzType="primary" (click)="importWhatsAppPaste()" [nzLoading]="syncing">Import paste</button>
+                <button type="button" nz-button nzType="primary" (click)="importWhatsAppPaste()" [nzLoading]="syncing" [disabled]="whatsappForm.invalid || syncing">Import paste</button>
               </div>
             </form>
           </div>
