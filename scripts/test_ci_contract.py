@@ -586,6 +586,17 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertIn(local_stack_path, content)
                 self.assertNotIn("jacksonbarreto/", content)
 
+    def test_cross_platform_secret_generator_covers_every_required_backend_key(self) -> None:
+        generator = (ROOT / "scripts" / "generate-secrets.sh").read_text(encoding="utf-8")
+        for key in (
+            "BACKEND_API_SHARED_KEY",
+            "HAI_MEMORY_ENCRYPTION_KEY",
+            "JWT_SECRET",
+            "HAI_APPROVAL_PROOF_SIGNING_KEY",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(f"{key}=$(secret)", generator)
+
     def test_idp_toolchain_matches_ci_and_container(self) -> None:
         go_mod = (ROOT / "idp" / "go.mod").read_text(encoding="utf-8")
         dockerfile = (ROOT / "idp" / "Dockerfile").read_text(encoding="utf-8")

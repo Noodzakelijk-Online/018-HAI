@@ -511,12 +511,17 @@ post-phase migrations. See
 ### Start the local stack
 
 ```powershell
-Copy-Item .env.example .env.local
-# Edit .env.local: set a unique FIRST_RUN_ADMIN_PASSWORD and BACKEND_API_SHARED_KEY.
+./scripts/initialize-windows.ps1
 docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
 docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps
 ```
+
+The initializer prompts for the first-run owner email and password, generates
+the four production-required backend signing/encryption secrets, and writes an
+ignored loopback-only `.env.local`. For a non-Windows shell, copy the template,
+set a real `FIRST_RUN_ADMIN_PASSWORD`, then run
+`./scripts/generate-secrets.sh >> .env.local` before starting Compose.
 
 `docker compose --env-file .env.local up --build -d` is equivalent. The
 default `docker-compose.yml` intentionally delegates to the same local,
@@ -580,10 +585,11 @@ Email: noodzakelijkonline@gmail.com
 Password: ChangeMe123!
 ```
 
-Change `FIRST_RUN_ADMIN_PASSWORD` and `BACKEND_API_SHARED_KEY` before first use.
-If the Postgres data volume already exists, changing first-run values does not
-rewrite the existing account. Do not commit `.env.local`, Docker state,
-database directories, uploaded material, frontend build output, or secrets.
+Change `FIRST_RUN_ADMIN_PASSWORD` before first use and generate every required
+secret with the command above. If the Postgres data volume already exists,
+changing first-run values does not rewrite the existing account. Do not commit
+`.env.local`, Docker state, database directories, uploaded material, frontend
+build output, or secrets.
 
 ### Optional Google sign-in and password recovery
 
