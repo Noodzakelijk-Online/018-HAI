@@ -1,5 +1,8 @@
+import { CommonModule } from '@angular/common'
 import { Component, OnDestroy, OnInit } from '@angular/core'
-import { NavigationEnd, Router } from '@angular/router'
+import { NavigationEnd, Router, RouterModule } from '@angular/router'
+import { NzButtonModule } from 'ng-zorro-antd/button'
+import { NzIconModule } from 'ng-zorro-antd/icon'
 import { Subscription } from 'rxjs'
 import { filter } from 'rxjs/operators'
 import { HAI_MODULE_GROUPS, HAI_MODULES, HaiModuleDefinition, moduleForUrl } from './module-registry'
@@ -10,7 +13,8 @@ import { ThemeMode, ThemeService } from '../services/theme.service'
     selector: 'app-shell',
     templateUrl: './app-shell.component.html',
     styleUrls: ['./app-shell.component.scss'],
-    standalone: false
+    imports: [CommonModule, RouterModule, NzButtonModule, NzIconModule],
+    standalone: true
 })
 export class AppShellComponent implements OnInit, OnDestroy {
   readonly groups = HAI_MODULE_GROUPS

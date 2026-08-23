@@ -13,7 +13,6 @@ import {NZ_ICONS} from 'ng-zorro-antd/icon';
 import {AUTH_SERVICE_TOKEN} from './services/auth/auth.service.token';
 import {AuthService} from './services/auth/auth.service';
 import {ChunkLoadRecoveryHandler} from './services/chunk-load-recovery.handler';
-import {ControlRoomModule} from './control-room/control-room.module';
 import {RequestTimeoutInterceptor} from './interceptors/request-timeout.interceptor';
 
 registerLocaleData(en);
@@ -27,7 +26,6 @@ export const HAI_ICONS = [BulbOutline, CalendarOutline, ContactsOutline, HeartOu
     imports: [
         BrowserModule,
         AppRoutingModule,
-        ControlRoomModule,
     ],
     providers: [
         {provide: NZ_I18N, useValue: en_US},
