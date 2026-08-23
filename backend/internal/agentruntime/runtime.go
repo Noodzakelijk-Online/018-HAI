@@ -301,11 +301,12 @@ func (r *Registry) StopTask(_ context.Context, runtimeID string, taskID string, 
 		return StopResult{
 			RuntimeID: runtimeID,
 			TaskID:    taskID,
-			Status:    "stopping",
-			Message:   "HAI cancellation signal was sent to the active runtime task",
+			Status:    "cancellation_requested",
+			Message:   "HAI requested cancellation of the active runtime task; downstream delivery is not yet verified",
 			AuditEvents: []string{
 				"running runtime task located",
 				"HAI-managed context cancellation requested",
+				"runtime cancellation delivery is not yet verified",
 			},
 		}
 	}

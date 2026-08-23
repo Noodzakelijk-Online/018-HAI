@@ -320,7 +320,7 @@ func TestRegistryCancellationDuringProofVerificationNeverReachesAdapter(t *testi
 		t.Fatal("final-effect proof verification did not start")
 	}
 	stop := registry.StopTask(context.Background(), "test", "task-1", "alice")
-	if stop.Status != "stopping" {
+	if stop.Status != "cancellation_requested" || !strings.Contains(stop.Message, "delivery is not yet verified") {
 		t.Fatalf("stop while verifying proof = %#v", stop)
 	}
 	close(releaseVerification)
@@ -458,8 +458,11 @@ func TestRegistryStopTaskCancelsActiveRuntimeExecution(t *testing.T) {
 	}
 
 	stop := registry.StopTask(context.Background(), "test", "task-1", "alice")
-	if stop.Status != "stopping" || !strings.Contains(stop.Message, "cancellation signal") {
+	if stop.Status != "cancellation_requested" || !strings.Contains(stop.Message, "delivery is not yet verified") {
 		t.Fatalf("stop result = %#v", stop)
+	}
+	if !containsString(stop.AuditEvents, "runtime cancellation delivery is not yet verified") {
+		t.Fatalf("stop request must not claim a verified downstream stop: %#v", stop.AuditEvents)
 	}
 
 	select {
