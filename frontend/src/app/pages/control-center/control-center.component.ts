@@ -100,6 +100,7 @@ export class ControlCenterComponent implements OnInit {
   commandActionsView: CommandAction[] = []
   lastAgentCycle?: IAgentCycleRunResult
   dashboardLoadErrors: string[] = []
+  diagnosticsLoadErrors: string[] = []
 
   loading = false
   scanning = false
@@ -298,16 +299,26 @@ export class ControlCenterComponent implements OnInit {
       return
     }
     this.diagnosticsListLoading = true
+    this.diagnosticsLoadErrors = []
     forkJoin({
       automations: this.automationsService.getAutomations().pipe(
-        catchError(() => of([] as IAutomationModel[]))
+        catchError(() => {
+          this.recordDiagnosticsLoadFailure('Automation registry')
+          return of([] as IAutomationModel[])
+        })
       ),
       summary: this.automationsService.getHealthSummary().pipe(
-        catchError(() => of(undefined))
+        catchError(() => {
+          this.recordDiagnosticsLoadFailure('Automation health')
+          return of(undefined)
+        })
       ),
       runtimes: this.agentRuntimeService.overview().pipe(
         timeout(2500),
-        catchError(() => of({ runtimes: [] as IAgentRuntimeInfo[], health: [] as IAgentRuntimeHealth[] }))
+        catchError(() => {
+          this.recordDiagnosticsLoadFailure('Runtime overview')
+          return of({ runtimes: [] as IAgentRuntimeInfo[], health: [] as IAgentRuntimeHealth[] })
+        })
       ),
     }).subscribe({
       next: (result) => {
@@ -504,6 +515,16 @@ export class ControlCenterComponent implements OnInit {
     return this.loading || this.hasDashboardLoadError() || this.attentionItemsView.length > 0 || this.activeItemsView.length > 0
   }
 
+  hasDiagnosticsLoadError(): boolean {
+    return this.diagnosticsLoadErrors.length > 0
+  }
+
+  private recordDiagnosticsLoadFailure(label: string): void {
+    if (!this.diagnosticsLoadErrors.includes(label)) {
+      this.diagnosticsLoadErrors = [...this.diagnosticsLoadErrors, label]
+    }
+  }
+
   private buildRecentActivity(): ActivityEntry[] {
     const cycleActivity = this.lastAgentCycle
       ? [
@@ -603,10 +624,14 @@ export class ControlCenterComponent implements OnInit {
         detail: 'Register a script, service, API, or workflow target.',
         icon: 'plus',
         tone: 'blue',
-        primaryMetric: this.diagnosticsLoaded
+        primaryMetric: this.hasDiagnosticsLoadError()
+          ? 'Unavailable'
+          : this.diagnosticsLoaded
           ? `${this.automations.length} registered`
           : 'Open registry',
-        secondaryMetric: this.diagnosticsLoaded
+        secondaryMetric: this.hasDiagnosticsLoadError()
+          ? 'Reload technical checks'
+          : this.diagnosticsLoaded
           ? 'Automation health loaded'
           : 'Health detail loads on demand',
         context: 'Use this when HAI needs a new controlled runtime target, health check, launch path, dependency note, or automation entry.',

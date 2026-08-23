@@ -117,4 +117,28 @@ describe('ControlCenterComponent', () => {
     expect(component.hasDashboardLoadError()).toBeTrue()
     expect(component.hasLiveWork()).toBeTrue()
   })
+
+  it('does not present failed diagnostics as an empty automation registry', () => {
+    const run = jasmine.createSpy('run').and.returnValue(new Subject<any>().asObservable())
+    const { component } = createComponent({ run })
+    ;(component as any).automationsService = {
+      getAutomations: () => throwError(() => new Error('automations unavailable')),
+      getHealthSummary: () => throwError(() => new Error('health unavailable')),
+    }
+    ;(component as any).agentRuntimeService = {
+      overview: () => throwError(() => new Error('runtimes unavailable')),
+    }
+
+    component.loadDiagnosticsData()
+
+    expect(component.diagnosticsLoadErrors).toEqual([
+      'Automation registry',
+      'Automation health',
+      'Runtime overview',
+    ])
+    expect(component.hasDiagnosticsLoadError()).toBeTrue()
+    const automation = (component as any).buildCommandActions()
+      .find((action: any) => action.id === 'automation')
+    expect(automation.primaryMetric).toBe('Unavailable')
+  })
 })
