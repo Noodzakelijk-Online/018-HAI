@@ -182,6 +182,23 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.sourceForm.valid).toBeTrue();
   });
 
+  it('keeps manual-only connector schedules out of the connect request', () => {
+    const { component } = createComponent();
+    component.connectors = [{
+      connectorKey: 'docling-documents', enabled: true, adapterStatus: 'local_only',
+      supportedModes: 'manual_import', category: 'document',
+    } as any];
+    component.sourceForm.patchValue({
+      connectorKey: 'docling-documents', syncFrequency: 'hourly', syncTarget: 'legal/vivare', localOnly: true,
+    });
+
+    expect(component.selectedConnectorSupportsScheduledSync()).toBeFalse();
+    expect(component.sourceCanConnect()).toBeFalse();
+
+    component.sourceForm.patchValue({ syncFrequency: 'manual' });
+    expect(component.sourceCanConnect()).toBeTrue();
+  });
+
   it('uses the same bounded schedule validation for Odoo source setup', () => {
     const { component } = createComponent();
 

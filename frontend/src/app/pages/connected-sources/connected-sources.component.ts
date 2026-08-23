@@ -661,7 +661,31 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
     const syncTarget = String(this.sourceForm.value.syncTarget || '').trim();
     return this.sourceForm.valid
       && this.selectedConnectorCanConnect()
+      && (this.syncFrequencyIsManual() || this.selectedConnectorSupportsScheduledSync())
       && (!this.connectorRequiresSelectedFolder(connectorKey) || syncTarget.length > 0);
+  }
+
+  selectedConnectorSupportsScheduledSync(): boolean {
+    return this.connectorSupportsScheduledSync(
+      this.connectors.find((connector) => connector.connectorKey === this.sourceForm.value.connectorKey)
+    );
+  }
+
+  private connectorSupportsScheduledSync(connector?: ISourceConnector): boolean {
+    const supportedModes = String(connector?.supportedModes || '')
+      .split(',')
+      .map((mode) => mode.trim());
+    // Older gateways did not expose supportedModes. Keep the form compatible
+    // with them; the API remains the authority and rejects unsafe schedules.
+    return supportedModes.length === 1 && !supportedModes[0]
+      ? true
+      : supportedModes.includes('scheduled_sync');
+  }
+
+  private syncFrequencyIsManual(): boolean {
+    return ['', 'manual', 'off', 'disabled', 'none'].includes(
+      String(this.sourceForm.value.syncFrequency || '').trim().toLowerCase()
+    );
   }
 
   private connectorRequiresSelectedFolder(connectorKey: string): boolean {

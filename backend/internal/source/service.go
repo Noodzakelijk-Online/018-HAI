@@ -2734,6 +2734,21 @@ func categoryForConnector(connectorKey string) string {
 	return ""
 }
 
+func connectorSupportsMode(connectorKey, mode string) bool {
+	for _, connector := range defaultConnectors() {
+		if connector.ConnectorKey != strings.TrimSpace(connectorKey) {
+			continue
+		}
+		for _, supported := range strings.Split(connector.SupportedModes, ",") {
+			if strings.TrimSpace(supported) == mode {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
 func defaultModes(values []string) []string {
 	if len(values) > 0 {
 		return values
@@ -3308,8 +3323,8 @@ func validatedSyncFrequency(connectorKey, value string) (string, error) {
 	case "", "manual", "off", "disabled", "none":
 		return "manual", nil
 	}
-	if connectorKey == "whisper-audio" {
-		return "", fmt.Errorf("whisper-audio is operator-triggered only and must use manual sync frequency")
+	if !connectorSupportsMode(connectorKey, ModeScheduledSync) {
+		return "", fmt.Errorf("connector %s is operator-triggered only and must use manual sync frequency", connectorKey)
 	}
 	if _, ok := parseSyncFrequency(clean); !ok {
 		return "", fmt.Errorf("sync frequency %q is unsupported; use manual, hourly, daily, weekly, or a duration of at least one minute", value)

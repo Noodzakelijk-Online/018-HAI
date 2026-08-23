@@ -168,8 +168,9 @@
               <div class="field-grid">
                 <label>
                   <span>Sync frequency</span>
-                  <input nz-input formControlName="syncFrequency" />
+                  <input nz-input formControlName="syncFrequency" [readonly]="!selectedConnectorSupportsScheduledSync()" [title]="selectedConnectorSupportsScheduledSync() ? 'Manual, hourly, daily, weekly, or a duration of at least one minute.' : 'This connector is operator-triggered and must remain manual.'" />
                   <small class="field-error" *ngIf="sourceForm.get('syncFrequency')?.invalid && sourceForm.get('syncFrequency')?.touched">Use manual, hourly, daily, weekly, or a duration of at least one minute.</small>
+                  <small class="field-hint" *ngIf="!selectedConnectorSupportsScheduledSync()">This connector is operator-triggered and must remain manual.</small>
                 </label>
                 <label>
                   <span>Project key</span>

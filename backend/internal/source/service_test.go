@@ -1096,6 +1096,21 @@ func TestCreateSourceNormalizesManualSyncFrequency(t *testing.T) {
 	}
 }
 
+func TestValidatedSyncFrequencyRejectsSchedulesForManualOnlyConnectors(t *testing.T) {
+	for _, connectorKey := range []string{"whisper-audio", doclingDocumentsConnectorKey} {
+		t.Run(connectorKey, func(t *testing.T) {
+			_, err := validatedSyncFrequency(connectorKey, "hourly")
+			if err == nil || !strings.Contains(err.Error(), "operator-triggered only") {
+				t.Fatalf("validatedSyncFrequency(%q) error = %v, want manual-only rejection", connectorKey, err)
+			}
+			frequency, err := validatedSyncFrequency(connectorKey, "manual")
+			if err != nil || frequency != "manual" {
+				t.Fatalf("manual frequency = %q, %v; want manual, nil", frequency, err)
+			}
+		})
+	}
+}
+
 func TestUpdateSourceRejectsUnsupportedSyncFrequency(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
