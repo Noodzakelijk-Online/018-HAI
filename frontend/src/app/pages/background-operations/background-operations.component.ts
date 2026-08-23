@@ -1,7 +1,7 @@
 import { HttpErrorResponse } from '@angular/common/http'
-import { Component, OnInit } from '@angular/core'
+import { Component, OnDestroy, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
-import { forkJoin } from 'rxjs'
+import { forkJoin, Subscription } from 'rxjs'
 import { finalize, timeout } from 'rxjs/operators'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import {
@@ -19,7 +19,7 @@ import { BackgroundOperationsService } from '../../services/background-operation
     styleUrls: ['./background-operations.component.scss'],
     standalone: false
 })
-export class BackgroundOperationsComponent implements OnInit {
+export class BackgroundOperationsComponent implements OnInit, OnDestroy {
   dashboard?: IOperationsDashboard
   operations: IOperation[] = []
   feeds: IAccountFeed[] = []
@@ -34,6 +34,8 @@ export class BackgroundOperationsComponent implements OnInit {
   selected?: IOperation
   selectedEvents: IOperationEvent[] = []
   detailVisible = false
+
+  private refreshSubscription?: Subscription
 
 	private readonly loadTimeoutMs = 6000
 	private readonly operationTimeoutMs = 30000
@@ -56,9 +58,14 @@ export class BackgroundOperationsComponent implements OnInit {
     this.refresh()
   }
 
+  ngOnDestroy(): void {
+    this.refreshSubscription?.unsubscribe()
+  }
+
   refresh(): void {
+    this.refreshSubscription?.unsubscribe()
     this.loading = true
-    forkJoin({
+    this.refreshSubscription = forkJoin({
       dashboard: this.service.dashboard(),
       operations: this.service.list(this.statusFilter ? { status: this.statusFilter } : undefined),
       feeds: this.service.feeds(),

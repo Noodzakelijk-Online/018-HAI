@@ -1,5 +1,5 @@
 import { HttpErrorResponse } from '@angular/common/http'
-import { of } from 'rxjs'
+import { Observable, of } from 'rxjs'
 import { BackgroundOperationsComponent } from './background-operations.component'
 
 describe('BackgroundOperationsComponent', () => {
@@ -30,6 +30,25 @@ describe('BackgroundOperationsComponent', () => {
     component.feeds = [{ name: 'Trello', provider: 'trello', accountLabel: 'Robert', sourceType: 'trello', enabled: true }]
 
     expect(component.hasEnabledFeeds()).toBeTrue()
+  })
+
+  it('cancels an obsolete refresh before starting another one', () => {
+    let cancellations = 0
+    const pending = () => new Observable(() => () => cancellations++)
+    const service = {
+      dashboard: pending,
+      list: pending,
+      feeds: pending,
+      events: () => of({ events: [] }),
+    }
+    const notification = jasmine.createSpyObj('notification', ['error', 'success', 'warning', 'info'])
+    const router = jasmine.createSpyObj('router', ['navigate'])
+    const component = new BackgroundOperationsComponent(service as any, notification, router)
+
+    component.refresh()
+    component.refresh()
+
+    expect(cancellations).toBe(3)
   })
 
   it('gives an owner-permission recovery path for authorization failures', () => {
