@@ -34,15 +34,33 @@ func (f *fakeRepo) GetByID(owner, ws string, id uuid.UUID) (*models.Operation, e
 	}
 	return &op, nil
 }
-func (f *fakeRepo) FindByDedupeKey(ws, key string) (*models.Operation, bool, error) {
+func (f *fakeRepo) FindByDedupeKey(owner, ws, key string) (*models.Operation, bool, error) {
 	for _, op := range f.ops {
-		if op.WorkspaceID == ws && op.DedupeKey == key &&
+		if op.OwnerUserID == owner && op.WorkspaceID == ws && op.DedupeKey == key &&
 			op.Status != string(StatusArchived) && op.Status != string(StatusDismissed) {
 			copyOp := op
 			return &copyOp, true, nil
 		}
 	}
 	return nil, false, nil
+}
+
+func TestIngestAllowsTheSameDedupeKeyForDifferentOwners(t *testing.T) {
+	repo := NewMemoryRepository()
+	svc := NewService(repo)
+	first := sampleInput()
+	second := sampleInput()
+	second.OwnerUserID = "user-2"
+	if _, err := svc.Ingest(first); err != nil {
+		t.Fatalf("first owner ingest: %v", err)
+	}
+	result, err := svc.Ingest(second)
+	if err != nil {
+		t.Fatalf("second owner ingest: %v", err)
+	}
+	if !result.Created {
+		t.Fatal("same source item for another owner must create that owner's operation")
+	}
 }
 func (f *fakeRepo) List(fl Filter) ([]models.Operation, error) {
 	var out []models.Operation

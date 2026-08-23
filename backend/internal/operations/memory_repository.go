@@ -26,6 +26,13 @@ func NewMemoryRepository() *MemoryRepository {
 func (r *MemoryRepository) Create(op *models.Operation) (*models.Operation, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for _, existing := range r.ops {
+		if existing.OwnerUserID == op.OwnerUserID && existing.WorkspaceID == op.WorkspaceID &&
+			existing.DedupeKey == op.DedupeKey && existing.Status != string(StatusArchived) &&
+			existing.Status != string(StatusDismissed) {
+			return nil, ErrDuplicateDedupeKey
+		}
+	}
 	if op.ID == uuid.Nil {
 		op.ID = uuid.New()
 	}
@@ -53,12 +60,12 @@ func (r *MemoryRepository) GetByID(ownerUserID, workspaceID string, id uuid.UUID
 	return &cp, nil
 }
 
-func (r *MemoryRepository) FindByDedupeKey(workspaceID, dedupeKey string) (*models.Operation, bool, error) {
+func (r *MemoryRepository) FindByDedupeKey(ownerUserID, workspaceID, dedupeKey string) (*models.Operation, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var found *models.Operation
 	for _, op := range r.ops {
-		if op.WorkspaceID != workspaceID || op.DedupeKey != dedupeKey {
+		if op.OwnerUserID != ownerUserID || op.WorkspaceID != workspaceID || op.DedupeKey != dedupeKey {
 			continue
 		}
 		if op.Status == string(StatusArchived) || op.Status == string(StatusDismissed) {

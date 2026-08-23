@@ -2,16 +2,23 @@ package operations
 
 import (
 	"errors"
+	"strings"
 
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
 // ErrNotFound is returned when an operation does not exist.
 var ErrNotFound = errors.New("operations: not found")
+
+// ErrDuplicateDedupeKey means another active operation already represents the
+// same owner-scoped source revision. Callers must load that operation instead
+// of treating the collision as a failed ingestion.
+var ErrDuplicateDedupeKey = errors.New("operations: duplicate active dedupe key")
 
 // Filter narrows a List query.
 type Filter struct {
@@ -25,14 +32,14 @@ type Filter struct {
 
 // Dashboard is the Background Operations dashboard roll-up (§24).
 type Dashboard struct {
-	CountsByStatus map[string]int      `json:"countsByStatus"`
-	CountsByRisk   map[string]int      `json:"countsByRisk"`
-	NeedsRobert    int                 `json:"needsRobert"`
-	DoneWhileAway  int                 `json:"doneWhileAway"`
-	Blocked        int                 `json:"blocked"`
-	Running        int                 `json:"running"`
-	Failed         int                 `json:"failed"`
-	Recent         []models.Operation  `json:"recent"`
+	CountsByStatus map[string]int     `json:"countsByStatus"`
+	CountsByRisk   map[string]int     `json:"countsByRisk"`
+	NeedsRobert    int                `json:"needsRobert"`
+	DoneWhileAway  int                `json:"doneWhileAway"`
+	Blocked        int                `json:"blocked"`
+	Running        int                `json:"running"`
+	Failed         int                `json:"failed"`
+	Recent         []models.Operation `json:"recent"`
 }
 
 // Repository is the Operation Ledger persistence contract (§10.8).
@@ -40,7 +47,7 @@ type Repository interface {
 	Create(op *models.Operation) (*models.Operation, error)
 	Update(op *models.Operation) (*models.Operation, error)
 	GetByID(ownerUserID, workspaceID string, id uuid.UUID) (*models.Operation, error)
-	FindByDedupeKey(workspaceID, dedupeKey string) (*models.Operation, bool, error)
+	FindByDedupeKey(ownerUserID, workspaceID, dedupeKey string) (*models.Operation, bool, error)
 	List(f Filter) ([]models.Operation, error)
 	ListDue(ownerUserID, workspaceID string, limit int) ([]models.Operation, error)
 	Dashboard(ownerUserID, workspaceID string) (Dashboard, error)
@@ -65,6 +72,9 @@ func DefaultRepository() Repository {
 
 func (r *GormRepository) Create(op *models.Operation) (*models.Operation, error) {
 	if err := r.DB.Create(op).Error; err != nil {
+		if isActiveDedupeConflict(err) {
+			return nil, ErrDuplicateDedupeKey
+		}
 		return nil, err
 	}
 	return op, nil
@@ -91,10 +101,10 @@ func (r *GormRepository) GetByID(ownerUserID, workspaceID string, id uuid.UUID) 
 	return &op, nil
 }
 
-func (r *GormRepository) FindByDedupeKey(workspaceID, dedupeKey string) (*models.Operation, bool, error) {
+func (r *GormRepository) FindByDedupeKey(ownerUserID, workspaceID, dedupeKey string) (*models.Operation, bool, error) {
 	var op models.Operation
 	err := r.DB.
-		Where("workspace_id = ? AND dedupe_key = ? AND status NOT IN ?", workspaceID, dedupeKey, []string{string(StatusArchived), string(StatusDismissed)}).
+		Where("owner_user_id = ? AND workspace_id = ? AND dedupe_key = ? AND status NOT IN ?", ownerUserID, workspaceID, dedupeKey, []string{string(StatusArchived), string(StatusDismissed)}).
 		Order("created_at DESC").First(&op).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, false, nil
@@ -103,6 +113,15 @@ func (r *GormRepository) FindByDedupeKey(workspaceID, dedupeKey string) (*models
 		return nil, false, err
 	}
 	return &op, true, nil
+}
+
+func isActiveDedupeConflict(err error) bool {
+	var postgresError *pgconn.PgError
+	if errors.As(err, &postgresError) && postgresError.Code == "23505" &&
+		strings.Contains(postgresError.ConstraintName, "uq_operations_owner_workspace_dedupe_active") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "uq_operations_owner_workspace_dedupe_active")
 }
 
 func (r *GormRepository) List(f Filter) ([]models.Operation, error) {
