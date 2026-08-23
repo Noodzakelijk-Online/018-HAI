@@ -99,6 +99,7 @@ export class ControlCenterComponent implements OnInit {
   recentMemoriesView: IContextMemory[] = []
   commandActionsView: CommandAction[] = []
   lastAgentCycle?: IAgentCycleRunResult
+  dashboardLoadErrors: string[] = []
 
   loading = false
   scanning = false
@@ -193,6 +194,7 @@ export class ControlCenterComponent implements OnInit {
 
   refresh(): void {
     this.loading = true
+    this.dashboardLoadErrors = []
     let pending = 3
     const done = () => {
       pending -= 1
@@ -203,7 +205,10 @@ export class ControlCenterComponent implements OnInit {
 
     this.workflowService.dashboard().pipe(
         timeout(2500),
-        catchError(() => of(undefined))
+        catchError(() => {
+          this.recordDashboardLoadFailure('Workflow status')
+          return of(undefined)
+        })
       ).subscribe({
         next: (workflow) => {
           this.workflowDashboard = workflow
@@ -217,7 +222,10 @@ export class ControlCenterComponent implements OnInit {
 
     this.ambientService.overview().pipe(
         timeout(2500),
-        catchError(() => of(undefined))
+        catchError(() => {
+          this.recordDashboardLoadFailure('Ambient scan')
+          return of(undefined)
+        })
       ).subscribe({
         next: (ambient) => {
           this.ambientOverview = ambient
@@ -231,7 +239,10 @@ export class ControlCenterComponent implements OnInit {
 
     this.pursuitService.dashboard().pipe(
         timeout(1800),
-        catchError(() => of(undefined))
+        catchError(() => {
+          this.recordDashboardLoadFailure('Pursuit status')
+          return of(undefined)
+        })
       ).subscribe({
         next: (pursuits) => {
           this.pursuitDashboard = pursuits
@@ -242,6 +253,16 @@ export class ControlCenterComponent implements OnInit {
           done()
         },
       })
+  }
+
+  hasDashboardLoadError(): boolean {
+    return this.dashboardLoadErrors.length > 0
+  }
+
+  private recordDashboardLoadFailure(label: string): void {
+    if (!this.dashboardLoadErrors.includes(label)) {
+      this.dashboardLoadErrors = [...this.dashboardLoadErrors, label]
+    }
   }
 
   loadMemories(force = false): void {
@@ -480,7 +501,7 @@ export class ControlCenterComponent implements OnInit {
   }
 
   hasLiveWork(): boolean {
-    return this.loading || this.attentionItemsView.length > 0 || this.activeItemsView.length > 0
+    return this.loading || this.hasDashboardLoadError() || this.attentionItemsView.length > 0 || this.activeItemsView.length > 0
   }
 
   private buildRecentActivity(): ActivityEntry[] {

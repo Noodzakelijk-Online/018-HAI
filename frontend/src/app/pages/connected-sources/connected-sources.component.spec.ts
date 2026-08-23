@@ -1,7 +1,7 @@
 import { FormBuilder } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
-import { Subject } from 'rxjs';
+import { Subject, of, throwError } from 'rxjs';
 import { IConnectedSource, ISourcePursuitRoutingOutcome } from '../../models/connected-source.model.interface';
 import { ConnectedSourcesComponent } from './connected-sources.component';
 
@@ -9,7 +9,8 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
   function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router>; sourceService: jasmine.SpyObj<any> } {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
 	const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
-      'createSource', 'sync', 'transcribe', 'extractDocuments', 'runDueScheduledSyncs'
+      'createSource', 'sync', 'transcribe', 'extractDocuments', 'runDueScheduledSyncs',
+      'connectors', 'sources', 'extractions', 'auditLogs', 'syncJobs'
     ]);
     return {
       component: new ConnectedSourcesComponent(
@@ -175,5 +176,23 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(sourceService.transcribe).not.toHaveBeenCalled();
     expect(sourceService.extractDocuments).not.toHaveBeenCalled();
     expect(sourceService.runDueScheduledSyncs).not.toHaveBeenCalled();
+  });
+
+  it('keeps failed auxiliary records visible instead of presenting them as empty', () => {
+    const { component, sourceService } = createComponent();
+    sourceService.connectors.and.returnValue(of([]));
+    sourceService.sources.and.returnValue(of([]));
+    sourceService.extractions.and.returnValue(throwError(() => new Error('extractions unavailable')));
+    sourceService.auditLogs.and.returnValue(throwError(() => new Error('audit unavailable')));
+    sourceService.syncJobs.and.returnValue(throwError(() => new Error('jobs unavailable')));
+
+    component.refresh();
+
+    expect(component.loadWarnings).toEqual([
+      'Extracted records',
+      'Audit history',
+      'Sync jobs',
+    ]);
+    expect(component.hasLoadWarnings()).toBeTrue();
   });
 });

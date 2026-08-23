@@ -64,6 +64,7 @@ export class ConnectedSourcesComponent implements OnInit {
   loading = false;
   connecting = false;
   syncing = false;
+  loadWarnings: string[] = [];
   selectedAction: SourceAction = 'connect';
   sourceActions: SourceActionCard[] = [];
   selectedSourceId = '';
@@ -147,10 +148,12 @@ export class ConnectedSourcesComponent implements OnInit {
 
   refresh(): void {
     this.loading = true;
+    this.loadWarnings = [];
     forkJoin({
       connectors: this.sourceService.connectors().pipe(
         timeout(this.loadTimeoutMs),
         catchError(() => {
+          this.recordLoadWarning('Connector catalog');
           this.notification.error('Connectors unavailable', 'Connector status did not load in time.');
           return of([] as ISourceConnector[]);
         })
@@ -158,21 +161,31 @@ export class ConnectedSourcesComponent implements OnInit {
       sources: this.sourceService.sources(this.includeDisabled).pipe(
         timeout(this.loadTimeoutMs),
         catchError(() => {
+          this.recordLoadWarning('Connected sources');
           this.notification.error('Sources unavailable', 'Connected sources did not load in time.');
           return of([] as IConnectedSource[]);
         })
       ),
       extractions: this.sourceService.extractions(this.searchForm.value.projectKey, this.includeArchived).pipe(
         timeout(this.loadTimeoutMs),
-        catchError(() => of([] as ISourceExtraction[]))
+        catchError(() => {
+          this.recordLoadWarning('Extracted records');
+          return of([] as ISourceExtraction[]);
+        })
       ),
       auditLogs: this.sourceService.auditLogs().pipe(
         timeout(this.loadTimeoutMs),
-        catchError(() => of([] as ISourceAuditLog[]))
+        catchError(() => {
+          this.recordLoadWarning('Audit history');
+          return of([] as ISourceAuditLog[]);
+        })
       ),
       syncJobs: this.sourceService.syncJobs().pipe(
         timeout(this.loadTimeoutMs),
-        catchError(() => of([] as ISourceSyncJob[]))
+        catchError(() => {
+          this.recordLoadWarning('Sync jobs');
+          return of([] as ISourceSyncJob[]);
+        })
       ),
     })
       .pipe(finalize(() => (this.loading = false)))
@@ -186,6 +199,16 @@ export class ConnectedSourcesComponent implements OnInit {
         this.loadConnectionHealth(sources);
         this.updateSourceActions();
       });
+  }
+
+  hasLoadWarnings(): boolean {
+    return this.loadWarnings.length > 0;
+  }
+
+  private recordLoadWarning(label: string): void {
+    if (!this.loadWarnings.includes(label)) {
+      this.loadWarnings = [...this.loadWarnings, label];
+    }
   }
 
   connectSource(): void {

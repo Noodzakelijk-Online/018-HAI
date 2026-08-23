@@ -1,5 +1,5 @@
 import { fakeAsync, tick } from '@angular/core/testing'
-import { Subject } from 'rxjs'
+import { Subject, throwError } from 'rxjs'
 import { ControlCenterComponent } from './control-center.component'
 
 describe('ControlCenterComponent', () => {
@@ -92,5 +92,29 @@ describe('ControlCenterComponent', () => {
     const afterLoading = (component as any).buildCommandActions()
       .find((action: any) => action.id === 'automation')
     expect(afterLoading.primaryMetric).toBe('1 registered')
+  })
+
+  it('does not present failed dashboard data as an empty workload', () => {
+    const run = jasmine.createSpy('run').and.returnValue(new Subject<any>().asObservable())
+    const { component } = createComponent({ run })
+    ;(component as any).workflowService = {
+      dashboard: () => throwError(() => new Error('workflow unavailable')),
+    }
+    ;(component as any).ambientService = {
+      overview: () => throwError(() => new Error('ambient unavailable')),
+    }
+    ;(component as any).pursuitService = {
+      dashboard: () => throwError(() => new Error('pursuit unavailable')),
+    }
+
+    component.refresh()
+
+    expect(component.dashboardLoadErrors).toEqual([
+      'Workflow status',
+      'Ambient scan',
+      'Pursuit status',
+    ])
+    expect(component.hasDashboardLoadError()).toBeTrue()
+    expect(component.hasLiveWork()).toBeTrue()
   })
 })

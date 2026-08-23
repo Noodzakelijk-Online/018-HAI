@@ -49,6 +49,15 @@
       </div>
     </section>
 
+    <section class="load-warning" *ngIf="hasLoadWarnings()" role="status" aria-live="polite">
+      <i nz-icon nzType="warning" nzTheme="outline"></i>
+      <div>
+        <strong>Some source data is unavailable</strong>
+        <span>{{ loadWarnings.join(', ') }} could not be loaded. Counts and source status may be incomplete.</span>
+      </div>
+      <button type="button" nz-button nzType="default" (click)="refresh()" [nzLoading]="loading" title="Retry unavailable source data">Retry</button>
+    </section>
+
     <section class="action-rail" aria-label="Source actions">
       <button
         type="button"
