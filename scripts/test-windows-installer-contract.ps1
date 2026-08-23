@@ -93,6 +93,7 @@ if ($startScript -notmatch [Regex]::Escape('--profile local-a2a')) {
 foreach ($required in @(
     "HAI_A2A_BRIDGE_TOKEN",
     "A2A-Version",
+    "supportedInterfaces",
     "SendMessage",
     "TASK_STATE_COMPLETED",
     "hai-controlled-planning-proposal"

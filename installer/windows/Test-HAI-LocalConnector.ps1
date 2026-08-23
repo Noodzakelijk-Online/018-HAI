@@ -27,8 +27,18 @@ try {
     throw "The local A2A connector returned an invalid Agent Card."
 }
 
-if ([string]::IsNullOrWhiteSpace($agentCard.name) -or [string]::IsNullOrWhiteSpace($agentCard.url)) {
+if ([string]::IsNullOrWhiteSpace($agentCard.name)) {
     throw "The local A2A connector returned an incomplete Agent Card."
+}
+
+$planningUrl = "$(Get-HaiA2AUrl)/api/v1/a2a"
+$planningInterface = @($agentCard.supportedInterfaces | Where-Object {
+    [string]$_.protocolBinding -eq "JSONRPC" -and
+    [string]$_.protocolVersion -eq "1.0" -and
+    [string]$_.url -eq $planningUrl
+}) | Select-Object -First 1
+if ($null -eq $planningInterface) {
+    throw "The local A2A Agent Card does not advertise the expected JSON-RPC planning endpoint: $planningUrl."
 }
 
 $bridgeToken = Get-HaiEnvironmentValue -Name "HAI_A2A_BRIDGE_TOKEN"
@@ -49,7 +59,6 @@ $planningRequest = @{
     }
 } | ConvertTo-Json -Depth 8 -Compress
 
-$planningUrl = "$(Get-HaiA2AUrl)/api/v1/a2a"
 try {
     $planningResponse = Invoke-WebRequest -UseBasicParsing -Method Post -Uri $planningUrl -TimeoutSec 15 `
         -ContentType "application/json" `
