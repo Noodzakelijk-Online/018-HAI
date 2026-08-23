@@ -2,6 +2,7 @@ import { Component, Inject, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
+import { finalize, timeout } from 'rxjs/operators';
 import {
   IResearchCandidateEvidence,
   IVerificationResult,
@@ -25,6 +26,8 @@ import { IVerificationService } from '../../services/verification.service.interf
 export class GroundedAnswersComponent implements OnInit {
   result?: IVerificationResult;
   runs: IVerificationRun[] = [];
+  runsLoading = false;
+  runsUnavailable = false;
   loading = false;
   researchLoading = false;
   researchProbeLoading = false;
@@ -140,9 +143,19 @@ export class GroundedAnswersComponent implements OnInit {
   }
 
   loadRuns(): void {
-    this.verificationService.runs().subscribe({
-      next: (runs) => (this.runs = runs),
-      error: () => (this.runs = []),
+    if (this.runsLoading) {
+      return;
+    }
+    this.runsLoading = true;
+    this.verificationService.runs().pipe(
+      timeout(10_000),
+      finalize(() => (this.runsLoading = false))
+    ).subscribe({
+      next: (runs) => {
+        this.runs = runs;
+        this.runsUnavailable = false;
+      },
+      error: () => (this.runsUnavailable = true),
     });
   }
 
