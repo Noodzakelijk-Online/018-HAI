@@ -310,6 +310,9 @@ func TestHandlerTranscribesOnlyAnOwnedExplicitAudioSource(t *testing.T) {
 	if stub.folder != "voice-notes/2026-07" {
 		t.Fatalf("folder = %q", stub.folder)
 	}
+	if repo.lastMutableSourceID != sourceID || repo.lastMutableSourceOwner != "alice" {
+		t.Fatalf("transcription must resolve the exact owned source, got id=%s owner=%q", repo.lastMutableSourceID, repo.lastMutableSourceOwner)
+	}
 	if len(repo.rawItems) != 1 {
 		t.Fatalf("raw items = %#v", repo.rawItems)
 	}
@@ -372,6 +375,9 @@ func TestHandlerExtractsOnlyAnOwnedExplicitDoclingSource(t *testing.T) {
 	}
 	if stub.folder != "legal/vivare" {
 		t.Fatalf("folder = %q", stub.folder)
+	}
+	if repo.lastMutableSourceID != sourceID || repo.lastMutableSourceOwner != "alice" {
+		t.Fatalf("document extraction must resolve the exact owned source, got id=%s owner=%q", repo.lastMutableSourceID, repo.lastMutableSourceOwner)
 	}
 	if len(repo.rawItems) != 1 {
 		t.Fatalf("raw items = %#v", repo.rawItems)

@@ -268,12 +268,8 @@ func (h *Handler) Transcribe(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.requireMutableSource(c, id) {
-		return
-	}
-	source, err := h.sourceByID(id)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "connected source not found"})
+	source, ok := h.mutableSource(c, id)
+	if !ok {
 		return
 	}
 	if source.ConnectorKey != "whisper-audio" || !source.LocalOnly {
@@ -330,12 +326,8 @@ func (h *Handler) ExtractDocuments(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !h.requireMutableSource(c, id) {
-		return
-	}
-	source, err := h.sourceByID(id)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "connected source not found"})
+	source, ok := h.mutableSource(c, id)
+	if !ok {
 		return
 	}
 	if source.ConnectorKey != doclingDocumentsConnectorKey || !source.LocalOnly {
@@ -692,19 +684,6 @@ func (h *Handler) visibleSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
 	return visible, nil
 }
 
-func (h *Handler) sourceByID(id uuid.UUID) (*models.ConnectedSource, error) {
-	sources, err := h.service.Sources(true)
-	if err != nil {
-		return nil, err
-	}
-	for index := range sources {
-		if sources[index].ID == id {
-			return &sources[index], nil
-		}
-	}
-	return nil, errors.New("connected source not found")
-}
-
 func selectedAudioFolder(value string) (string, error) {
 	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
 	if value == "" || value == "." || strings.HasPrefix(value, "/") || strings.Contains(value, "//") {
@@ -758,26 +737,39 @@ func (h *Handler) mutableSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
 }
 
 func (h *Handler) requireMutableSource(c *gin.Context, id uuid.UUID) bool {
+	_, ok := h.mutableSource(c, id)
+	return ok
+}
+
+// mutableSource resolves one source at the database boundary when the service
+// supports it. Local runners need the source configuration after ownership is
+// checked, so returning that exact record avoids a second full source-inventory
+// read on every transcription or document extraction request.
+func (h *Handler) mutableSource(c *gin.Context, id uuid.UUID) (*models.ConnectedSource, bool) {
 	if lookup, ok := h.service.(mutableSourceLookup); ok {
-		if _, err := lookup.MutableSourceForOwner(id, sourceOwner(c)); err == nil {
-			return true
+		if source, err := lookup.MutableSourceForOwner(id, sourceOwner(c)); err == nil {
+			return source, true
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not verify connected source ownership"})
-			return false
+			return nil, false
 		}
 		c.JSON(http.StatusNotFound, gin.H{"error": "connected source not found"})
-		return false
+		return nil, false
 	}
-	mutableSourceIDs, err := h.mutableSourceIDs(c)
+	// Compatibility path for older service implementations used in focused tests
+	// and downstream integrations that have not yet implemented exact lookups.
+	sources, err := h.service.Sources(true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return false
+		return nil, false
 	}
-	if mutableSourceIDs[id] {
-		return true
+	for index := range sources {
+		if sources[index].ID == id && sourceMutable(sources[index], sourceOwner(c)) {
+			return &sources[index], true
+		}
 	}
 	c.JSON(http.StatusNotFound, gin.H{"error": "connected source not found"})
-	return false
+	return nil, false
 }
 
 func (h *Handler) requireMutableExtraction(c *gin.Context, id uuid.UUID) bool {
