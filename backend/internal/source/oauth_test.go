@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,6 +93,30 @@ func TestGoogleOAuthConfigUsesOneConnectorSpecificReadonlyScope(t *testing.T) {
 	}
 	if _, err := googleOAuthConfigForConnector("unknown"); err == nil {
 		t.Fatal("unknown connector must not receive a Google OAuth configuration")
+	}
+}
+
+func TestGoogleOAuthRejectsRevokedSourceBeforeConsentOrTokenExchange(t *testing.T) {
+	previous := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = previous })
+	config.AppConfig.GoogleOAuthClientID = "client"
+	config.AppConfig.GoogleOAuthClientSecret = "secret"
+	config.AppConfig.GoogleOAuthRedirectURL = "https://example.test/callback"
+	config.AppConfig.OAuthTokenEncryptionKey = "token-key"
+	config.AppConfig.OAuthStateSigningKey = "state-key"
+
+	revokedAt := time.Now().UTC()
+	sourceID := uuid.New()
+	service := NewService(newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: gmailConnectorKey, Enabled: false,
+		Status: "revoked", RevokedAt: &revokedAt,
+	}), nil).(*service)
+
+	if _, err := service.StartGoogleOAuth(sourceID); !errors.Is(err, ErrSourceRevoked) {
+		t.Fatalf("StartGoogleOAuth error = %v, want ErrSourceRevoked", err)
+	}
+	if err := googleOAuthSourceAllowed(&models.ConnectedSource{Status: "revoked"}); !errors.Is(err, ErrSourceRevoked) {
+		t.Fatalf("callback source guard error = %v, want ErrSourceRevoked", err)
 	}
 }
 
