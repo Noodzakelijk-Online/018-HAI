@@ -1,7 +1,8 @@
-import { Component, Inject, OnInit } from '@angular/core';
+import { Component, Inject, OnDestroy, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
+import { Subscription } from 'rxjs';
 import {
   IAgentRuntimeEcosystemSurface,
   IAgentRuntimeHealth,
@@ -53,7 +54,7 @@ interface RuntimeSurfaceGroup {
     styleUrls: ['./command-dashboard.component.scss'],
     standalone: false
 })
-export class CommandDashboardComponent implements OnInit {
+export class CommandDashboardComponent implements OnInit, OnDestroy {
   private readonly openClawArchiveMaxBytes = 750 * 1024 * 1024;
   dashboard?: ICommandDashboard;
   pursuitDashboard?: IPursuitDashboard;
@@ -78,6 +79,11 @@ export class CommandDashboardComponent implements OnInit {
   commandLogs: IAssistantCommandResult[] = [];
   commandLogsUnavailable = false;
   lastCommand?: IAssistantCommandResult;
+  private dashboardRefreshSubscription?: Subscription;
+  private pursuitDashboardSubscription?: Subscription;
+  private pursuitBriefSubscription?: Subscription;
+  private runtimeOverviewSubscription?: Subscription;
+  private commandLogsSubscription?: Subscription;
 
   actions: DashboardAction[] = [
     {
@@ -156,9 +162,18 @@ export class CommandDashboardComponent implements OnInit {
     this.loadCommandLogs();
   }
 
+  ngOnDestroy(): void {
+    this.dashboardRefreshSubscription?.unsubscribe();
+    this.pursuitDashboardSubscription?.unsubscribe();
+    this.pursuitBriefSubscription?.unsubscribe();
+    this.runtimeOverviewSubscription?.unsubscribe();
+    this.commandLogsSubscription?.unsubscribe();
+  }
+
   refreshRuntimes(): void {
     this.runtimeLoading = true;
-    this.agentRuntimes.overview().subscribe({
+    this.runtimeOverviewSubscription?.unsubscribe();
+    this.runtimeOverviewSubscription = this.agentRuntimes.overview().subscribe({
       next: ({ runtimes, health }) => {
         this.runtimes = runtimes;
         this.runtimeHealth = health.reduce(
@@ -386,7 +401,8 @@ export class CommandDashboardComponent implements OnInit {
   refresh(): void {
     this.loading = true;
     this.refreshPursuits();
-    this.memoryEngine.dashboard().subscribe({
+    this.dashboardRefreshSubscription?.unsubscribe();
+    this.dashboardRefreshSubscription = this.memoryEngine.dashboard().subscribe({
       next: (dashboard) => {
         this.dashboard = dashboard;
         this.loading = false;
@@ -506,7 +522,8 @@ export class CommandDashboardComponent implements OnInit {
 
   refreshPursuits(): void {
     this.pursuitsLoading = true;
-    this.pursuits.dashboard().subscribe({
+    this.pursuitDashboardSubscription?.unsubscribe();
+    this.pursuitDashboardSubscription = this.pursuits.dashboard().subscribe({
       next: (dashboard) => {
         this.pursuitDashboard = dashboard;
         this.pursuitsLoading = false;
@@ -516,7 +533,8 @@ export class CommandDashboardComponent implements OnInit {
         this.pursuitDashboard = undefined;
       },
     });
-    this.pursuits.brief().subscribe({
+    this.pursuitBriefSubscription?.unsubscribe();
+    this.pursuitBriefSubscription = this.pursuits.brief().subscribe({
       next: (brief) => {
         this.pursuitBrief = brief;
       },
@@ -527,7 +545,8 @@ export class CommandDashboardComponent implements OnInit {
   }
 
   loadCommandLogs(): void {
-    this.assistantCommands.logs().subscribe({
+    this.commandLogsSubscription?.unsubscribe();
+    this.commandLogsSubscription = this.assistantCommands.logs().subscribe({
       next: (logs) => {
         this.commandLogs = logs || [];
         this.commandLogsUnavailable = false;

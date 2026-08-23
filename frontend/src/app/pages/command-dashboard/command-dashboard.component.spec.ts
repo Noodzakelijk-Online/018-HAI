@@ -1,6 +1,6 @@
 import { FormBuilder } from '@angular/forms';
 import { Router } from '@angular/router';
-import { of, throwError } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { IPursuitDashboardDecision } from '../../models/pursuit.model.interface';
 import { CommandDashboardComponent } from './command-dashboard.component';
@@ -8,11 +8,13 @@ import { CommandDashboardComponent } from './command-dashboard.component';
 describe('CommandDashboardComponent pursuit candidate decisions', () => {
   function createComponent(): {
     component: CommandDashboardComponent;
+    memoryEngine: jasmine.SpyObj<any>;
     pursuits: jasmine.SpyObj<any>;
     workflows: jasmine.SpyObj<any>;
     commands: jasmine.SpyObj<any>;
     notification: jasmine.SpyObj<any>;
   } {
+    const memoryEngine = jasmine.createSpyObj('MemoryEngineService', ['dashboard', 'search', 'deleteConversation']);
     const pursuits = jasmine.createSpyObj('PursuitService', ['acceptCandidate', 'archive', 'resolveDecision']);
     const workflows = jasmine.createSpyObj('WorkflowService', ['resolveApproval', 'resolveProposal']);
     const commands = jasmine.createSpyObj('AssistantCommandService', ['logs']);
@@ -20,7 +22,7 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
     const component = new CommandDashboardComponent(
       new FormBuilder(),
-      {} as any,
+      memoryEngine,
       {} as any,
       commands,
       pursuits,
@@ -29,7 +31,7 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
       router,
     );
     spyOn(component, 'refreshPursuits');
-    return { component, pursuits, workflows, commands, notification };
+    return { component, memoryEngine, pursuits, workflows, commands, notification };
   }
 
   function candidateDecision(riskLevel: string = 'medium'): IPursuitDashboardDecision {
@@ -148,5 +150,22 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
 
     expect(component.commandLogs).toEqual(history as any);
     expect((component as any).commandLogsUnavailable).toBeTrue();
+  });
+
+  it('cancels an obsolete dashboard refresh so stale memory data cannot replace the latest view', () => {
+    const { component, memoryEngine } = createComponent();
+    const first = new Subject<any>();
+    const second = new Subject<any>();
+    memoryEngine.dashboard.and.returnValues(first.asObservable(), second.asObservable());
+
+    component.refresh();
+    component.refresh();
+
+    second.next({ summary: 'new dashboard' });
+    second.complete();
+    first.next({ summary: 'stale dashboard' });
+    first.complete();
+
+    expect(component.dashboard).toEqual({ summary: 'new dashboard' } as any);
   });
 });
