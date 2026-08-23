@@ -333,7 +333,7 @@ export class AgentTeamsComponent implements OnInit {
       this.notification.error('Team detail unavailable', this.apiError(error, 'The section could not be loaded.'))
     }
     if (section === 'decisions') {
-      forkJoin({ messages: this.teamsService.messages(team.id, team.version), attention: this.teamsService.attention(team.id, team.version) }).subscribe({
+      this.teamsService.decisionOverview(team.id, team.version).subscribe({
         next: (result) => { this.detailLoading = false; this.loadedSections.add(section); this.messages = result.messages; this.attention = result.attention },
         error: failed,
       })

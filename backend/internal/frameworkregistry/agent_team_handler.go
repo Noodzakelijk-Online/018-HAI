@@ -55,6 +55,7 @@ func RegisterAgentTeamRoutes(parent *gin.RouterGroup, handler *AgentTeamHandler,
 		routes.POST("/:id/versions/:version/revoke", guards.Govern, handler.Revoke)
 		routes.POST("/:id/versions/:version/members", guards.Govern, handler.AddMember)
 		routes.POST("/:id/versions/:version/members/:memberId/status", guards.Govern, handler.ChangeMembership)
+		routes.GET("/:id/versions/:version/decision-overview", guards.Read, handler.DecisionOverview)
 		routes.GET("/:id/versions/:version/message-attention", guards.Read, handler.MessageAttention)
 		routes.GET("/:id/versions/:version/messages", guards.Read, handler.Messages)
 		routes.POST("/:id/versions/:version/messages", guards.Write, handler.StoreMessage)
@@ -298,6 +299,15 @@ func (h *AgentTeamHandler) MessageAttention(c *gin.Context) {
 		return
 	}
 	result, err := h.service.MessageAttention(owner, c.Param("id"), c.Param("version"))
+	respondAgentTeam(c, result, err, http.StatusOK)
+}
+
+func (h *AgentTeamHandler) DecisionOverview(c *gin.Context) {
+	owner, ok := frameworkOwner(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.DecisionOverview(owner, c.Param("id"), c.Param("version"))
 	respondAgentTeam(c, result, err, http.StatusOK)
 }
 

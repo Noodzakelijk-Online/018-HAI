@@ -223,6 +223,15 @@ type TeamMessageAttentionPage struct {
 	Messages    []TeamMessageAttention `json:"messages"`
 }
 
+// TeamDecisionOverview serves the inspector's full immutable messages and
+// derived attention from the same bounded repository read. It is advisory
+// context only and never changes coordination, approval, or execution state.
+type TeamDecisionOverview struct {
+	GeneratedAt time.Time                   `json:"generatedAt"`
+	Messages    []agentcoordination.Message `json:"messages"`
+	Attention   []TeamMessageAttention      `json:"attention"`
+}
+
 // TeamMessageAttentionIndex is the owner-scoped overview read model. It keeps
 // the detailed per-team endpoint available for inspectors while letting an
 // overview avoid one HTTP request and team lookup per team.

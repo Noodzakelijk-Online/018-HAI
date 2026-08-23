@@ -52,6 +52,7 @@ func TestAgentTeamHTTPRoutesAreOwnerScopedAndPermissionGated(t *testing.T) {
 		"POST /api/v1/framework-registry/teams/guided",
 		"POST /api/v1/framework-registry/teams/:id/versions/:version/messages",
 		"POST /api/v1/framework-registry/teams/:id/versions/:version/decision-messages",
+		"GET /api/v1/framework-registry/teams/:id/versions/:version/decision-overview",
 		"GET /api/v1/framework-registry/teams/:id/versions/:version/message-attention",
 		"GET /api/v1/framework-registry/teams/:id/versions/:version/messages/:messageId/acknowledgments",
 		"POST /api/v1/framework-registry/teams/:id/versions/:version/messages/:messageId/acknowledgments",

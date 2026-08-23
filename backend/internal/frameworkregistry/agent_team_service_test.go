@@ -256,6 +256,40 @@ func TestAgentTeamMessageAcknowledgmentsAreDurableAdvisoryAttentionState(t *test
 	}
 }
 
+func TestAgentTeamDecisionOverviewReadsMessagesOnceAndKeepsAttentionAdvisory(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 11, 10, 0, 0, 0, time.UTC)
+	base := NewMemoryAgentTeamRepository()
+	repo := &batchAttentionRepository{AgentTeamRepository: base}
+	service := newAgentTeamService(repo, func() time.Time { return now }, deterministicTeamIDs("decision-overview"))
+	team := createActiveTestTeam(t, service, "robert", now)
+	message := decisionMessage(t, team, now, deterministicUUID("decision-overview-correlation"), team.Members[0], team.Members[1], TeamVoteSupport, "Review the bounded plan.", "decision-overview-message")
+	message.RequiresAck = true
+	var err error
+	message.PayloadDigest, err = agentcoordination.ComputeMessageDigest(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := service.StoreCoordinationMessage("robert", team.ID, team.Version, message); err != nil || !created {
+		t.Fatalf("store message: created=%v err=%v", created, err)
+	}
+
+	overview, err := service.DecisionOverview("robert", team.ID, team.Version)
+	if err != nil {
+		t.Fatalf("DecisionOverview: %v", err)
+	}
+	if len(overview.Messages) != 1 || overview.Messages[0].ID != message.ID || len(overview.Attention) != 1 || overview.Attention[0].MessageID != message.ID {
+		t.Fatalf("decision overview = %#v", overview)
+	}
+	if !overview.Attention[0].AdvisoryOnly || overview.Attention[0].GrantsExecutionAuthority || !overview.Attention[0].ExecutionAuthorizationRequired {
+		t.Fatalf("decision overview crossed authority boundary: %#v", overview.Attention[0])
+	}
+	if repo.individualMessageCalls != 1 || repo.batchCalls != 1 || repo.individualCalls != 0 {
+		t.Fatalf("decision overview reads = messages:%d acknowledgment batch:%d individual acknowledgments:%d", repo.individualMessageCalls, repo.batchCalls, repo.individualCalls)
+	}
+}
+
 func TestAgentTeamMessageAttentionBatchesAcknowledgmentReadsWhenSupported(t *testing.T) {
 	t.Parallel()
 
