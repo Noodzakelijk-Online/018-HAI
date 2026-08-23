@@ -131,6 +131,17 @@ func TestPaidProviderDisabledByDefault(t *testing.T) {
 	}
 }
 
+func TestDefaultPolicyDoesNotPresentCustomPaidProviderAsImplemented(t *testing.T) {
+	policy := defaultPolicy()
+	provider := policy.Providers[providerIndex(t, policy, "paid-provider")]
+	if provider.Enabled || provider.Configured {
+		t.Fatalf("custom paid provider must remain disabled and unconfigured by default: %#v", provider)
+	}
+	if strings.Contains(strings.ToLower(provider.Name), "placeholder") {
+		t.Fatalf("custom paid provider name must not imply a placeholder integration: %q", provider.Name)
+	}
+}
+
 func TestRouteSkipsProvidersWithoutConfiguredEndpoints(t *testing.T) {
 	service := &Service{policy: testPolicyWithoutEndpoints()}
 

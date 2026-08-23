@@ -2263,7 +2263,7 @@ func defaultPolicy() Policy {
 			},
 			{
 				ID:             "paid-provider",
-				Name:           "Paid provider placeholder",
+				Name:           "Custom paid provider (disabled by policy)",
 				Enabled:        false,
 				Local:          false,
 				Paid:           true,
