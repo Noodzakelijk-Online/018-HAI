@@ -672,7 +672,7 @@ local environment and restart only the backend service:
 
 ```text
 HAI_LARO_ENABLED=true
-HAI_LARO_BASE_URL=https://laro-api-000.ngrok.app/laro
+HAI_LARO_BASE_URL=https://your-laro-origin.example/laro
 HAI_LARO_CONNECTOR_TOKEN=<one-time LARO credential>
 HAI_LARO_SYNC_LIMIT=50
 ```
