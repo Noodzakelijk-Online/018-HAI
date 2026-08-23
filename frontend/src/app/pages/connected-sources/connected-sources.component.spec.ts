@@ -231,6 +231,22 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     }));
   });
 
+  it('keeps actionable server errors while removing control characters', () => {
+    const { component } = createComponent();
+
+    expect((component as any).operationErrorMessage(
+      { error: { error: 'Trello credentials are not configured\nSet the read-only token.' } },
+      'fallback'
+    )).toBe('Trello credentials are not configured Set the read-only token.');
+  });
+
+  it('explains a timed-out operation without exposing a raw transport error', () => {
+    const { component } = createComponent();
+
+    expect((component as any).operationErrorMessage({ name: 'TimeoutError' }, 'fallback'))
+      .toBe('No response within 15 seconds. Check system status and retry.');
+  });
+
   it('requires a real selected WhatsApp export before it can be imported', () => {
     const { component, sourceService } = createComponent();
 

@@ -252,6 +252,17 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
     }
   }
 
+  private operationErrorMessage(error: unknown, fallback: string): string {
+    const candidate = (error as { error?: { error?: unknown } })?.error?.error;
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.replace(/[\r\n\t]+/g, ' ').trim().slice(0, 280);
+    }
+    if ((error as { name?: unknown })?.name === 'TimeoutError') {
+      return `No response within ${Math.round(this.operationTimeoutMs / 1000)} seconds. Check system status and retry.`;
+    }
+    return fallback;
+  }
+
   connectSource(): void {
     if (!this.sourceCanConnect() || this.connecting) {
       return;
@@ -300,7 +311,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
           this.notification.success('Source connected', 'The source is ready for controlled sync.');
           this.refresh();
         },
-        error: (error) => this.notification.error('Error', error?.error?.error || 'Failed to connect source.'),
+        error: (error) => this.notification.error('Error', this.operationErrorMessage(error, 'Failed to connect source.')),
       });
   }
 
@@ -329,9 +340,9 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
           this.notifySyncResult('Item sync', result);
           this.refresh();
         },
-        error: () => {
+        error: (error) => {
           this.syncing = false;
-          this.notification.error('Error', 'Sync failed.');
+          this.notification.error('Source sync failed', this.operationErrorMessage(error, 'The source could not be synchronized.'));
         },
       });
   }
@@ -887,7 +898,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
         },
         error: (error) => {
           this.syncing = false;
-          this.notification.error('Source sync failed', error?.error?.error || 'The connector could not retrieve records.');
+          this.notification.error('Source sync failed', this.operationErrorMessage(error, 'The connector could not retrieve records.'));
         },
       });
   }
@@ -982,9 +993,9 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
           this.notifySyncResult('Folder sync', result);
           this.refresh();
         },
-        error: () => {
+        error: (error) => {
           this.syncing = false;
-          this.notification.error('Error', 'Folder sync failed.');
+          this.notification.error('Folder sync failed', this.operationErrorMessage(error, 'The selected folder could not be synchronized.'));
         },
       });
   }
@@ -1005,9 +1016,9 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
         }
         this.refresh();
       },
-      error: () => {
+      error: (error) => {
         this.syncing = false;
-        this.notification.error('Error', 'Scheduled sync check failed.');
+        this.notification.error('Scheduled sync check failed', this.operationErrorMessage(error, 'Due sources could not be checked.'));
       },
     });
   }
@@ -1334,7 +1345,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
         this.searchResult = result;
         this.updateSourceActions();
       },
-      error: () => this.notification.error('Error', 'Search failed.'),
+      error: (error) => this.notification.error('Search failed', this.operationErrorMessage(error, 'Search did not complete.')),
     });
   }
 
