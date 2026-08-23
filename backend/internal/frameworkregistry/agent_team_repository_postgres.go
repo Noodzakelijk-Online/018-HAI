@@ -349,6 +349,66 @@ func (r *PostgresAgentTeamRepository) ListCoordinationMessages(owner, teamID, ve
 	return result, nil
 }
 
+// ListCoordinationMessagesForTeams keeps overview reads bounded to one query.
+// It restricts the query to the requested team IDs and then verifies the exact
+// version in Go before decoding the signed record.
+func (r *PostgresAgentTeamRepository) ListCoordinationMessagesForTeams(owner string, teams []AgentTeamContract) (map[string][]agentcoordination.Message, error) {
+	owner, err := normalizeOwner(owner)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.ready(); err != nil {
+		return nil, err
+	}
+	result := make(map[string][]agentcoordination.Message, len(teams))
+	requested := make(map[string]struct{}, len(teams))
+	teamIDs := make([]string, 0, len(teams))
+	seenTeamIDs := map[string]struct{}{}
+	for _, team := range teams {
+		teamID := strings.TrimSpace(team.ID)
+		version := strings.TrimSpace(team.Version)
+		if teamID == "" || version == "" {
+			continue
+		}
+		key := teamVersionKey(owner, teamID, version)
+		if _, exists := requested[key]; exists {
+			continue
+		}
+		requested[key] = struct{}{}
+		result[key] = []agentcoordination.Message{}
+		if _, exists := seenTeamIDs[teamID]; !exists {
+			seenTeamIDs[teamID] = struct{}{}
+			teamIDs = append(teamIDs, teamID)
+		}
+	}
+	if len(teamIDs) == 0 {
+		return result, nil
+	}
+	var rows []postgresCoordinationMessageRow
+	if err := r.DB.Raw(`
+		SELECT owner_identity, team_id::text AS team_id, team_version,
+			message_id::text AS message_id, idempotency_key::text AS idempotency_key,
+			correlation_id::text AS correlation_id, payload_digest, created_at,
+			payload::text AS payload
+		FROM public.agent_team_coordination_messages
+		WHERE owner_identity = ? AND team_id::text IN ?
+		ORDER BY team_id ASC, team_version ASC, created_at ASC, message_id ASC`, owner, teamIDs).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("list agent team coordination messages for teams: %w", err)
+	}
+	for _, row := range rows {
+		key := teamVersionKey(owner, row.TeamID, row.TeamVersion)
+		if _, requested := requested[key]; !requested {
+			continue
+		}
+		message, err := decodePostgresCoordinationMessage(row, owner, row.TeamID, row.TeamVersion)
+		if err != nil {
+			return nil, err
+		}
+		result[key] = append(result[key], message)
+	}
+	return result, nil
+}
+
 func (r *PostgresAgentTeamRepository) GetCoordinationMessage(owner, teamID, version, messageID string) (agentcoordination.Message, error) {
 	owner, err := normalizeOwner(owner)
 	if err != nil {

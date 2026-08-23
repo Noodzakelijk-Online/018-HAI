@@ -530,9 +530,22 @@ func (s *AgentTeamService) MessageAttentionIndex(owner string) (*TeamMessageAtte
 		return nil, err
 	}
 	now := s.now().UTC()
+	messagesByTeam := map[string][]agentcoordination.Message{}
+	if batchReader, ok := s.repo.(teamCoordinationMessageBatchReader); ok && len(teams) > 0 {
+		messagesByTeam, err = batchReader.ListCoordinationMessagesForTeams(owner, teams)
+		if err != nil {
+			return nil, err
+		}
+	}
 	result := make([]TeamMessageAttentionByTeam, 0, len(teams))
 	for _, team := range teams {
-		page, err := s.messageAttention(owner, team.ID, team.Version, now)
+		messages, found := messagesByTeam[teamVersionKey(owner, team.ID, team.Version)]
+		var page *TeamMessageAttentionPage
+		if found {
+			page, err = s.messageAttentionForMessages(owner, team.ID, team.Version, messages, now)
+		} else {
+			page, err = s.messageAttention(owner, team.ID, team.Version, now)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -548,7 +561,12 @@ func (s *AgentTeamService) messageAttention(owner, teamID, version string, now t
 	if err != nil {
 		return nil, err
 	}
+	return s.messageAttentionForMessages(owner, teamID, version, messages, now)
+}
+
+func (s *AgentTeamService) messageAttentionForMessages(owner, teamID, version string, messages []agentcoordination.Message, now time.Time) (*TeamMessageAttentionPage, error) {
 	acknowledgmentsByMessage := map[string][]agentcoordination.Acknowledgment{}
+	var err error
 	if batchReader, ok := s.repo.(teamMessageAcknowledgmentBatchReader); ok && len(messages) > 0 {
 		messageIDs := make([]string, 0, len(messages))
 		for _, message := range messages {
@@ -584,6 +602,10 @@ func (s *AgentTeamService) messageAttention(owner, teamID, version string, now t
 
 type teamMessageAcknowledgmentBatchReader interface {
 	ListMessageAcknowledgmentsForMessages(owner, teamID, version string, messageIDs []string) (map[string][]agentcoordination.Acknowledgment, error)
+}
+
+type teamCoordinationMessageBatchReader interface {
+	ListCoordinationMessagesForTeams(owner string, teams []AgentTeamContract) (map[string][]agentcoordination.Message, error)
 }
 
 func deriveTeamMessageAttention(message agentcoordination.Message, acknowledgment *agentcoordination.Acknowledgment, now time.Time) (TeamMessageAttention, error) {

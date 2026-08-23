@@ -148,6 +148,14 @@ func TestPostgresAgentTeamRepositoryDurableLifecycleAndRaces(t *testing.T) {
 	if createdCount != 1 {
 		t.Fatalf("same-payload race created %d records, want 1", createdCount)
 	}
+	batchedMessages, err := restarted.ListCoordinationMessagesForTeams(owner, []AgentTeamContract{*team, *team})
+	if err != nil {
+		t.Fatalf("batch durable messages: %v", err)
+	}
+	storedMessages := batchedMessages[teamVersionKey(owner, team.ID, team.Version)]
+	if len(batchedMessages) != 1 || len(storedMessages) != 1 || storedMessages[0].ID != raceMessage.ID {
+		t.Fatalf("batched durable messages = %#v", batchedMessages)
+	}
 
 	retryAfter := now.Add(5 * time.Minute)
 	deferredAck := agentcoordination.Acknowledgment{

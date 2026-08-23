@@ -297,7 +297,9 @@ func TestAgentTeamMessageAttentionIndexIsOwnerScopedAndUsesOneOverviewRead(t *te
 	t.Parallel()
 
 	now := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.UTC)
-	service := newAgentTeamService(NewMemoryAgentTeamRepository(), func() time.Time { return now }, deterministicTeamIDs("attention-index"))
+	base := NewMemoryAgentTeamRepository()
+	repo := &batchAttentionRepository{AgentTeamRepository: base}
+	service := newAgentTeamService(repo, func() time.Time { return now }, deterministicTeamIDs("attention-index"))
 	team := createActiveTestTeam(t, service, "robert", now)
 	message := decisionMessage(t, team, now, deterministicUUID("attention-index-correlation"), team.Members[0], team.Members[1], TeamVoteSupport, "Keep the bounded plan.", "attention-index-message")
 	if _, created, err := service.StoreCoordinationMessage("robert", team.ID, team.Version, message); err != nil || !created {
@@ -311,6 +313,9 @@ func TestAgentTeamMessageAttentionIndexIsOwnerScopedAndUsesOneOverviewRead(t *te
 	if len(index.Contracts) != 1 || index.Contracts[0].ID != team.ID || len(index.Teams) != 1 || index.Teams[0].TeamID != team.ID || index.Teams[0].TeamVersion != team.Version || len(index.Teams[0].Messages) != 1 {
 		t.Fatalf("unexpected owner-scoped attention index: %#v", index)
 	}
+	if repo.teamMessageBatchCalls != 1 || repo.individualMessageCalls != 0 {
+		t.Fatalf("attention index must batch team message reads: batch=%d individual=%d", repo.teamMessageBatchCalls, repo.individualMessageCalls)
+	}
 	other, err := service.MessageAttentionIndex("someone-else")
 	if err != nil {
 		t.Fatalf("MessageAttentionIndex(other owner): %v", err)
@@ -322,8 +327,10 @@ func TestAgentTeamMessageAttentionIndexIsOwnerScopedAndUsesOneOverviewRead(t *te
 
 type batchAttentionRepository struct {
 	AgentTeamRepository
-	batchCalls      int
-	individualCalls int
+	batchCalls             int
+	individualCalls        int
+	teamMessageBatchCalls  int
+	individualMessageCalls int
 }
 
 func (r *batchAttentionRepository) ListMessageAcknowledgments(owner, teamID, version, messageID string) ([]agentcoordination.Acknowledgment, error) {
@@ -342,6 +349,16 @@ func (r *batchAttentionRepository) ListMessageAcknowledgmentsForMessages(owner, 
 		result[messageID] = acknowledgments
 	}
 	return result, nil
+}
+
+func (r *batchAttentionRepository) ListCoordinationMessages(owner, teamID, version, correlationID string) ([]agentcoordination.Message, error) {
+	r.individualMessageCalls++
+	return r.AgentTeamRepository.ListCoordinationMessages(owner, teamID, version, correlationID)
+}
+
+func (r *batchAttentionRepository) ListCoordinationMessagesForTeams(owner string, teams []AgentTeamContract) (map[string][]agentcoordination.Message, error) {
+	r.teamMessageBatchCalls++
+	return r.AgentTeamRepository.(*MemoryAgentTeamRepository).ListCoordinationMessagesForTeams(owner, teams)
 }
 
 func TestAgentTeamDeterministicValidationAndVersionProvenance(t *testing.T) {
