@@ -2453,6 +2453,8 @@ type fakeSourceRepo struct {
 	auditLogs                  []models.SourceAuditLog
 	deleteExtractionErr        error
 	oauthTokens                map[uuid.UUID]*models.SourceOAuthToken
+	oauthTokenSingleQueries    int
+	oauthTokenBatchQueries     int
 }
 
 type fakeSemanticService struct {
@@ -2500,11 +2502,23 @@ func (r *fakeSourceRepo) SaveOAuthToken(token *models.SourceOAuthToken) error {
 }
 
 func (r *fakeSourceRepo) FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error) {
+	r.oauthTokenSingleQueries++
 	if token, ok := r.oauthTokens[sourceID]; ok {
 		copy := *token
 		return &copy, nil
 	}
 	return nil, gorm.ErrRecordNotFound
+}
+
+func (r *fakeSourceRepo) FindOAuthTokensForSources(sourceIDs []uuid.UUID) ([]models.SourceOAuthToken, error) {
+	r.oauthTokenBatchQueries++
+	tokens := make([]models.SourceOAuthToken, 0, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		if token, ok := r.oauthTokens[sourceID]; ok {
+			tokens = append(tokens, *token)
+		}
+	}
+	return tokens, nil
 }
 
 func (r *fakeSourceRepo) SaveConnector(connector *models.SourceConnector) (*models.SourceConnector, error) {

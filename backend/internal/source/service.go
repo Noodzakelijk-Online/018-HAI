@@ -745,9 +745,25 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 }
 
 func (s *service) ConnectionHealths(sources []models.ConnectedSource) ([]ConnectionHealth, error) {
+	googleSourceIDs := make([]uuid.UUID, 0, len(sources))
+	if googleOAuthReady() {
+		for _, source := range sources {
+			if isGoogleOAuthConnector(source.ConnectorKey) && source.Status != "revoked" && source.RevokedAt == nil {
+				googleSourceIDs = append(googleSourceIDs, source.ID)
+			}
+		}
+	}
+	tokens, err := s.repo.FindOAuthTokensForSources(googleSourceIDs)
+	if err != nil {
+		return nil, err
+	}
+	tokensBySourceID := make(map[uuid.UUID]*models.SourceOAuthToken, len(tokens))
+	for index := range tokens {
+		tokensBySourceID[tokens[index].SourceID] = &tokens[index]
+	}
 	health := make([]ConnectionHealth, 0, len(sources))
 	for _, source := range sources {
-		item, err := s.connectionHealthForSource(source)
+		item, err := s.connectionHealthForSourceWithToken(source, tokensBySourceID[source.ID])
 		if err != nil {
 			return nil, err
 		}
@@ -757,6 +773,17 @@ func (s *service) ConnectionHealths(sources []models.ConnectedSource) ([]Connect
 }
 
 func (s *service) connectionHealthForSource(source models.ConnectedSource) (*ConnectionHealth, error) {
+	var token *models.SourceOAuthToken
+	if isGoogleOAuthConnector(source.ConnectorKey) && googleOAuthReady() && source.Status != "revoked" && source.RevokedAt == nil {
+		stored, err := s.repo.FindOAuthToken(source.ID)
+		if err == nil {
+			token = stored
+		}
+	}
+	return s.connectionHealthForSourceWithToken(source, token)
+}
+
+func (s *service) connectionHealthForSourceWithToken(source models.ConnectedSource, token *models.SourceOAuthToken) (*ConnectionHealth, error) {
 	health := &ConnectionHealth{
 		SourceID: source.ID, ConnectorKey: source.ConnectorKey,
 		Status: source.Status, Configured: true, LastSyncedAt: source.LastSyncedAt,
@@ -825,8 +852,7 @@ func (s *service) connectionHealthForSource(source models.ConnectedSource) (*Con
 		health.Reason = "Google OAuth client, token encryption key, or state signing key is not configured"
 		return health, nil
 	}
-	token, err := s.repo.FindOAuthToken(source.ID)
-	if err != nil {
+	if token == nil {
 		health.Status = "disconnected"
 		health.Reason = "no Google account grant is stored for this source"
 		return health, nil

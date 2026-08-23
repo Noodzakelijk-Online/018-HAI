@@ -48,6 +48,7 @@ type Repository interface {
 	FindAuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error)
 	SaveOAuthToken(token *models.SourceOAuthToken) error
 	FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error)
+	FindOAuthTokensForSources(sourceIDs []uuid.UUID) ([]models.SourceOAuthToken, error)
 }
 
 type GormRepository struct {
@@ -513,4 +514,15 @@ func (r *GormRepository) FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuth
 		return nil, err
 	}
 	return &token, nil
+}
+
+func (r *GormRepository) FindOAuthTokensForSources(sourceIDs []uuid.UUID) ([]models.SourceOAuthToken, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceOAuthToken{}, nil
+	}
+	var tokens []models.SourceOAuthToken
+	if err := r.DB.Where("source_id IN ?", sourceIDs).Find(&tokens).Error; err != nil {
+		return nil, err
+	}
+	return tokens, nil
 }

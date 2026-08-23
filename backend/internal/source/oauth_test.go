@@ -135,3 +135,49 @@ func TestGoogleConnectionHealthDistinguishesDisconnectedAndReady(t *testing.T) {
 		t.Fatalf("ready health = %#v, %v", health, err)
 	}
 }
+
+func TestGoogleConnectionHealthsLoadTokensInOneBatch(t *testing.T) {
+	previous := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = previous })
+	config.AppConfig.GoogleOAuthClientID = "client"
+	config.AppConfig.GoogleOAuthClientSecret = "secret"
+	config.AppConfig.GoogleOAuthRedirectURL = "https://example.test/callback"
+	config.AppConfig.OAuthTokenEncryptionKey = "token-key"
+	config.AppConfig.OAuthStateSigningKey = "state-key"
+
+	gmailID := uuid.New()
+	driveID := uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: gmailID, ConnectorKey: gmailConnectorKey, Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: driveID, ConnectorKey: driveConnectorKey, Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: uuid.New(), ConnectorKey: "local-folder", Enabled: true, LocalOnly: true, Status: "active"},
+	)
+	if err := repo.SaveOAuthToken(&models.SourceOAuthToken{SourceID: gmailID, Scope: googleoauth.GmailReadonlyScope, RefreshToken: []byte("encrypted")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SaveOAuthToken(&models.SourceOAuthToken{SourceID: driveID, Scope: googleoauth.DriveReadonlyScope, RefreshToken: []byte("encrypted")}); err != nil {
+		t.Fatal(err)
+	}
+
+	sources, err := repo.FindSources(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	health, err := NewService(repo, nil).(*service).ConnectionHealths(sources)
+	if err != nil || len(health) != 3 {
+		t.Fatalf("health=%#v err=%v", health, err)
+	}
+	if repo.oauthTokenBatchQueries != 1 || repo.oauthTokenSingleQueries != 0 {
+		t.Fatalf("token lookups batch/single = %d/%d, want 1/0", repo.oauthTokenBatchQueries, repo.oauthTokenSingleQueries)
+	}
+	healthByConnector := make(map[string]ConnectionHealth, len(health))
+	for _, item := range health {
+		healthByConnector[item.ConnectorKey] = item
+	}
+	for _, connector := range []string{gmailConnectorKey, driveConnectorKey} {
+		item := healthByConnector[connector]
+		if item.Status != "ready" || !item.Authorized {
+			t.Fatalf("Google health = %#v, want ready authorized", item)
+		}
+	}
+}
