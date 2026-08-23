@@ -137,6 +137,8 @@ func TestGovernanceMigrationTailPreservesSemanticUpgradeOrder(t *testing.T) {
 		"0059_agent_team_message_acknowledgments",
 		"0060_connected_source_scheduler_index",
 		"0061_connected_source_owner_activity_indexes",
+		"0062_context_memory_owner_query_indexes",
+		"0063_verification_owner_run_indexes",
 	}
 	entries, err := fs.ReadDir(Files, "pre")
 	if err != nil {

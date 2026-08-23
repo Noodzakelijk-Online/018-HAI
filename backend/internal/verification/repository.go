@@ -20,6 +20,13 @@ type Repository interface {
 	FindEvidence(runID uuid.UUID) ([]models.VerificationEvidence, error)
 }
 
+// OwnerScopedRunRepository permits direct, database-enforced lookup for
+// authenticated inspection. The base interface remains unchanged for internal
+// services and compact test repositories.
+type OwnerScopedRunRepository interface {
+	FindRunForOwner(ownerIdentity string, id uuid.UUID) (*models.VerificationRun, error)
+}
+
 type GormRepository struct {
 	DB *gorm.DB
 }
@@ -87,6 +94,20 @@ func (r *GormRepository) FindRunsForOwner(ownerIdentity string) ([]models.Verifi
 	}
 	err := query.Find(&runs).Error
 	return runs, err
+}
+
+// FindRunForOwner includes ownerless legacy entries for local compatibility,
+// but never returns an entry belonging to another authenticated account.
+func (r *GormRepository) FindRunForOwner(ownerIdentity string, id uuid.UUID) (*models.VerificationRun, error) {
+	var run models.VerificationRun
+	query := r.DB.Where("id = ?", id)
+	if ownerIdentity != "" {
+		query = query.Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity)
+	}
+	if err := query.First(&run).Error; err != nil {
+		return nil, err
+	}
+	return &run, nil
 }
 
 func (r *GormRepository) FindClaims(runID uuid.UUID) ([]models.VerificationClaim, error) {

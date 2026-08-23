@@ -286,20 +286,9 @@ func (s *service) RunDetailsForOwner(ownerIdentity string, id uuid.UUID) (*Verif
 }
 
 func (s *service) runDetailsForOwner(ownerIdentity string, id uuid.UUID) (*VerificationResult, error) {
-	runs, err := s.RunsForOwner(ownerIdentity)
+	run, err := s.runForOwner(ownerIdentity, id)
 	if err != nil {
 		return nil, err
-	}
-	var run *models.VerificationRun
-	for index := range runs {
-		if runs[index].ID == id {
-			copy := runs[index]
-			run = &copy
-			break
-		}
-	}
-	if run == nil {
-		return nil, fmt.Errorf("verification run not found")
 	}
 	claims, err := s.repo.FindClaims(id)
 	if err != nil {
@@ -316,6 +305,23 @@ func (s *service) runDetailsForOwner(ownerIdentity string, id uuid.UUID) (*Verif
 		UnsupportedClaims: unsupportedClaims(claims),
 		Logs:              []string{"loaded persisted verification details"},
 	}, nil
+}
+
+func (s *service) runForOwner(ownerIdentity string, id uuid.UUID) (*models.VerificationRun, error) {
+	if scoped, ok := s.repo.(OwnerScopedRunRepository); ok {
+		return scoped.FindRunForOwner(ownerIdentity, id)
+	}
+	runs, err := s.RunsForOwner(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	for index := range runs {
+		if runs[index].ID == id {
+			copy := runs[index]
+			return &copy, nil
+		}
+	}
+	return nil, fmt.Errorf("verification run not found")
 }
 
 func (s *service) collectEvidence(runID uuid.UUID, request AnswerRequest, questions []string, logs *[]string) []models.VerificationEvidence {
