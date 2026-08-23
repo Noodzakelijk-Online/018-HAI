@@ -1090,6 +1090,7 @@ func initializeAgentRuntimeRoutes(apiVersion *gin.RouterGroup, handler *agentrun
 	routes.Use(requireAuthenticatedOwner())
 	{
 		routes.GET("/", requirePermission(rbac.PermRead), handler.Registry)
+		routes.GET("/overview", requirePermission(rbac.PermRead), handler.Overview)
 		routes.GET("/health", requirePermission(rbac.PermRead), handler.Health)
 		routes.GET("/:id/skills", requirePermission(rbac.PermRead), handler.Skills)
 		routes.POST("/:id/tasks/:taskId/stop", requirePermission(rbac.PermExecute), handler.StopTask)

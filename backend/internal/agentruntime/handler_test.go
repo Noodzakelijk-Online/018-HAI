@@ -196,6 +196,37 @@ func TestOpenClawEcosystemHandlers(t *testing.T) {
 	}
 }
 
+func TestOverviewReturnsRuntimeMetadataAndHealthInOneResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	root := t.TempDir()
+	registry := NewRegistry(&deepSeekHarnessAdapter{
+		enabled:       false,
+		executable:    "dsh",
+		workspace:     root,
+		workspaceRoot: root,
+	})
+	handler := NewHandler(registry)
+	router := gin.New()
+	router.GET("/agent-runtimes/overview", handler.Overview)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/agent-runtimes/overview", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET /agent-runtimes/overview status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var overview RuntimeOverview
+	if err := json.Unmarshal(response.Body.Bytes(), &overview); err != nil {
+		t.Fatalf("decode runtime overview: %v", err)
+	}
+	if len(overview.Runtimes) != 1 || overview.Runtimes[0].ID != "deepseek-harness" {
+		t.Fatalf("unexpected runtime overview metadata: %#v", overview.Runtimes)
+	}
+	if len(overview.Health) != 1 || overview.Health[0].RuntimeID != "deepseek-harness" {
+		t.Fatalf("unexpected runtime overview health: %#v", overview.Health)
+	}
+}
+
 func TestOpenClawUploadRejectsOversizeRequestBeforeMultipartParsing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := NewHandler(NewRegistry(testOpenClawAdapter(t.TempDir(), "")))

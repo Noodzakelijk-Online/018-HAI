@@ -207,6 +207,21 @@ func (r *Registry) List() []Info {
 	return result
 }
 
+// RuntimeOverview combines the stable runtime registry with its bounded health
+// probe. Dashboard callers need both values together, so serving them from one
+// endpoint avoids duplicate request setup while keeping probe state explicit.
+type RuntimeOverview struct {
+	Runtimes []Info   `json:"runtimes"`
+	Health   []Health `json:"health"`
+}
+
+func (r *Registry) Overview(ctx context.Context) RuntimeOverview {
+	return RuntimeOverview{
+		Runtimes: r.List(),
+		Health:   r.Health(ctx),
+	}
+}
+
 func (r *Registry) Health(ctx context.Context) []Health {
 	result := []Health{}
 	for _, id := range []string{"hermes", "deepseek-harness", "odysseus", "openclaw"} {

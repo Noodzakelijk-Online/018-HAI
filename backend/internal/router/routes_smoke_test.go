@@ -80,6 +80,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 
 	agentRuntimes := r.Group("/api/v1").Group("/agent-runtimes")
 	agentRuntimes.GET("/", mark("agentRuntimeRegistry"))
+	agentRuntimes.GET("/overview", mark("agentRuntimeOverview"))
 	agentRuntimes.GET("/health", mark("agentRuntimeHealth"))
 	agentRuntimes.GET("/:id/skills", mark("agentRuntimeSkills"))
 	agentRuntimes.POST("/:id/tasks/:taskId/stop", mark("agentRuntimeStopTask"))
@@ -354,6 +355,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"GET", "/api/v1/automation/images/logo.png", "image"},
 		{"PATCH", "/api/v1/automation/swap/1/2", "swap"},
 		{"GET", "/api/v1/agent-runtimes/", "agentRuntimeRegistry"},
+		{"GET", "/api/v1/agent-runtimes/overview", "agentRuntimeOverview"},
 		{"GET", "/api/v1/agent-runtimes/health", "agentRuntimeHealth"},
 		{"GET", "/api/v1/agent-runtimes/openclaw/skills", "agentRuntimeSkills"},
 		{"POST", "/api/v1/agent-runtimes/openclaw/tasks/task-1/stop", "agentRuntimeStopTask"},

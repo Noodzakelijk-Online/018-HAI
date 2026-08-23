@@ -1,6 +1,6 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
-import { forkJoin, Observable } from 'rxjs';
+import { Observable } from 'rxjs';
 import {
   IAgentRuntimeHealth,
   IAgentRuntimeInfo,
@@ -20,10 +20,10 @@ export class AgentRuntimeService {
     runtimes: IAgentRuntimeInfo[];
     health: IAgentRuntimeHealth[];
   }> {
-    return forkJoin({
-      runtimes: this.http.get<IAgentRuntimeInfo[]>(`${this.apiUrl}/`),
-      health: this.http.get<IAgentRuntimeHealth[]>(`${this.apiUrl}/health`),
-    });
+    return this.http.get<{
+      runtimes: IAgentRuntimeInfo[];
+      health: IAgentRuntimeHealth[];
+    }>(`${this.apiUrl}/overview`);
   }
 
   openClawEcosystem(): Observable<IAgentRuntimeInfo> {
