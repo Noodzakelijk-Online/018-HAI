@@ -602,18 +602,25 @@ For a dedicated Google OAuth **web** client, register this redirect URI for the
 local gateway:
 
 ```text
-http://localhost/api/v1/auth/google/callback
+http://localhost:8088/api/v1/auth/google/callback
 ```
 
 Then set `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and
 `GOOGLE_LOGIN_REDIRECT_URL` in `.env.local`, and recreate the IDP container.
 The Gmail, Drive, Contacts, and Calendar connected-source callback is separate. Register
-`http://localhost/api/v1/sources/oauth/google/callback`, set it as
+`http://localhost:8088/api/v1/sources/oauth/google/callback`, set it as
 `GOOGLE_OAUTH_REDIRECT_URL`, and enable both APIs you intend to use. Each source
 requests only its own read-only scope. Also set independent
 `HAI_OAUTH_TOKEN_ENCRYPTION_KEY` and `HAI_OAUTH_STATE_SIGNING_KEY` values; HAI
 does not fall back to JWT or backend secrets. Google redirects the browser, so a
 public tunnel is not required for this local callback.
+
+For optional public access through the governed ngrok profile, register the
+equivalent callback URIs for the reserved `HAI_NGROK_URL` instead. Set each
+enabled callback to that exact public origin and path. The tunnel launcher
+rejects localhost, a different host, or a mismatched path while a Google flow
+is configured, so remote sign-in and source consent cannot fail after the
+tunnel has started.
 
 For reset emails, set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
 `SMTP_PASSWORD`, `SMTP_FROM`, and `SMTP_REQUIRE_STARTTLS=true` in `.env.local`.

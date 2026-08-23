@@ -317,6 +317,15 @@ class CIWorkflowContractTest(unittest.TestCase):
             self.assertIn("RATE_LIMIT_PER_MINUTE", content)
             self.assertIn("NGROK_AUTHTOKEN", content)
             self.assertIn("HAI_NGROK_URL", content)
+            self.assertIn("GOOGLE_LOGIN_REDIRECT_URL", content)
+            self.assertIn("GOOGLE_OAUTH_REDIRECT_URL", content)
+
+        self.assertIn("GOOGLE_LOGIN_REDIRECT_URL: ${GOOGLE_LOGIN_REDIRECT_URL:-}", service)
+        self.assertIn("GOOGLE_OAUTH_REDIRECT_URL: ${GOOGLE_OAUTH_REDIRECT_URL:-}", service)
+        self.assertIn("/api/v1/auth/google/callback", launcher_text)
+        self.assertIn("/api/v1/sources/oauth/google/callback", launcher_text)
+        self.assertIn("/api/v1/auth/google/callback", entrypoint_text)
+        self.assertIn("/api/v1/sources/oauth/google/callback", entrypoint_text)
 
     def test_optional_event_bus_does_not_expand_the_default_local_stack(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")

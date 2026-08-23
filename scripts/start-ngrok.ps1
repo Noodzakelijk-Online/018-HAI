@@ -108,6 +108,21 @@ if ($ngrokUrl -notmatch '^https://[^/@?#]+\.(ngrok\.app|ngrok\.dev|ngrok-free\.a
     throw 'HAI_NGROK_URL must be a reserved HTTPS ngrok origin without path, query, fragment, or credentials.'
 }
 
+# Google sends the browser to its registered callback after consent. A localhost
+# callback would strand a remote user behind this public tunnel, so reject a
+# stale local callback instead of starting a partly functional cloud session.
+$expectedGoogleLoginRedirect = "$ngrokUrl/api/v1/auth/google/callback"
+$expectedGoogleSourceRedirect = "$ngrokUrl/api/v1/sources/oauth/google/callback"
+foreach ($redirect in @(
+    @{ Name = 'GOOGLE_LOGIN_REDIRECT_URL'; Expected = $expectedGoogleLoginRedirect },
+    @{ Name = 'GOOGLE_OAUTH_REDIRECT_URL'; Expected = $expectedGoogleSourceRedirect }
+)) {
+    $configured = ([string]$settings[$redirect.Name]).Trim()
+    if ($configured -and $configured -ne $redirect.Expected) {
+        throw "$($redirect.Name) must be '$($redirect.Expected)' while public ngrok access is enabled, or be empty to disable that optional Google flow."
+    }
+}
+
 docker compose --env-file $envPath --profile cloud-tunnel -f $composePath config --quiet
 if ($LASTEXITCODE -ne 0 -or $ValidateOnly) { exit $LASTEXITCODE }
 docker compose --env-file $envPath --profile cloud-tunnel -f $composePath up -d ngrok

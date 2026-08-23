@@ -994,6 +994,8 @@ services:
       GATEWAY_HOST_BIND: ${GATEWAY_HOST_BIND:-127.0.0.1}
       HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED: ${HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED:-false}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-0}
+      GOOGLE_LOGIN_REDIRECT_URL: ${GOOGLE_LOGIN_REDIRECT_URL:-}
+      GOOGLE_OAUTH_REDIRECT_URL: ${GOOGLE_OAUTH_REDIRECT_URL:-}
     entrypoint: ["/bin/sh", "/etc/hai/start-ngrok.sh"]
     volumes:
       - ./deploy/ngrok/ngrok.yml:/etc/ngrok.yml:ro

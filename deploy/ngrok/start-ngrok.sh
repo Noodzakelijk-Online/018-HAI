@@ -25,5 +25,14 @@ case "$origin" in
   */*|*'?'*|*'#'*|*'@'*) fail "HAI_NGROK_URL must not contain credentials, a path, query, or fragment" ;;
 esac
 
+# A public browser must return to the same reserved public origin after Google
+# consent. Empty values deliberately disable the optional Google flows.
+if [ -n "${GOOGLE_LOGIN_REDIRECT_URL:-}" ] && [ "$GOOGLE_LOGIN_REDIRECT_URL" != "$HAI_NGROK_URL/api/v1/auth/google/callback" ]; then
+  fail "GOOGLE_LOGIN_REDIRECT_URL must match HAI_NGROK_URL while a public tunnel is active"
+fi
+if [ -n "${GOOGLE_OAUTH_REDIRECT_URL:-}" ] && [ "$GOOGLE_OAUTH_REDIRECT_URL" != "$HAI_NGROK_URL/api/v1/sources/oauth/google/callback" ]; then
+  fail "GOOGLE_OAUTH_REDIRECT_URL must match HAI_NGROK_URL while a public tunnel is active"
+fi
+
 [ "${HAI_NGROK_VALIDATE_ONLY:-false}" != "true" ] || { echo "ngrok exposure gate: validation passed"; exit 0; }
 exec /bin/ngrok http http://nginx:80 --config=/etc/ngrok.yml --url="$HAI_NGROK_URL" --log=stdout --log-format=json

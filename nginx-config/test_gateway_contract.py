@@ -107,10 +107,13 @@ class GatewayAuthContractTest(unittest.TestCase):
             COMPOSE,
         )
 
-    def test_direct_compose_renders_the_gateway_template(self) -> None:
-        self.assertIn("BACKEND_API_SHARED_KEY:", LEGACY_COMPOSE)
-        self.assertIn("nginx.conf.template:/etc/nginx/nginx.conf.template:ro", LEGACY_COMPOSE)
-        self.assertIn("envsubst '$$BACKEND_API_SHARED_KEY'", LEGACY_COMPOSE)
+    def test_default_compose_delegates_to_the_source_built_stack(self) -> None:
+        # docker-compose.yml is now intentionally a compatibility wrapper. The
+        # actual gateway template and secret interpolation live in the local
+        # source-built stack it includes.
+        self.assertIn("include:", LEGACY_COMPOSE)
+        self.assertIn("path: ./docker-compose.local.yml", LEGACY_COMPOSE)
+        self.assertNotIn("jacksonbarreto/", LEGACY_COMPOSE)
 
 
 if __name__ == "__main__":
