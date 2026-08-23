@@ -54,8 +54,8 @@ Additional completed autonomous-control actions:
 34. [x] Record last successful provider probe per provider.
 35. [x] Prevent routing to configured-but-never-probed providers when strict mode is enabled.
 36. [x] Add dashboard indicators for last probe time and last probe failure.
-37. Add an integration fixture for a local Ollama-compatible mock service in Docker Compose.
-38. Add an integration fixture for an OpenAI-compatible mock service in Docker Compose.
+37. [x] Add an integration fixture for a local Ollama-compatible mock service in Docker Compose.
+38. [x] Add an integration fixture for an OpenAI-compatible mock service in Docker Compose.
 39. Add CI that runs the live provider probe fixtures.
 40. Add seeded local-folder source fixtures to prove source ingestion end-to-end.
 41. Add a seeded workflow fixture that starts from connected-source sync.

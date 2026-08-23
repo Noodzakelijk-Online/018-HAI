@@ -1654,6 +1654,39 @@ services:
     networks:
       - service-hub
 
+  # Local HTTP compatibility fixture for the LLM probe and generation contract.
+  # It is not an LLM, downloads no models, makes no external requests, and is
+  # excluded from the default Windows stack. Run it only with the
+  # `provider-fixture` profile and explicitly point a test-only HAI provider at
+  # http://provider-fixture:11434.
+  provider-fixture:
+    profiles: ["provider-fixture"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: provider-fixture
+    container_name: 018-hai-provider-fixture
+    hostname: provider-fixture
+    restart: "no"
+    read_only: true
+    mem_limit: 32m
+    cpus: 0.10
+    pids_limit: 32
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    expose:
+      - "11434"
+    healthcheck:
+      test: ["CMD", "/provider-fixture", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 2s
+    networks:
+      - service-hub
+
 networks:
   idp-network:
     name: 018-hai-idp-network

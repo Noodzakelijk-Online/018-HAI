@@ -424,6 +424,22 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertIn(f"{setting}=", defaults)
                 self.assertIn(f"{setting}: ${{{setting}", backend)
 
+    def test_provider_fixture_is_opt_in_and_has_no_host_power(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        fixture = compose_service_block(compose, "provider-fixture")
+
+        self.assertIn('profiles: ["provider-fixture"]', fixture)
+        self.assertIn("target: provider-fixture", fixture)
+        self.assertIn("read_only: true", fixture)
+        self.assertIn("mem_limit: 32m", fixture)
+        self.assertIn("cpus: 0.10", fixture)
+        self.assertIn("pids_limit: 32", fixture)
+        self.assertIn("- ALL", fixture)
+        self.assertIn("no-new-privileges:true", fixture)
+        self.assertIn('"11434"', fixture)
+        self.assertNotIn("ports:", fixture)
+        self.assertIn("--healthcheck", fixture)
+
     def test_phase2_control_state_and_safe_worker_paths_are_durable(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         defaults = (ROOT / ".env.example").read_text(encoding="utf-8")

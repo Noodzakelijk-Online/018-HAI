@@ -12,7 +12,21 @@ RUN go mod download
 # Copy the application after the stable dependency layer.
 COPY . .
 
+# The provider fixture is a static, local-only compatibility server used by an
+# opt-in Compose profile. It shares the module cache with the backend build but
+# contains no model runtime or external dependency.
+FROM builder AS provider-fixture-builder
+WORKDIR /app
+RUN CGO_ENABLED=0 GOOS=linux go build -o /provider-fixture ./cmd/provider-fixture
+
+FROM scratch AS provider-fixture
+COPY --from=provider-fixture-builder /provider-fixture /provider-fixture
+USER 65532:65532
+EXPOSE 11434
+ENTRYPOINT ["/provider-fixture"]
+
 # Navigate to the cmd directory where the main.go file resides
+FROM builder AS backend-builder
 WORKDIR /app/cmd
 
 # Build the Go app
@@ -30,8 +44,8 @@ RUN apt-get update \
 WORKDIR /root/
 
 # Copy the pre-built binary from the previous stage
-COPY --from=builder /app/cmd/app /root/
-COPY --from=builder /app/docs /root/docs
+COPY --from=backend-builder /app/cmd/app /root/
+COPY --from=backend-builder /app/docs /root/docs
 
 
 

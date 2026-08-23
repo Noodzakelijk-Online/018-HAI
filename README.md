@@ -768,6 +768,27 @@ Docker-socket, or agent-runtime access. Direct mutating launch requests
 therefore block; read-only API `GET`/`HEAD` probes remain available within the
 normal access and allowlist policy.
 
+### Local provider fixture
+
+For a controlled HTTP compatibility check without downloading a model or
+contacting a provider, the optional `provider-fixture` Compose profile serves
+both Ollama discovery (`/api/tags`) and OpenAI-compatible discovery
+(`GET /v1/models`) plus deterministic generation-shaped responses. It is not
+an LLM and is never started by the normal local stack. It has no host port,
+read-only storage, no Linux capabilities, and a 32 MB / 0.10 CPU / 32 PID
+limit.
+
+Use it only in an isolated test configuration where a test-only provider is
+explicitly pointed at `http://provider-fixture:11434`:
+
+```powershell
+docker compose --env-file .env.example --profile provider-fixture -f docker-compose.local.yml up --build provider-fixture
+```
+
+This validates only HAI's network compatibility with a deterministic local
+service. It is not evidence that Ollama, LM Studio, a cloud provider, or a
+model has been installed or accepted for real work.
+
 ## Developer Checks
 
 ```powershell
