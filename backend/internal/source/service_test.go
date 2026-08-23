@@ -1859,6 +1859,61 @@ func TestSyncRejectsOverlappingRunForSameSource(t *testing.T) {
 	}
 }
 
+func TestSyncRejectsUnavailablePersistentLeaseBeforeCreatingJob(t *testing.T) {
+	sourceID := uuid.New()
+	repo := &leasedSourceRepo{
+		fakeSourceRepo: newFakeSourceRepo(&models.ConnectedSource{
+			ID:           sourceID,
+			ConnectorKey: "email",
+			Name:         "Project mailbox",
+			Category:     "email",
+			Enabled:      true,
+			LocalOnly:    true,
+			Status:       "active",
+		}),
+		acquired: false,
+	}
+
+	_, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "message-1",
+		Title:      "A message",
+		Content:    "Follow up on the project plan.",
+	}}})
+	if !errors.Is(err, ErrSyncInProgress) {
+		t.Fatalf("Sync error = %v, want ErrSyncInProgress", err)
+	}
+	if len(repo.jobs) != 0 {
+		t.Fatalf("jobs = %d, want 0 when persistent lease is unavailable", len(repo.jobs))
+	}
+}
+
+func TestSyncReleasesPersistentLeaseAfterCompletion(t *testing.T) {
+	sourceID := uuid.New()
+	repo := &leasedSourceRepo{
+		fakeSourceRepo: newFakeSourceRepo(&models.ConnectedSource{
+			ID:           sourceID,
+			ConnectorKey: "email",
+			Name:         "Project mailbox",
+			Category:     "email",
+			Enabled:      true,
+			LocalOnly:    true,
+			Status:       "active",
+		}),
+		acquired: true,
+	}
+
+	if _, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "message-1",
+		Title:      "A message",
+		Content:    "Follow up on the project plan.",
+	}}}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if repo.releases != 1 {
+		t.Fatalf("lease releases = %d, want 1", repo.releases)
+	}
+}
+
 func TestSyncCreatesSeparateWorkflowCandidatesForSharedSourceURI(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
@@ -2455,6 +2510,17 @@ type fakeSourceRepo struct {
 	oauthTokens                map[uuid.UUID]*models.SourceOAuthToken
 	oauthTokenSingleQueries    int
 	oauthTokenBatchQueries     int
+}
+
+type leasedSourceRepo struct {
+	*fakeSourceRepo
+	acquired bool
+	err      error
+	releases int
+}
+
+func (r *leasedSourceRepo) AcquireSourceSyncLease(_ context.Context, _ uuid.UUID) (func(), bool, error) {
+	return func() { r.releases++ }, r.acquired, r.err
 }
 
 type fakeSemanticService struct {

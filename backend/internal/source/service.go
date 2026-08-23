@@ -233,6 +233,13 @@ type service struct {
 	activeSyncs           map[uuid.UUID]bool
 }
 
+// sourceSyncLeaseRepository is deliberately optional so focused services and
+// in-memory tests retain their lightweight process-local behaviour. The GORM
+// repository supplies a PostgreSQL-backed lease for deployed backend workers.
+type sourceSyncLeaseRepository interface {
+	AcquireSourceSyncLease(ctx context.Context, sourceID uuid.UUID) (release func(), acquired bool, err error)
+}
+
 type pursuitAutoLinker interface {
 	AutoLinkWorkflow(request pursuit.AutoLinkWorkflowRequest) (*pursuit.AutoLinkResult, error)
 	AutoLinkMemory(request pursuit.AutoLinkMemoryRequest) (*pursuit.AutoLinkResult, error)
@@ -938,6 +945,16 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		return nil, ErrSyncInProgress
 	}
 	defer s.endSync(sourceID)
+	if leaseRepo, ok := s.repo.(sourceSyncLeaseRepository); ok {
+		release, acquired, err := leaseRepo.AcquireSourceSyncLease(ctx, sourceID)
+		if err != nil {
+			return nil, fmt.Errorf("acquire source sync lease: %w", err)
+		}
+		if !acquired {
+			return nil, ErrSyncInProgress
+		}
+		defer release()
+	}
 
 	source, err := s.repo.FindSource(sourceID)
 	if err != nil {

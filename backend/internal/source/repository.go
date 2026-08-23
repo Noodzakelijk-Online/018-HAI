@@ -4,8 +4,12 @@ import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/safety"
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,6 +57,53 @@ type Repository interface {
 
 type GormRepository struct {
 	DB *gorm.DB
+}
+
+// AcquireSourceSyncLease prevents the same source from being synced by two
+// backend processes at once. PostgreSQL releases this session-level advisory
+// lock if the process or database connection dies, so an abandoned worker
+// cannot permanently block a source after a restart.
+func (r *GormRepository) AcquireSourceSyncLease(ctx context.Context, sourceID uuid.UUID) (func(), bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	db, err := r.DB.DB()
+	if err != nil {
+		return nil, false, err
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	key := sourceSyncLeaseKey(sourceID)
+	var acquired bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&acquired); err != nil {
+		_ = conn.Close()
+		return nil, false, err
+	}
+	if !acquired {
+		_ = conn.Close()
+		return func() {}, false, nil
+	}
+
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			// The connection may already be gone after a database restart. Closing
+			// it is still enough to ensure no session lock survives locally.
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var released bool
+			_ = conn.QueryRowContext(releaseCtx, "SELECT pg_advisory_unlock($1)", key).Scan(&released)
+			_ = conn.Close()
+		})
+	}
+	return release, true, nil
+}
+
+func sourceSyncLeaseKey(sourceID uuid.UUID) int64 {
+	digest := sha256.Sum256(append([]byte("hai:source-sync:"), sourceID[:]...))
+	return int64(binary.BigEndian.Uint64(digest[:8]))
 }
 
 func NewGormRepository(db *gorm.DB) Repository {
