@@ -52,6 +52,13 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("document.documentElement.classList.add(themeClass)", index)
         self.assertIn("background:#08111f", index)
 
+    def test_operational_shell_avoids_decorative_compositing_effects(self) -> None:
+        styles = (ROOT / "frontend" / "src" / "styles.scss").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("backdrop-filter:", styles)
+        self.assertNotIn("linear-gradient(180deg", styles)
+
     def test_frontend_uses_one_direct_angular_cdk_dependency(self) -> None:
         frontend = ROOT / "frontend"
         package = json.loads((frontend / "package.json").read_text(encoding="utf-8"))

@@ -61,23 +61,7 @@ body {
 .home-page {
   min-height: 100vh;
   color: var(--hai-text);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .76), rgba(255, 255, 255, 0) 260px),
-    var(--hai-page-bg);
-}
-
-body.hai-theme-dark .sources-shell,
-body.hai-theme-dark .memory-shell,
-body.hai-theme-dark .workflow-shell,
-body.hai-theme-dark .ambient-page,
-body.hai-theme-dark .llm-policy-page,
-body.hai-theme-dark .command-page,
-body.hai-theme-dark .grounded-page,
-body.hai-theme-dark .os-page,
-body.hai-theme-dark .home-page {
-  background:
-    linear-gradient(180deg, rgba(8, 17, 31, .9), rgba(8, 17, 31, 0) 260px),
-    var(--hai-page-bg);
+  background: var(--hai-page-bg);
 }
 
 .sources-header,
@@ -101,9 +85,8 @@ body.hai-theme-dark .home-page {
   padding: 14px 24px !important;
   line-height: normal !important;
   color: var(--hai-text) !important;
-  background: color-mix(in srgb, var(--hai-shell) 93%, transparent) !important;
+  background: var(--hai-shell) !important;
   border-bottom: 1px solid var(--hai-border) !important;
-  backdrop-filter: blur(18px);
 }
 
 .home-page .header-container {
