@@ -763,7 +763,6 @@ export class BrainCatalogComponent implements OnInit {
     this.service.collectionRevalidationHistory().subscribe({
       next: (history) => (this.collectionMaintenanceHistory = history || []),
       error: () => {
-        this.collectionMaintenanceHistory = []
         this.collectionMaintenanceHistoryUnavailable = true
       },
     })
@@ -774,7 +773,6 @@ export class BrainCatalogComponent implements OnInit {
     this.service.repositoryDiscoveryRevalidationHistory().subscribe({
       next: (history) => (this.repositoryDiscoveryMaintenanceHistory = history || []),
       error: () => {
-        this.repositoryDiscoveryMaintenanceHistory = []
         this.repositoryDiscoveryMaintenanceHistoryUnavailable = true
       },
     })
