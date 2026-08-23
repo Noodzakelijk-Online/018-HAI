@@ -367,7 +367,12 @@ export class AgentTeamsComponent implements OnInit {
   private loadAttention(): void {
     const team = this.selected
     if (!team) return
-    this.teamsService.attention(team.id, team.version).subscribe({ next: (items) => this.attention = items })
+    this.teamsService.attention(team.id, team.version).subscribe({
+      next: (items) => this.attention = items,
+      error: (error: HttpErrorResponse) => {
+        this.notification.error('Attention queue unavailable', this.apiError(error, 'The decision succeeded, but the queue could not be refreshed.'))
+      },
+    })
   }
   private replaceTeam(team: AgentTeamContract): void {
     this.selected = team
