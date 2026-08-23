@@ -41,6 +41,9 @@ func TestCalendarBusyIntervalsAreOwnerScopedAndSourceBacked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CalendarBusyIntervalsForOwner: %v", err)
 	}
+	if repo.lastVisibleSourceOwner != "alice@example.test" {
+		t.Fatalf("calendar capacity was not filtered by owner in the repository: %q", repo.lastVisibleSourceOwner)
+	}
 	if len(intervals) != 1 {
 		t.Fatalf("busy intervals = %#v, want one owner-scoped opaque event", intervals)
 	}

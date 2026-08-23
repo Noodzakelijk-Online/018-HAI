@@ -695,6 +695,10 @@ func (s *service) Sources(includeDisabled bool) ([]models.ConnectedSource, error
 	return s.repo.FindSources(includeDisabled)
 }
 
+func (s *service) SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	return s.repo.FindSourcesVisibleToOwner(ownerIdentity, includeDisabled)
+}
+
 func (s *service) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
 	return s.repo.FindSyncJobs(sourceID)
 }
@@ -1374,7 +1378,7 @@ func (s *service) RunDueScheduledSyncsForOwner(now time.Time, ownerIdentity stri
 	if ownerIdentity == "" {
 		return s.RunDueScheduledSyncs(now)
 	}
-	sources, err := s.repo.FindSources(false)
+	sources, err := s.repo.FindSourcesVisibleToOwner(ownerIdentity, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1619,7 +1623,7 @@ func (s *service) visibleSourceIDs(ownerIdentity string) (map[uuid.UUID]bool, er
 }
 
 func (s *service) visibleSourceIDsExcluding(ownerIdentity string, excludedConnectorKeys []string) (map[uuid.UUID]bool, error) {
-	sources, err := s.repo.FindSources(true)
+	sources, err := s.repo.FindSourcesVisibleToOwner(ownerIdentity, true)
 	if err != nil {
 		return nil, err
 	}

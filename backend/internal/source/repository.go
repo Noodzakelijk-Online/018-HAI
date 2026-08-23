@@ -5,6 +5,7 @@ import (
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/safety"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,7 @@ type Repository interface {
 	UpdateSource(source *models.ConnectedSource) (*models.ConnectedSource, error)
 	RevokeSource(source *models.ConnectedSource, ownerIdentity string, revokedAt time.Time) (*models.ConnectedSource, error)
 	FindSources(includeDisabled bool) ([]models.ConnectedSource, error)
+	FindSourcesVisibleToOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error)
 	FindSource(id uuid.UUID) (*models.ConnectedSource, error)
 	CreateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
 	UpdateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
@@ -171,6 +173,26 @@ func (r *GormRepository) RevokeSource(
 
 func (r *GormRepository) FindSources(includeDisabled bool) ([]models.ConnectedSource, error) {
 	var sources []models.ConnectedSource
+	query := r.sourceQuery(includeDisabled)
+	err := query.Find(&sources).Error
+	return sources, err
+}
+
+// FindSourcesVisibleToOwner preserves read-only visibility of ownerless legacy
+// sources while keeping other owners' records inside the database boundary.
+func (r *GormRepository) FindSourcesVisibleToOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return r.FindSources(includeDisabled)
+	}
+	var sources []models.ConnectedSource
+	err := r.sourceQuery(includeDisabled).
+		Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity).
+		Find(&sources).Error
+	return sources, err
+}
+
+func (r *GormRepository) sourceQuery(includeDisabled bool) *gorm.DB {
 	query := r.DB.Order("updated_at desc")
 	if !includeDisabled {
 		// Paused and revoked sources remain available to their owner through the
@@ -179,8 +201,7 @@ func (r *GormRepository) FindSources(includeDisabled bool) ([]models.ConnectedSo
 		// inventories out of every scheduler sweep.
 		query = query.Where("enabled = ? AND status NOT IN ?", true, []string{"paused", "revoked"})
 	}
-	err := query.Find(&sources).Error
-	return sources, err
+	return query
 }
 
 func (r *GormRepository) FindSource(id uuid.UUID) (*models.ConnectedSource, error) {

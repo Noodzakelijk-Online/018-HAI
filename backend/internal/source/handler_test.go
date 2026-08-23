@@ -52,10 +52,11 @@ func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	aliceID := uuid.New()
 	bobID := uuid.New()
-	service := NewService(newFakeSourceRepo(
+	repo := newFakeSourceRepo(
 		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
 		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
-	), nil)
+	)
+	service := NewService(repo, nil)
 	handler := NewHandler(service)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -76,6 +77,9 @@ func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 	}
 	if len(sources) != 1 || sources[0].ID != aliceID {
 		t.Fatalf("visible sources = %#v, want only Alice source", sources)
+	}
+	if repo.lastVisibleSourceOwner != "alice" {
+		t.Fatalf("source list was not filtered by owner in the repository: %q", repo.lastVisibleSourceOwner)
 	}
 
 	foreignRequest := httptest.NewRequest(http.MethodPost, "/sources/"+bobID.String()+"/pause", nil)

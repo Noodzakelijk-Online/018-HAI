@@ -525,6 +525,9 @@ func TestRunDueScheduledSyncsForOwnerDoesNotTouchAnotherOwnersSources(t *testing
 	if err != nil {
 		t.Fatalf("RunDueScheduledSyncsForOwner: %v", err)
 	}
+	if repo.lastVisibleSourceOwner != "alice" {
+		t.Fatalf("owner scheduler was not filtered by owner in the repository: %q", repo.lastVisibleSourceOwner)
+	}
 	if run.Checked != 1 || run.Due != 1 || run.Completed != 1 || run.Failed != 0 {
 		t.Fatalf("owner run = %#v, want Alice-only successful sync", run)
 	}
@@ -2335,6 +2338,7 @@ type fakeSourceRepo struct {
 	extractions             map[uuid.UUID]*models.SourceExtraction
 	index                   []models.SourceIndexEntry
 	lastExtractionSourceIDs []uuid.UUID
+	lastVisibleSourceOwner  string
 	auditLogs               []models.SourceAuditLog
 	deleteExtractionErr     error
 	oauthTokens             map[uuid.UUID]*models.SourceOAuthToken
@@ -2467,6 +2471,23 @@ func (r *fakeSourceRepo) RevokeSource(
 func (r *fakeSourceRepo) FindSources(includeDisabled bool) ([]models.ConnectedSource, error) {
 	result := []models.ConnectedSource{}
 	for _, source := range r.sources {
+		if includeDisabled || (source.Enabled && source.Status != "paused" && source.Status != "revoked") {
+			result = append(result, *source)
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeSourceRepo) FindSourcesVisibleToOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	r.lastVisibleSourceOwner = strings.TrimSpace(ownerIdentity)
+	if r.lastVisibleSourceOwner == "" {
+		return r.FindSources(includeDisabled)
+	}
+	result := []models.ConnectedSource{}
+	for _, source := range r.sources {
+		if strings.TrimSpace(source.OwnerIdentity) != "" && source.OwnerIdentity != r.lastVisibleSourceOwner {
+			continue
+		}
 		if includeDisabled || (source.Enabled && source.Status != "paused" && source.Status != "revoked") {
 			result = append(result, *source)
 		}

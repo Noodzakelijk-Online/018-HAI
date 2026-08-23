@@ -257,7 +257,7 @@ func (s *service) CalendarBusyIntervalsForOwner(ownerIdentity string, start, end
 		return nil, fmt.Errorf("calendar source repository is unavailable")
 	}
 
-	sources, err := s.repo.FindSources(true)
+	sources, err := s.repo.FindSourcesVisibleToOwner(ownerIdentity, true)
 	if err != nil {
 		return nil, fmt.Errorf("find calendar sources: %w", err)
 	}

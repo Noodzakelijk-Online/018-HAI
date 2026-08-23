@@ -23,6 +23,10 @@ type Handler struct {
 	documentExtractor docling.Service
 }
 
+type ownerScopedSources interface {
+	SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error)
+}
+
 func NewHandler(service Service, transcribers ...whispercpp.Service) *Handler {
 	transcriber := whispercpp.DefaultService()
 	if len(transcribers) > 0 && transcribers[0] != nil {
@@ -108,7 +112,7 @@ func (h *Handler) CreateSource(c *gin.Context) {
 
 func (h *Handler) Sources(c *gin.Context) {
 	includeDisabled, _ := strconv.ParseBool(c.Query("includeDisabled"))
-	sources, err := h.service.Sources(includeDisabled)
+	sources, err := h.sourcesForOwner(sourceOwner(c), includeDisabled)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -175,7 +179,7 @@ func (h *Handler) ConnectionHealths(c *gin.Context) {
 		c.JSON(http.StatusNotImplemented, gin.H{"error": "connection health is not available"})
 		return
 	}
-	sources, err := h.service.Sources(true)
+	sources, err := h.sourcesForOwner(sourceOwner(c), true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load connected sources"})
 		return
@@ -630,8 +634,16 @@ func filterVisibleSources(sources []models.ConnectedSource, owner string) []mode
 	return visible
 }
 
+func (h *Handler) sourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	scoped, ok := h.service.(ownerScopedSources)
+	if !ok {
+		return nil, errors.New("owner-scoped source reads are unavailable")
+	}
+	return scoped.SourcesForOwner(ownerIdentity, includeDisabled)
+}
+
 func (h *Handler) visibleSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
-	sources, err := h.service.Sources(true)
+	sources, err := h.sourcesForOwner(sourceOwner(c), true)
 	if err != nil {
 		return nil, err
 	}
