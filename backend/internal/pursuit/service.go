@@ -6324,15 +6324,19 @@ func classifyDomain(text string) string {
 	lower := strings.ToLower(text)
 	switch {
 	case containsAny(lower, "legal", "lawyer", "government", "municipality", "insurance", "claim", "dispute"):
-		return "stability"
+		return "legal_government"
 	case containsAny(lower, "automation", "github", "developer", "software", "code", "hai"):
-		return "work"
+		return "work_venture"
 	case containsAny(lower, "health", "doctor", "medical"):
-		return "health"
-	case containsAny(lower, "client", "invoice", "quote", "job"):
-		return "business"
+		return "health_wellbeing"
+	case containsAny(lower, "client", "invoice", "quote", "job", "business"):
+		return "work_venture"
+	case containsAny(lower, "housing", "home", "garden", "repair", "vehicle"):
+		return "home_assets"
+	case containsAny(lower, "money", "payment", "tax", "budget", "debt"):
+		return "financial"
 	default:
-		return "operations"
+		return "personal_productivity"
 	}
 }
 

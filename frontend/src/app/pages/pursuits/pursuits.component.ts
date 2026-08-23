@@ -229,14 +229,13 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   ];
 
   readonly domains = [
-    'operations',
-    'legal',
-    'financial',
-    'client',
-    'software',
-    'content',
-    'personal',
-    'unknown',
+    'legal_government', 'emergency_continuity', 'health_wellbeing', 'financial',
+    'work_venture', 'home_assets', 'relationships_care', 'learning_growth',
+    'travel_mobility', 'personal_productivity', 'identity_roles', 'family_household',
+    'food_nutrition', 'communication_correspondence', 'digital_accounts',
+    'possessions_inventory', 'animals_dependants', 'community_civic',
+    'leisure_recreation', 'creativity_expression', 'meaning_values',
+    'environment_sustainability', 'legacy_long_term', 'safety_security',
   ];
 
   readonly linkTypes = [
@@ -256,7 +255,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     title: ['', [Validators.required]],
     description: [''],
     projectKey: [''],
-    domain: ['operations'],
+    domain: ['personal_productivity'],
     whyItMatters: [''],
     desiredOutcome: [''],
     currentStateSummary: [''],
@@ -2781,7 +2780,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       next: (pursuit) => {
         this.creating = false;
         this.showCreate = false;
-        this.createForm.reset({ domain: 'operations', reviewCadenceDays: 7, maxEffortHours: 0, maxSpendEur: 0, maxParallelWorkflows: 0 });
+        this.createForm.reset({ domain: 'personal_productivity', reviewCadenceDays: 7, maxEffortHours: 0, maxSpendEur: 0, maxParallelWorkflows: 0 });
         this.notification.success('Pursuit created', 'HAI can now link workflows, memory, sources, and approvals to it.');
         this.load();
         this.selectPursuit(pursuit);
