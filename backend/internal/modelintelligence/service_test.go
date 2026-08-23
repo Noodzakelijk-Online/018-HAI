@@ -72,6 +72,9 @@ func TestChatCompletionRejectsOversizedProviderResponse(t *testing.T) {
 func TestRegistryTruthfulProviderStates(t *testing.T) {
 	s := newTestService()
 	over := s.Overview()
+	if over.Calibration.TotalRuns != over.TelemetryRuns {
+		t.Fatalf("overview calibration runs = %d, telemetry runs = %d", over.Calibration.TotalRuns, over.TelemetryRuns)
+	}
 	byID := map[string]ProviderSummary{}
 	for _, p := range over.Providers {
 		byID[p.ID] = p

@@ -87,17 +87,18 @@ type ProviderSummary struct {
 
 // Overview is the model-intelligence dashboard roll-up.
 type Overview struct {
-	Providers       []ProviderSummary `json:"providers"`
-	Lanes           []RoutingLane     `json:"lanes"`
-	TotalProfiles   int               `json:"totalProfiles"`
-	ActiveModels    int               `json:"activeModels"`
-	TelemetryRuns   int               `json:"telemetryRuns"`
-	EvaluatedRuns   int               `json:"evaluatedRuns"`
-	AcceptedOutputs int               `json:"acceptedOutputs"`
-	UnvalidatedRuns int               `json:"unvalidatedRuns"`
-	CacheHits       int               `json:"cacheHits"`
-	CacheMisses     int               `json:"cacheMisses"`
-	LaneWinners     []LaneWinner      `json:"laneWinners"`
+	Providers       []ProviderSummary  `json:"providers"`
+	Lanes           []RoutingLane      `json:"lanes"`
+	TotalProfiles   int                `json:"totalProfiles"`
+	ActiveModels    int                `json:"activeModels"`
+	TelemetryRuns   int                `json:"telemetryRuns"`
+	EvaluatedRuns   int                `json:"evaluatedRuns"`
+	AcceptedOutputs int                `json:"acceptedOutputs"`
+	UnvalidatedRuns int                `json:"unvalidatedRuns"`
+	CacheHits       int                `json:"cacheHits"`
+	CacheMisses     int                `json:"cacheMisses"`
+	LaneWinners     []LaneWinner       `json:"laneWinners"`
+	Calibration     CalibrationSummary `json:"calibration"`
 }
 
 // Overview returns the dashboard roll-up with truthful provider states.
@@ -136,6 +137,7 @@ func (s *Service) Overview() Overview {
 		CacheHits:       hits,
 		CacheMisses:     misses,
 		LaneWinners:     calibration.LaneLeaders,
+		Calibration:     calibration,
 	}
 }
 

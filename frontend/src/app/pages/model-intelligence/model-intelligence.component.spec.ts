@@ -8,11 +8,6 @@ describe('ModelIntelligenceComponent', () => {
   let notification: jasmine.SpyObj<any>
   let component: ModelIntelligenceComponent
 
-  const overview: IModelIntelligenceOverview = {
-    providers: [], lanes: ['triage'], totalProfiles: 2, activeModels: 1,
-    telemetryRuns: 8, evaluatedRuns: 5, acceptedOutputs: 4, unvalidatedRuns: 3,
-    cacheHits: 0, cacheMisses: 0, laneWinners: [],
-  }
   const calibration: ICalibrationSummary = {
     totalRuns: 8, evaluatedRuns: 5, acceptedOutputs: 4, rejectedOutputs: 1,
     needsReview: 0, unvalidatedRuns: 3, models: [],
@@ -25,15 +20,19 @@ describe('ModelIntelligenceComponent', () => {
     generatedAt: '2026-08-04T10:00:00Z',
     explanation: 'Accepted output evidence ranks before efficiency.',
   }
+  const overview: IModelIntelligenceOverview = {
+    providers: [], lanes: ['triage'], totalProfiles: 2, activeModels: 1,
+    telemetryRuns: 8, evaluatedRuns: 5, acceptedOutputs: 4, unvalidatedRuns: 3,
+    cacheHits: 0, cacheMisses: 0, laneWinners: [], calibration,
+  }
 
   beforeEach(() => {
     service = jasmine.createSpyObj<ModelIntelligenceService>('ModelIntelligenceService', [
-      'overview', 'calibration', 'profiles', 'tokenBudgets', 'hardware', 'powerPolicy',
+      'overview', 'profiles', 'tokenBudgets', 'hardware', 'powerPolicy',
       'benchmark', 'detectHardware',
     ])
     notification = jasmine.createSpyObj('NzNotificationService', ['success', 'warning', 'error'])
     service.overview.and.returnValue(of(overview))
-    service.calibration.and.returnValue(of(calibration))
     service.profiles.and.returnValue(of({ profiles: [] }))
     service.tokenBudgets.and.returnValue(of({
       maximumInputTokens: 4096, maximumOutputTokens: 1024, maximumReasoningEffort: 'medium',

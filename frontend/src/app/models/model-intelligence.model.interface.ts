@@ -35,6 +35,7 @@ export interface IModelIntelligenceOverview {
   cacheHits: number
   cacheMisses: number
   laneWinners: ILaneWinner[]
+  calibration: ICalibrationSummary
 }
 
 export interface IModelProfile {
