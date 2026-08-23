@@ -49,34 +49,16 @@ affecting code and 0 in imported packages. One advisory remains in a required
 module whose vulnerable symbol is not called. The scan is pinned and blocking
 in CI.
 
-## Frontend (`npm audit --audit-level=high --omit=dev`)
+## Frontend (`npm audit --omit=dev --audit-level=high`)
 
-The 2026-07-30 audit reports **13 production dependency advisories: 12 high and
-1 moderate**. The high findings are in the Angular 16 runtime and its compatible
-CDK/ng-zorro dependency chain. The automated remediation proposes Angular
-21.2.19, which is a breaking platform upgrade rather than a safe lockfile patch.
+The Angular 20/ng-zorro 20 production dependency graph reported **0
+vulnerabilities** when scanned on 2026-08-23. The prior Angular 16 advisory
+state is retained in the bug-hunt log as historical context, not as the current
+release posture.
 
-Do not expose this frontend as an untrusted multi-user Internet application
-until the Angular migration is completed and the audit is rerun. The coordinated
-migration must cover Angular core/runtime/compiler, Angular CLI/build tooling,
-CDK, ng-zorro, TypeScript, Zone.js, and `angular-mixed-cdk-drag-drop`; it must
-also retain the authenticated route, drawer, workflow, and 126-test contracts.
-Applying `npm audit fix --force` without that migration and regression pass is
-not an accepted remediation.
-
-## Why the CI gate is advisory (for now)
-
-The backend scan is no longer advisory. The frontend audit remains advisory
-because its safe remediation is a coordinated Angular platform migration, not a
-lockfile-only patch. CI still surfaces every frontend audit result.
-
-## Exact next action (to reach zero and make the gate blocking)
-
-1. Migrate the frontend dependency family to a mutually compatible, supported
-   Angular release; run the full unit/build/browser suite and
-   `npm audit --audit-level=high --omit=dev`; make the frontend scan a hard gate
-   only when the remaining findings are zero or explicitly accepted with an
-   owner, scope, and expiry.
+The production-only audit is a blocking CI gate. A future high-severity runtime
+advisory therefore blocks release until it is remediated or accepted through a
+time-bounded security decision with an owner and scope.
 
 ## Current CI posture
 
@@ -85,5 +67,5 @@ lockfile-only patch. CI still surfaces every frontend audit result.
 - IDP: vet, build, test, and pinned `govulncheck` are **hard gates**.
 - Nginx configuration manager: vet, build, test, and pinned `govulncheck` are
   **hard gates**; Docker-socket control is forbidden by an executable contract.
-- Frontend: build + **unit tests (headless Chrome)** are hard gates; `npm audit
-  --audit-level=high` is advisory.
+- Frontend: build + **unit tests (headless Chrome)** +
+  `npm audit --omit=dev --audit-level=high` are hard gates.

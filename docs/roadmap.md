@@ -11,11 +11,9 @@ source of truth for current state.
   clean clone and empty volumes before calling installation reproducibility
   complete.
 - **RBAC — done on the backend (phase 008/TD-9):** IDP-JWT identity→role is wired + runtime-proven. Remaining: IDP emits a `role` claim; broaden `requirePermission` onto more routes.
-- **Make the frontend dependency scan blocking (TD-6/BH-6):** the backend is
-  clean and blocking. Perform a coordinated migration from the vulnerable
-  Angular 16/CDK/ng-zorro family to a supported release, preserve authenticated
-  routes and the full UI regression suite, then make the frontend scan a hard
-  gate.
+- **Frontend dependency posture (TD-6/BH-7):** Angular 20/ng-zorro 20 is clean
+  on the production dependency audit and that audit is blocking in CI. Keep the
+  gate green through each dependency update.
 - Adopt the `apierror` envelope across handlers in step with the frontend (TD-1).
 - **Advisory outcome monitor release acceptance:** retain a disposable-PostgreSQL
   and signed-browser run for all three fixed collectors, exact replay after a

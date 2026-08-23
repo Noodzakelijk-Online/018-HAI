@@ -114,11 +114,11 @@ jobs:
       # sandbox-free launcher in karma.conf.js.
       - name: Unit tests (headless Chrome)
         run: npx ng test --watch=false --browsers=ChromeHeadlessNoSandbox
-      # Advisory dependency scan — surfaces known frontend advisories without
-      # failing the build (see docs/dependency-vulnerabilities.md for policy).
-      - name: Dependency audit (advisory)
-        continue-on-error: true
-        run: npm audit --audit-level=high
+      # The production dependency graph is currently clean. Keep this as a
+      # hard gate so a newly disclosed high-severity runtime advisory cannot
+      # quietly reach a Windows installer or hosted deployment.
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
 
   compose:
     name: Gateway and local Compose validation

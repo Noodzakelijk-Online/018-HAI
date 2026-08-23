@@ -19,13 +19,13 @@ toolchain).
 
 ## Frontend (Angular)
 
-Angular 16 + ng-zorro-antd, pinned via `package-lock.json`.
+Angular 20 + ng-zorro-antd 20, pinned via `package-lock.json`.
 
 ## Gaps & actions
 
 | Item | Action |
 | --- | --- |
-| Vulnerability scanning | Backend, IDP, and nginx manager `govulncheck` v1.6.0 scans are pinned, clean, and blocking after 40-to-0 and 31-to-0 remediations. Frontend `npm audit` remains advisory and reports 12 high plus 1 moderate Angular-family finding; see `docs/dependency-vulnerabilities.md`. |
+| Vulnerability scanning | Backend, IDP, and nginx manager `govulncheck` v1.6.0 scans are pinned, clean, and blocking after 40-to-0 and 31-to-0 remediations. Frontend `npm audit --omit=dev --audit-level=high` is also a blocking CI gate and reported 0 production vulnerabilities on 2026-08-23; see `docs/dependency-vulnerabilities.md`. |
 | Go version alignment | All three Go modules, Docker builders, and CI jobs are pinned to Go 1.25.12 and checked by `scripts/test_ci_contract.py`. |
 | Committed binary `hai-engine-control.zip` | Remove from VCS; move to release assets. |
 | Dependency freshness | Adopt a scheduled `go list -m -u all` / `npm outdated` review (register #95). |
