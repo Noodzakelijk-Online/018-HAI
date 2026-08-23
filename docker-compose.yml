@@ -74,8 +74,15 @@ services:
       - idp
     ports:
       - "80:80"
+    environment:
+      BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY:-change-this-local-backend-key}
+    command:
+      - /bin/sh
+      - -c
+      - envsubst '$$BACKEND_API_SHARED_KEY' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'
     volumes:
-      - ./nginx-config:/etc/nginx
+      - ./nginx-config/nginx.conf.template:/etc/nginx/nginx.conf.template:ro
+      - ./nginx-config/sites-enabled:/etc/nginx/sites-enabled:ro
     networks:
       - service-hub
 
