@@ -8,9 +8,9 @@ import { ConnectedSourcesComponent } from './connected-sources.component';
 describe('ConnectedSourcesComponent pursuit handoff', () => {
   function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router>; sourceService: jasmine.SpyObj<any> } {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
-	const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
+    const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
       'createSource', 'sync', 'transcribe', 'extractDocuments', 'runDueScheduledSyncs',
-      'connectors', 'sources', 'extractions', 'auditLogs', 'syncJobs'
+      'connectors', 'sources', 'extractions', 'auditLogs', 'syncJobs', 'connectionHealth'
     ]);
     return {
       component: new ConnectedSourcesComponent(
@@ -194,5 +194,27 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
       'Sync jobs',
     ]);
     expect(component.hasLoadWarnings()).toBeTrue();
+  });
+
+  it('marks an unavailable source health check instead of treating it as absent health', () => {
+    const { component, sourceService } = createComponent();
+    const source = { id: 'gmail-source', connectorKey: 'gmail', name: 'Personal Gmail' } as IConnectedSource;
+    sourceService.connectionHealth.and.returnValue(throwError(() => new Error('health unavailable')));
+
+    (component as any).loadConnectionHealth([source]);
+
+    expect(component.sourceHealthUnavailable(source)).toBeTrue();
+    expect(component.sourceHealth(source)).toBeUndefined();
+  });
+
+  it('preserves extracted records when an action-triggered reload fails', () => {
+    const { component, sourceService } = createComponent();
+    component.extractions = [{ id: 'existing-record' } as any];
+    sourceService.extractions.and.returnValue(throwError(() => new Error('records unavailable')));
+
+    (component as any).loadExtractions();
+
+    expect(component.extractions.map((item) => item.id)).toEqual(['existing-record']);
+    expect(component.loadWarnings).toContain('Extracted records');
   });
 });

@@ -54,6 +54,7 @@ export class ConnectedSourcesComponent implements OnInit {
   auditLogs: ISourceAuditLog[] = [];
   syncJobs: ISourceSyncJob[] = [];
   connectionHealth: Record<string, ISourceConnectionHealth> = {};
+  connectionHealthUnavailable: Record<string, boolean> = {};
   searchResult?: ISourceSearchResult;
   knowledgeGraph?: IKnowledgeGraphResult;
   graphLoading = false;
@@ -382,6 +383,10 @@ export class ConnectedSourcesComponent implements OnInit {
 
   sourceHealth(source?: IConnectedSource): ISourceConnectionHealth | undefined {
     return source ? this.connectionHealth[source.id] : undefined;
+  }
+
+  sourceHealthUnavailable(source?: IConnectedSource): boolean {
+    return Boolean(source && this.connectionHealthUnavailable[source.id]);
   }
 
   isGoogleSource(source?: IConnectedSource): boolean {
@@ -1352,7 +1357,7 @@ export class ConnectedSourcesComponent implements OnInit {
           this.updateSourceActions();
         },
         error: () => {
-          this.extractions = [];
+          this.recordLoadWarning('Extracted records');
           this.updateSourceActions();
         },
       });
@@ -1361,7 +1366,7 @@ export class ConnectedSourcesComponent implements OnInit {
   private loadAuditLogs(): void {
     this.sourceService.auditLogs().pipe(timeout(this.loadTimeoutMs)).subscribe({
       next: (logs) => (this.auditLogs = logs),
-      error: () => (this.auditLogs = []),
+      error: () => this.recordLoadWarning('Audit history'),
     });
   }
 
@@ -1372,7 +1377,7 @@ export class ConnectedSourcesComponent implements OnInit {
         this.updateSourceActions();
       },
       error: () => {
-        this.syncJobs = [];
+        this.recordLoadWarning('Sync jobs');
         this.updateSourceActions();
       },
     });
@@ -1381,11 +1386,19 @@ export class ConnectedSourcesComponent implements OnInit {
   private loadConnectionHealth(sources: IConnectedSource[]): void {
     if (!sources.length) {
       this.connectionHealth = {};
+      this.connectionHealthUnavailable = {};
       return;
     }
+    this.connectionHealthUnavailable = {};
     forkJoin(
       sources.map((source) =>
-        this.sourceService.connectionHealth(source.id).pipe(catchError(() => of(undefined)))
+        this.sourceService.connectionHealth(source.id).pipe(
+          timeout(this.loadTimeoutMs),
+          catchError(() => {
+            this.connectionHealthUnavailable = { ...this.connectionHealthUnavailable, [source.id]: true };
+            return of(undefined);
+          })
+        )
       )
     ).subscribe((results) => {
       this.connectionHealth = results.reduce<Record<string, ISourceConnectionHealth>>((health, item) => {
@@ -1398,10 +1411,19 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   private refreshConnectionHealth(source: IConnectedSource): void {
-    this.sourceService.connectionHealth(source.id).pipe(catchError(() => of(undefined))).subscribe((health) => {
-      if (health) {
-        this.connectionHealth = { ...this.connectionHealth, [source.id]: health };
+    this.sourceService.connectionHealth(source.id).pipe(
+      timeout(this.loadTimeoutMs),
+      catchError(() => {
+        this.connectionHealthUnavailable = { ...this.connectionHealthUnavailable, [source.id]: true };
+        return of(undefined);
+      })
+    ).subscribe((health) => {
+      if (!health) {
+        return;
       }
+      const { [source.id]: _unavailable, ...remainingUnavailable } = this.connectionHealthUnavailable;
+      this.connectionHealthUnavailable = remainingUnavailable;
+      this.connectionHealth = { ...this.connectionHealth, [source.id]: health };
     });
   }
 

@@ -580,6 +580,10 @@
                 <dt>Connection</dt>
                 <dd>{{ statusText(health.status) }} - {{ health.reason }}</dd>
               </div>
+              <div *ngIf="sourceHealthUnavailable(source)">
+                <dt>Connection</dt>
+                <dd>Health check unavailable - refresh before changing authorization.</dd>
+              </div>
               <div *ngIf="sourceHealth(source)?.cursorPhase">
                 <dt>Incremental cursor</dt>
                 <dd>{{ sourceHealth(source)?.cursorPhase }} - provider checkpoint stored</dd>
@@ -600,7 +604,7 @@
               <button type="button" nz-button nzType="default" (click)="reindex(source)">Re-index</button>
               <button
                 type="button"
-                *ngIf="isGoogleSource(source) && (!sourceHealth(source)?.authorized || sourceHealth(source)?.requiresReconnect)"
+                *ngIf="!sourceHealthUnavailable(source) && isGoogleSource(source) && (!sourceHealth(source)?.authorized || sourceHealth(source)?.requiresReconnect)"
                 nz-button
                 nzType="primary"
                 (click)="authorizeGoogleSource(source)"
