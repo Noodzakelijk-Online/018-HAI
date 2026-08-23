@@ -507,6 +507,13 @@ class CIWorkflowContractTest(unittest.TestCase):
             "HAI_CATALOG_REVALIDATION_SCHEDULER_INTERVAL_MINUTES",
             "LLM_PROVIDER_PROBE_TIMEOUT_SECONDS",
             "OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS",
+            "DEEPSEEK_HARNESS_ENABLED",
+            "DEEPSEEK_HARNESS_EXECUTION_ENABLED",
+            "DEEPSEEK_HARNESS_EXECUTABLE",
+            "DEEPSEEK_HARNESS_WORKSPACE",
+            "DEEPSEEK_HARNESS_STATE_DIR",
+            "DEEPSEEK_HARNESS_TIMEOUT_SECONDS",
+            "DEEPSEEK_HARNESS_ENV_ALLOWLIST",
         ):
             with self.subTest(setting=setting):
                 self.assertIn(f"{setting}=", defaults)
