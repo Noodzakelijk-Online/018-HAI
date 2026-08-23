@@ -1,6 +1,7 @@
 package source
 
 import (
+	"automation-hub-backend/internal/docling"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/whispercpp"
@@ -17,8 +18,9 @@ import (
 )
 
 type Handler struct {
-	service     Service
-	transcriber whispercpp.Service
+	service           Service
+	transcriber       whispercpp.Service
+	documentExtractor docling.Service
 }
 
 func NewHandler(service Service, transcribers ...whispercpp.Service) *Handler {
@@ -26,7 +28,18 @@ func NewHandler(service Service, transcribers ...whispercpp.Service) *Handler {
 	if len(transcribers) > 0 && transcribers[0] != nil {
 		transcriber = transcribers[0]
 	}
-	return &Handler{service: service, transcriber: transcriber}
+	return NewHandlerWithDocumentExtractor(service, docling.DefaultService(), transcriber)
+}
+
+func NewHandlerWithDocumentExtractor(service Service, extractor docling.Service, transcribers ...whispercpp.Service) *Handler {
+	transcriber := whispercpp.DefaultService()
+	if len(transcribers) > 0 && transcribers[0] != nil {
+		transcriber = transcribers[0]
+	}
+	if extractor == nil {
+		extractor = docling.DefaultService()
+	}
+	return &Handler{service: service, transcriber: transcriber, documentExtractor: extractor}
 }
 
 func DefaultHandler() *Handler {
@@ -252,6 +265,68 @@ func (h *Handler) Transcribe(c *gin.Context) {
 		})
 	}
 	result, err := syncSourceWithContext(c.Request.Context(), h.service, id, ImportRequest{Mode: ModeManualImport, Items: items, ProjectKey: source.DefaultProjectKey, controlledTranscription: true})
+	if errors.Is(err, ErrSyncInProgress) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// ExtractDocuments invokes the opt-in local Docling runner for a configured
+// source. It accepts no browser supplied files, paths, models, or parser
+// options; the source's approved folder remains the sole input scope.
+func (h *Handler) ExtractDocuments(c *gin.Context) {
+	if c.Request.ContentLength != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "document extraction uses the source's configured selected folder and accepts no caller-provided files, model, or parser options"})
+		return
+	}
+	id, ok := parseUUID(c)
+	if !ok {
+		return
+	}
+	if !h.requireMutableSource(c, id) {
+		return
+	}
+	source, err := h.sourceByID(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "connected source not found"})
+		return
+	}
+	if source.ConnectorKey != doclingDocumentsConnectorKey || !source.LocalOnly {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "document extraction requires an enabled local-only Docling document source"})
+		return
+	}
+	folder, err := selectedDocumentFolder(source.SyncTarget)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	documents, err := h.documentExtractor.Extract(c.Request.Context(), folder)
+	if errors.Is(err, docling.ErrNotConfigured) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "local Docling document extractor is not configured"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "local Docling document extraction could not complete"})
+		return
+	}
+	items := make([]ImportItem, 0, len(documents))
+	for _, document := range documents {
+		items = append(items, ImportItem{
+			ExternalID: "docling:" + document.Path,
+			Title:      filepath.Base(document.Path),
+			Content:    document.Text,
+			SourceURI:  "document://selected-source/" + id.String() + "/" + document.Path,
+			ItemType:   "document_extraction",
+			ProjectKey: source.DefaultProjectKey,
+			Metadata:   "engine=docling;format=" + document.Format + ";page_count=" + strconv.Itoa(document.PageCount) + ";content_digest=" + document.ContentDigest + ";source_retained=false;consent=source_owner",
+		})
+	}
+	result, err := syncSourceWithContext(c.Request.Context(), h.service, id, ImportRequest{Mode: ModeManualImport, Items: items, ProjectKey: source.DefaultProjectKey, controlledDocumentExtraction: true})
 	if errors.Is(err, ErrSyncInProgress) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
@@ -566,6 +641,18 @@ func selectedAudioFolder(value string) (string, error) {
 	cleaned := filepath.ToSlash(filepath.Clean(value))
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || len(cleaned) > 400 {
 		return "", errors.New("audio folder must stay inside the selected intake root")
+	}
+	return cleaned, nil
+}
+
+func selectedDocumentFolder(value string) (string, error) {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	if value == "" || value == "." || strings.HasPrefix(value, "/") || strings.Contains(value, "//") {
+		return "", errors.New("an explicit relative selected document folder is required")
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(value))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || len(cleaned) > 400 {
+		return "", errors.New("document folder must stay inside the selected intake root")
 	}
 	return cleaned, nil
 }

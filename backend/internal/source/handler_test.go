@@ -1,6 +1,7 @@
 package source
 
 import (
+	"automation-hub-backend/internal/docling"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/whispercpp"
@@ -19,6 +20,23 @@ type sourceTranscriberStub struct {
 	transcripts []whispercpp.Transcript
 	err         error
 	folder      string
+}
+
+type sourceDocumentExtractorStub struct {
+	documents []docling.Document
+	err       error
+	folder    string
+}
+
+func (s *sourceDocumentExtractorStub) Status() docling.Status {
+	return docling.Status{Configured: true}
+}
+func (s *sourceDocumentExtractorStub) Probe(context.Context) (*docling.ProbeResult, error) {
+	return &docling.ProbeResult{Reachable: true, Configured: true}, nil
+}
+func (s *sourceDocumentExtractorStub) Extract(_ context.Context, folder string) ([]docling.Document, error) {
+	s.folder = folder
+	return s.documents, s.err
 }
 
 func (s *sourceTranscriberStub) Status() whispercpp.Status { return whispercpp.Status{} }
@@ -255,5 +273,65 @@ func TestHandlerTranscriptionRejectsCallerPayloadAndNonAudioSources(t *testing.T
 	router.ServeHTTP(nonAudioResponse, nonAudioRequest)
 	if nonAudioResponse.Code != http.StatusBadRequest {
 		t.Fatalf("non-audio status = %d, body=%s", nonAudioResponse.Code, nonAudioResponse.Body.String())
+	}
+}
+
+func TestHandlerExtractsOnlyAnOwnedExplicitDoclingSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: doclingDocumentsConnectorKey, Name: "Legal evidence", Category: "document",
+		Enabled: true, LocalOnly: true, Status: "active", SyncTarget: "legal/vivare", DefaultProjectKey: "Vivare dispute",
+	})
+	stub := &sourceDocumentExtractorStub{documents: []docling.Document{{
+		Path: "legal/vivare/evidence.docx", Text: "The hearing is scheduled for 9 September.", Format: "docx", PageCount: 2,
+		ContentDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}}}
+	service := NewService(repo, nil)
+	handler := NewHandlerWithDocumentExtractor(service, stub)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.POST("/sources/:id/extract-documents", handler.ExtractDocuments)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/extract-documents", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("extract status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if stub.folder != "legal/vivare" {
+		t.Fatalf("folder = %q", stub.folder)
+	}
+	if len(repo.rawItems) != 1 {
+		t.Fatalf("raw items = %#v", repo.rawItems)
+	}
+	for _, raw := range repo.rawItems {
+		if raw.ItemType != "document_extraction" || !strings.HasPrefix(raw.SourceURI, "document://selected-source/"+sourceID.String()+"/") {
+			t.Fatalf("raw item = %#v", raw)
+		}
+	}
+	if _, err := service.Sync(sourceID, ImportRequest{}); err == nil || !strings.Contains(err.Error(), "controlled document extraction route") {
+		t.Fatalf("generic docling sync error = %v", err)
+	}
+}
+
+func TestHandlerDocumentExtractionRejectsPayloadAndNonDoclingSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Files", Enabled: true, LocalOnly: true, Status: "active", SyncTarget: "notes"})
+	handler := NewHandlerWithDocumentExtractor(NewService(repo, nil), &sourceDocumentExtractorStub{})
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.POST("/sources/:id/extract-documents", handler.ExtractDocuments)
+
+	payloadResponse := httptest.NewRecorder()
+	router.ServeHTTP(payloadResponse, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/extract-documents", strings.NewReader(`{"path":"anywhere"}`)))
+	if payloadResponse.Code != http.StatusBadRequest {
+		t.Fatalf("payload status = %d, body=%s", payloadResponse.Code, payloadResponse.Body.String())
+	}
+
+	nonDoclingResponse := httptest.NewRecorder()
+	router.ServeHTTP(nonDoclingResponse, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/extract-documents", nil))
+	if nonDoclingResponse.Code != http.StatusBadRequest {
+		t.Fatalf("non-Docling status = %d, body=%s", nonDoclingResponse.Code, nonDoclingResponse.Body.String())
 	}
 }

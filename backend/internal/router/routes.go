@@ -1260,6 +1260,7 @@ func initializeSourceRoutes(apiVersion *gin.RouterGroup, sourceHandler *source.H
 		sourceRoutes.PATCH("/:id", requirePermission(rbac.PermWrite), sourceHandler.UpdateSource)
 		sourceRoutes.POST("/:id/sync", requirePermission(rbac.PermWrite), sourceHandler.Sync)
 		sourceRoutes.POST("/:id/transcribe", requirePermission(rbac.PermWrite), sourceHandler.Transcribe)
+		sourceRoutes.POST("/:id/extract-documents", requirePermission(rbac.PermWrite), sourceHandler.ExtractDocuments)
 		sourceRoutes.POST("/:id/reindex", requirePermission(rbac.PermWrite), sourceHandler.Reindex)
 		sourceRoutes.POST("/:id/pause", requirePermission(rbac.PermWrite), sourceHandler.Pause)
 		sourceRoutes.POST("/:id/resume", requirePermission(rbac.PermWrite), sourceHandler.Resume)
