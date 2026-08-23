@@ -94,7 +94,7 @@ foreach ($required in @(
     "HAI_A2A_BRIDGE_TOKEN",
     "A2A-Version",
     "supportedInterfaces",
-    "Planning endpoint: $($planningInterface.url)",
+    'Planning endpoint: $($planningInterface.url)',
     "SendMessage",
     "TASK_STATE_COMPLETED",
     "hai-controlled-planning-proposal"
