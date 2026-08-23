@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"automation-hub-backend/docs"
@@ -1127,10 +1130,7 @@ func initializeBrainCatalogRoutes(apiVersion *gin.RouterGroup, handler *braincat
 func localCaptureCORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := strings.TrimSpace(c.GetHeader("Origin"))
-		allowed := strings.HasPrefix(origin, "chrome-extension://") ||
-			strings.HasPrefix(origin, "moz-extension://") ||
-			strings.HasPrefix(origin, "http://localhost:") ||
-			strings.HasPrefix(origin, "http://127.0.0.1:")
+		allowed := localCaptureOriginAllowed(origin)
 		if origin != "" && allowed {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin")
@@ -1146,6 +1146,39 @@ func localCaptureCORSMiddleware() gin.HandlerFunc {
 			return
 		}
 		c.Next()
+	}
+}
+
+// localCaptureOriginAllowed accepts only browser origins that can address the
+// local capture endpoint. It deliberately parses the Origin header instead of
+// matching a string prefix so values such as localhost.evil or a path/query
+// cannot inherit loopback trust.
+func localCaptureOriginAllowed(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	parsed, err := url.ParseRequestURI(origin)
+	if err != nil || parsed.User != nil || parsed.Host == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	if port := parsed.Port(); port != "" {
+		value, err := strconv.Atoi(port)
+		if err != nil || value < 1 || value > 65535 {
+			return false
+		}
+	}
+	switch parsed.Scheme {
+	case "chrome-extension", "moz-extension":
+		return parsed.Port() == ""
+	case "http":
+		host := parsed.Hostname()
+		if host == "localhost" {
+			return true
+		}
+		ip := net.ParseIP(host)
+		return ip != nil && ip.IsLoopback()
+	default:
+		return false
 	}
 }
 

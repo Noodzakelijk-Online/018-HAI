@@ -704,6 +704,35 @@ func TestLocalCaptureCORSAllowsExtensionPreflight(t *testing.T) {
 	}
 }
 
+func TestLocalCaptureCORSAllowsStrictLoopbackOrigins(t *testing.T) {
+	for _, origin := range []string{
+		"http://localhost:4200",
+		"http://127.0.0.1:4200",
+		"http://[::1]:4200",
+		"moz-extension://example-extension",
+	} {
+		if !localCaptureOriginAllowed(origin) {
+			t.Fatalf("origin %q must be allowed", origin)
+		}
+	}
+}
+
+func TestLocalCaptureCORSRejectsLookalikeAndMalformedOrigins(t *testing.T) {
+	for _, origin := range []string{
+		"http://localhost.evil:4200",
+		"http://127.0.0.1.evil:4200",
+		"http://localhost:invalid",
+		"http://localhost:4200/untrusted-path",
+		"http://localhost:4200?token=secret",
+		"chrome-extension://example-extension/path",
+		"https://localhost:4200",
+	} {
+		if localCaptureOriginAllowed(origin) {
+			t.Fatalf("origin %q must be rejected", origin)
+		}
+	}
+}
+
 func TestLocalCaptureCORSRejectsUntrustedPreflight(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
