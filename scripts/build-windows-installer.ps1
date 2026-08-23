@@ -31,6 +31,24 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 
+# Resolve the compiler before replacing the generated payload. This preserves a
+# previously prepared release when a machine is missing the build prerequisite.
+if (-not $SkipCompile -and [string]::IsNullOrWhiteSpace($ISCCPath)) {
+    $candidates = @(
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+        "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $ISCCPath = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($ISCCPath)) {
+        $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+        if ($command) { $ISCCPath = $command.Source }
+    }
+}
+if (-not $SkipCompile -and ([string]::IsNullOrWhiteSpace($ISCCPath) -or -not (Test-Path -LiteralPath $ISCCPath -PathType Leaf))) {
+    throw "Inno Setup 6 is required to create Setup.exe. Install it with: winget install --id JRSoftware.InnoSetup -e"
+}
+
 function Test-HaiInstallerExcludedPath {
     param([Parameter(Mandatory = $true)][string]$ExcludeRelativePath)
 
@@ -87,22 +105,6 @@ $manifest | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $relea
 if ($SkipCompile) {
     Write-Host "Prepared installer payload with $($included.Count) source files at $payloadRoot"
     return
-}
-
-if ([string]::IsNullOrWhiteSpace($ISCCPath)) {
-    $candidates = @(
-        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-        "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
-        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
-    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-    $ISCCPath = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-    if ([string]::IsNullOrWhiteSpace($ISCCPath)) {
-        $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
-        if ($command) { $ISCCPath = $command.Source }
-    }
-}
-if ([string]::IsNullOrWhiteSpace($ISCCPath) -or -not (Test-Path -LiteralPath $ISCCPath -PathType Leaf)) {
-    throw "Inno Setup 6 is required to create Setup.exe. Install it with: winget install --id JRSoftware.InnoSetup -e"
 }
 
 $env:HAI_INSTALLER_VERSION = $Version
