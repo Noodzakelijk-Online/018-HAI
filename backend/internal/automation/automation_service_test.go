@@ -57,6 +57,9 @@ func TestMain(m *testing.M) {
 	case "redact":
 		fmt.Println("token=super-secret-token")
 		os.Exit(0)
+	case "fail-with-secret":
+		fmt.Fprintln(os.Stderr, "token=super-secret-token")
+		os.Exit(1)
 	}
 	os.Exit(m.Run())
 }
@@ -709,6 +712,38 @@ func TestLaunchRedactsScriptOutputSecrets(t *testing.T) {
 	}
 	if len(repo.launchEvents) != 1 || strings.Contains(repo.launchEvents[0].Output, "super-secret-token") {
 		t.Fatalf("launch event leaked secret: %#v", repo.launchEvents)
+	}
+}
+
+func TestLaunchRedactsScriptFailureSecrets(t *testing.T) {
+	dir := t.TempDir()
+	target := writeExecutableScriptFixture(t, dir, "fail-with-secret")
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
+	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, filepath.Join(dir, target)))
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Failing Script Automation",
+		URLPath:      "failing-script-automation",
+		LaunchType:   "script",
+		LaunchTarget: target,
+	})
+	service := newTestService(repo, events.Publisher{})
+
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("status = %q, want failed", result.Status)
+	}
+	if strings.Contains(result.Output, "super-secret-token") || strings.Contains(result.Message, "super-secret-token") {
+		t.Fatalf("failed script result leaked a secret: %#v", result)
+	}
+	if len(repo.launchEvents) != 1 || strings.Contains(repo.launchEvents[0].Output, "super-secret-token") || strings.Contains(repo.launchEvents[0].Message, "super-secret-token") {
+		t.Fatalf("launch event leaked a secret: %#v", repo.launchEvents)
 	}
 }
 

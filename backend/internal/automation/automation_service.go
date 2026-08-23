@@ -1760,7 +1760,7 @@ func (s *service) executeScriptLaunch(
 		}
 		return launchExecution{
 			Status:      "failed",
-			Message:     err.Error(),
+			Message:     safety.RedactSecrets(err.Error()),
 			Output:      outputText,
 			ExitCode:    exitCode,
 			DurationMs:  time.Since(started).Milliseconds(),
