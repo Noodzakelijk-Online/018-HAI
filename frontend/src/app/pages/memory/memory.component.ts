@@ -1,7 +1,8 @@
-import { Component, Inject, OnInit } from '@angular/core';
+import { Component, Inject, OnDestroy, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
+import { Subscription } from 'rxjs';
 import { timeout } from 'rxjs/operators';
 import {
   IContextMemory,
@@ -32,7 +33,7 @@ interface MemoryActionCard {
     styleUrls: ['./memory.component.scss'],
     standalone: false
 })
-export class MemoryComponent implements OnInit {
+export class MemoryComponent implements OnInit, OnDestroy {
   memories: IContextMemory[] = [];
   retrieveResult?: IMemoryRetrieveResult;
   loading = false;
@@ -50,6 +51,7 @@ export class MemoryComponent implements OnInit {
   themeMode: ThemeMode = 'light';
   private readonly loadTimeoutMs = 6000;
   private readonly operationTimeoutMs = 15000;
+  private refreshSubscription?: Subscription;
 
   memoryForm: FormGroup = this.fb.group({
     projectKey: ['018-HAI'],
@@ -94,9 +96,14 @@ export class MemoryComponent implements OnInit {
     this.refresh();
   }
 
+  ngOnDestroy(): void {
+    this.refreshSubscription?.unsubscribe();
+  }
+
   refresh(): void {
     this.loading = true;
-    this.memoryService
+    this.refreshSubscription?.unsubscribe();
+    this.refreshSubscription = this.memoryService
       .list(this.memoryForm.value.projectKey, this.includeArchived)
       .pipe(timeout(this.loadTimeoutMs))
       .subscribe({
