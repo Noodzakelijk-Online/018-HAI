@@ -72,6 +72,11 @@ type IntakeRequest struct {
 	AvailableAgents       []frameworkregistry.AgentCard           `json:"-"`
 	CoordinationMode      string                                  `json:"-"`
 	Deadline              *time.Time                              `json:"-"`
+	// agentInventoryEvaluated is set only after the configured owner-scoped
+	// registry provider has returned a complete inventory. It distinguishes an
+	// explicitly empty production inventory from a lightweight constructor that
+	// has no registry dependency at all.
+	agentInventoryEvaluated bool
 	operationID           string
 	reviewItemID          string
 }
@@ -1273,12 +1278,15 @@ func (s *service) loadOperatingContext(request IntakeRequest) (IntakeRequest, er
 		}
 		request.Capacity = capacity
 	}
-	if s.agentContext != nil && len(request.AvailableAgents) == 0 {
-		agents, err := s.agentContext.LatestAgents(request.OwnerIdentity, now)
-		if err != nil {
-			return request, fmt.Errorf("load available agents: %w", err)
+	if s.agentContext != nil {
+		if len(request.AvailableAgents) == 0 {
+			agents, err := s.agentContext.LatestAgents(request.OwnerIdentity, now)
+			if err != nil {
+				return request, fmt.Errorf("load available agents: %w", err)
+			}
+			request.AvailableAgents = append([]frameworkregistry.AgentCard(nil), agents...)
 		}
-		request.AvailableAgents = append([]frameworkregistry.AgentCard(nil), agents...)
+		request.agentInventoryEvaluated = true
 	}
 	return request, nil
 }
@@ -2750,13 +2758,16 @@ func applyFrameworkRisk(
 			"current human capacity is unavailable; execution must be rescheduled or explicitly re-planned without creating new operator commitments",
 		)
 	}
-	if request.ExecuteAllowed && decision.Coordination.Mode != "single_engine" {
+	// A framework-required specialist is an execution precondition, not merely
+	// a preference for a multi-agent coordination style. Falling back to the
+	// embedded coordinator would otherwise bypass the selected framework.
+	if request.ExecuteAllowed && request.agentInventoryEvaluated {
 		for _, delegation := range decision.Delegations {
-			if delegation.State != "ready" {
+			if delegation.State != "ready" && isUnreadyRequiredFrameworkDelegation(*decision, delegation) {
 				risk.AllowedNow = false
 				risk.Reasons = append(
 					risk.Reasons,
-					"multi-agent execution is blocked until every delegated participant has a fresh verified agent card",
+					"execution is blocked until every framework-required delegated participant has a fresh verified agent card",
 				)
 				break
 			}
@@ -2777,6 +2788,32 @@ func applyFrameworkRisk(
 	}
 	risk.Reasons = uniqueStrings(risk.Reasons)
 	return risk
+}
+
+func isUnreadyRequiredFrameworkDelegation(
+	decision frameworkregistry.SelectionDecision,
+	delegation frameworkregistry.DelegationContract,
+) bool {
+	if len(decision.RequiredAgents) == 0 {
+		return false
+	}
+	required := make(map[string]struct{}, len(decision.RequiredAgents))
+	for _, role := range decision.RequiredAgents {
+		if normalized := strings.ToLower(strings.TrimSpace(role)); normalized != "" {
+			required[normalized] = struct{}{}
+		}
+	}
+	delegatee := strings.ToLower(strings.TrimSpace(delegation.Delegatee))
+	if _, requiredRole := required[delegatee]; requiredRole {
+		return true
+	}
+	for _, card := range decision.AgentCards {
+		if strings.EqualFold(strings.TrimSpace(card.ID), delegatee) {
+			_, requiredRole := required[strings.ToLower(strings.TrimSpace(card.Role))]
+			return requiredRole
+		}
+	}
+	return false
 }
 
 func requiredFrameworkAutonomy(intake IntakeAnalysis, request IntakeRequest) int {
