@@ -94,6 +94,7 @@ foreach ($required in @(
     "HAI_A2A_BRIDGE_TOKEN",
     "A2A-Version",
     "supportedInterfaces",
+    "Planning endpoint: $($planningInterface.url)",
     "SendMessage",
     "TASK_STATE_COMPLETED",
     "hai-controlled-planning-proposal"
@@ -101,6 +102,10 @@ foreach ($required in @(
     if ($connectorTest -notmatch [Regex]::Escape($required)) {
         throw "The local connector diagnostic does not verify '$required'."
     }
+}
+
+if ($connectorTest -match [Regex]::Escape('Planning endpoint: $($agentCard.url)')) {
+    throw "The local connector diagnostic reports the removed Agent Card URL field instead of its advertised planning interface."
 }
 
 if ($initializer -notmatch [Regex]::Escape('GATEWAY_HOST_BIND') -or

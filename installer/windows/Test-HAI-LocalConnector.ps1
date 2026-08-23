@@ -85,5 +85,5 @@ if ($planningResult.result.task.status.state -ne "TASK_STATE_COMPLETED" -or $nul
 
 Write-Host "Local A2A connector is reachable at $agentCardUrl" -ForegroundColor Green
 Write-Host "Agent: $($agentCard.name)"
-Write-Host "Planning endpoint: $($agentCard.url)"
+Write-Host "Planning endpoint: $($planningInterface.url)"
 Write-Host "Authenticated planning probe completed without creating or executing work." -ForegroundColor Green

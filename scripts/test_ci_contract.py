@@ -233,6 +233,11 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("a2a-local:", compose)
         self.assertIn("internal: true", compose)
         self.assertIn("HAI_A2A_LOCAL_PORT=8091", defaults)
+        backend_service = compose_service_block(compose, "backend")
+        self.assertIn(
+            "HAI_A2A_BRIDGE_URL: ${HAI_A2A_BRIDGE_URL:-http://127.0.0.1:8091/api/v1/a2a}",
+            backend_service,
+        )
         self.assertTrue(connector_template.is_file())
 
         template = connector_template.read_text(encoding="utf-8")
