@@ -38,6 +38,20 @@ def compose_service_block(compose: str, service: str) -> str:
 
 
 class CIWorkflowContractTest(unittest.TestCase):
+    def test_bootstrap_document_matches_the_dark_first_theme_contract(self) -> None:
+        index = (ROOT / "frontend" / "src" / "index.html").read_text(
+            encoding="utf-8"
+        )
+
+        # Angular loads after the browser has already painted index.html. The
+        # bootstrap shell must apply the same persisted dark-first preference as
+        # ThemeService so a slow local Windows startup does not flash the light
+        # theme or present an unbranded document title.
+        self.assertIn("HAI Automation Hub", index)
+        self.assertIn("hai-theme-mode", index)
+        self.assertIn("document.documentElement.classList.add(themeClass)", index)
+        self.assertIn("background:#08111f", index)
+
     def test_frontend_uses_one_direct_angular_cdk_dependency(self) -> None:
         frontend = ROOT / "frontend"
         package = json.loads((frontend / "package.json").read_text(encoding="utf-8"))
