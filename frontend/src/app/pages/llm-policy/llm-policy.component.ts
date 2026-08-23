@@ -54,6 +54,9 @@ export class LLMPolicyComponent implements OnInit {
   maintenance: ILLMModelMaintenanceResult[] = [];
   logs: ILLMRouteDecision[] = [];
   generations: ILLMGenerationResult[] = [];
+  maintenanceUnavailable = false;
+  logsUnavailable = false;
+  generationsUnavailable = false;
   decision?: ILLMRouteDecision;
   policyActions: PolicyActionCard[] = [];
   catalogGroups: TierCatalogGroup[] = [];
@@ -148,10 +151,13 @@ export class LLMPolicyComponent implements OnInit {
     });
   }
 
-  private loadModelMaintenanceHistory(): void {
+  loadModelMaintenanceHistory(): void {
     this.llmPolicyService.getModelMaintenanceHistory().subscribe({
-      next: (records) => (this.maintenance = records || []),
-      error: () => (this.maintenance = []),
+      next: (records) => {
+        this.maintenance = records || [];
+        this.maintenanceUnavailable = false;
+      },
+      error: () => (this.maintenanceUnavailable = true),
     });
   }
 
@@ -230,10 +236,11 @@ export class LLMPolicyComponent implements OnInit {
     this.llmPolicyService.getLogs().subscribe({
       next: (logs) => {
         this.logs = logs;
+        this.logsUnavailable = false;
         this.rebuildActionCards();
       },
       error: () => {
-        this.logs = [];
+        this.logsUnavailable = true;
         this.rebuildActionCards();
       },
     });
@@ -243,10 +250,11 @@ export class LLMPolicyComponent implements OnInit {
     this.llmPolicyService.getGenerationHistory().subscribe({
       next: (records) => {
         this.generations = records || [];
+        this.generationsUnavailable = false;
         this.rebuildActionCards();
       },
       error: () => {
-        this.generations = [];
+        this.generationsUnavailable = true;
         this.rebuildActionCards();
       },
     });
@@ -287,7 +295,11 @@ export class LLMPolicyComponent implements OnInit {
         ? this.tierLabel(this.decision.tier)
         : 'No capable model under policy'
       : 'No route selected yet';
-    const latestLogMetric = this.generations[0]
+    const latestLogMetric = this.generationsUnavailable
+      ? 'Generation history unavailable'
+      : this.logsUnavailable
+        ? 'Routing history unavailable'
+        : this.generations[0]
       ? `${this.validationLabel(this.generations[0].validationStatus)} / ${this.generations[0].modelName || this.generations[0].modelId}`
       : this.logs[0]?.selectedModelName || (this.logs.length ? 'Blocked route recorded' : 'No recent decisions');
     this.policyActions = [
@@ -339,7 +351,7 @@ export class LLMPolicyComponent implements OnInit {
         title: 'Review routing log',
         detail: 'Inspect recent choices and fallback paths.',
         icon: 'history',
-        metric: `${this.generations.length} outcomes`,
+        metric: this.generationsUnavailable ? 'Unavailable' : `${this.generations.length} outcomes`,
         secondaryMetric: latestLogMetric,
         context:
           'Opens the trace of selected models, skipped options, estimated cost, validation pressure, and fallback history.',
