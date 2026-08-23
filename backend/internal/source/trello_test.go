@@ -219,6 +219,35 @@ func TestSyncTrelloIncrementalSkipsUnchangedCards(t *testing.T) {
 	}
 }
 
+func TestFetchTrelloSourceRejectsPotentiallyTruncatedBoard(t *testing.T) {
+	cards := make([]map[string]any, trelloCardFetchLimit)
+	for index := range cards {
+		cards[index] = map[string]any{
+			"id":               fmt.Sprintf("card-%d", index),
+			"name":             fmt.Sprintf("Card %d", index),
+			"dateLastActivity": "2026-07-12T00:00:00Z",
+			"idList":           "list-1",
+		}
+	}
+	payload, err := json.Marshal(cards)
+	if err != nil {
+		t.Fatalf("Marshal cards: %v", err)
+	}
+	server, _, _ := trelloTestServer(t, string(payload))
+	defer server.Close()
+
+	t.Setenv(trelloBaseURLEnv, server.URL)
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+	t.Setenv(trelloAPIKeyEnv, "test-key")
+	t.Setenv(trelloReadTokenEnv, "test-read-token")
+
+	_, _, err = fetchTrelloSource(t.Context(), newTrelloSource(uuid.New(), "abc123XY", ""))
+	if err == nil || !strings.Contains(err.Error(), "fetch limit") {
+		t.Fatalf("fetchTrelloSource error = %v, want potential truncation error", err)
+	}
+}
+
 func TestSyncTrelloRequiresCredentials(t *testing.T) {
 	server, _, _ := trelloTestServer(t, `[]`)
 	defer server.Close()

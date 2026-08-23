@@ -195,6 +195,14 @@ func fetchTrelloSource(ctx context.Context, source *models.ConnectedSource) ([]I
 	if err := trelloGetJSONContext(ctx, base, key, token, "/1/boards/"+boardID+"/cards", cardQuery, &cards); err != nil {
 		return nil, "", fmt.Errorf("fetch trello cards: %w", err)
 	}
+	// Trello caps this endpoint at trelloCardFetchLimit. A response exactly at
+	// that limit might be the complete board, but it might also be silently
+	// truncated. Do not advance the cursor or report a completed sync when HAI
+	// cannot prove it saw every card. The operator can split/archive the board
+	// or reduce the active scope before retrying.
+	if len(cards) >= trelloCardFetchLimit {
+		return nil, "", fmt.Errorf("trello board returned %d cards at the fetch limit of %d; sync is potentially truncated", len(cards), trelloCardFetchLimit)
+	}
 
 	boardName := firstNonEmpty(strings.TrimSpace(board.Name), boardID)
 	projectKey := firstNonEmpty(source.DefaultProjectKey, slugText(boardName))

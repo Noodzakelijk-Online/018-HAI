@@ -29,6 +29,10 @@ provider stays disabled (the default).
 - `backend doctor` / `/readyz` warn when security-sensitive keys are unset.
 - `internal/providerfallback` guarantees free/local is preferred and paid is
   never selected unless explicitly allowed.
+- The Trello board reader is deliberately bounded to 1,000 cards per board
+  response. A response at that ceiling is rejected as potentially truncated;
+  HAI does not advance the cursor or call the sync complete. Split, archive, or
+  otherwise reduce the board's active scope before retrying.
 
 ## Sign-off
 
