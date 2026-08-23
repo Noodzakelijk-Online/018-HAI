@@ -218,6 +218,52 @@ func TestPursuitEndpointsScopeRecordsToAuthenticatedOwner(t *testing.T) {
 	}
 }
 
+func TestDashboardCanIncludeAlreadyLoadedOwnerPursuits(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	service := NewService(repo, nil)
+	alice, err := service.Create(CreateRequest{Title: "Alice dashboard pursuit", OwnerIdentity: "alice"})
+	if err != nil {
+		t.Fatalf("Create Alice pursuit: %v", err)
+	}
+	if _, err := service.Create(CreateRequest{Title: "Bob dashboard pursuit", OwnerIdentity: "bob"}); err != nil {
+		t.Fatalf("Create Bob pursuit: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.GET("/pursuits/dashboard", NewHandler(service).Dashboard)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/pursuits/dashboard?includePursuits=true", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("dashboard status=%d body=%s", response.Code, response.Body.String())
+	}
+	var dashboard Dashboard
+	if err := json.Unmarshal(response.Body.Bytes(), &dashboard); err != nil {
+		t.Fatalf("decode dashboard: %v", err)
+	}
+	if len(dashboard.Pursuits) != 1 || dashboard.Pursuits[0].ID != alice.ID {
+		t.Fatalf("included dashboard pursuits = %#v", dashboard.Pursuits)
+	}
+
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/pursuits/dashboard", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("default dashboard status=%d body=%s", response.Code, response.Body.String())
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode default dashboard: %v", err)
+	}
+	if _, present := raw["pursuits"]; present {
+		t.Fatalf("default dashboard unexpectedly included raw pursuits")
+	}
+}
+
 func TestPursuitResourceEndpointsAreOwnerScopedStrictAndIdempotent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeRepo()

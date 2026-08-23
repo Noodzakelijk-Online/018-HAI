@@ -378,9 +378,13 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   load(): void {
     this.dashboardSub?.unsubscribe();
     this.loading = true;
-    this.dashboardSub = this.pursuitsService.dashboard().subscribe({
+    this.dashboardSub = this.pursuitsService.dashboard(!this.includeArchived).subscribe({
       next: (dashboard) => {
         this.dashboard = dashboard;
+        if (!this.includeArchived && Array.isArray(dashboard.pursuits)) {
+          this.applyPursuits(dashboard.pursuits);
+          return;
+        }
         this.loadPursuits();
       },
       error: (error) => {
@@ -394,28 +398,32 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     this.pursuitsSub?.unsubscribe();
     this.pursuitsSub = this.pursuitsService.list(this.includeArchived).subscribe({
       next: (pursuits) => {
-        this.pursuits = pursuits || [];
-        this.loading = false;
-        if (this.requestedPursuitId) {
-          this.selectPursuitById(this.requestedPursuitId, false);
-          return;
-        }
-        if (!this.selected && this.pursuits.length) {
-          this.selectPursuit(this.pursuits[0]);
-          return;
-        }
-        if (this.selected) {
-          const refreshed = this.pursuits.find((item) => item.id === this.selected?.pursuit.id);
-          if (refreshed) {
-            this.selectPursuit(refreshed);
-          }
-        }
+        this.applyPursuits(pursuits || []);
       },
       error: (error) => {
         this.loading = false;
         this.notification.error('Pursuits unavailable', error?.error?.error || 'Failed to load pursuits.');
       },
     });
+  }
+
+  private applyPursuits(pursuits: IPursuit[]): void {
+    this.pursuits = pursuits;
+    this.loading = false;
+    if (this.requestedPursuitId) {
+      this.selectPursuitById(this.requestedPursuitId, false);
+      return;
+    }
+    if (!this.selected && this.pursuits.length) {
+      this.selectPursuit(this.pursuits[0]);
+      return;
+    }
+    if (this.selected) {
+      const refreshed = this.pursuits.find((item) => item.id === this.selected?.pursuit.id);
+      if (refreshed) {
+        this.selectPursuit(refreshed);
+      }
+    }
   }
 
   openPortfolioPlanner(): void {

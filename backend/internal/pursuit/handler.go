@@ -70,7 +70,23 @@ func (h *Handler) List(c *gin.Context) {
 }
 
 func (h *Handler) Dashboard(c *gin.Context) {
-	record, err := h.service.DashboardForOwner(pursuitOwner(c))
+	ownerIdentity := pursuitOwner(c)
+	var (
+		record *Dashboard
+		err    error
+	)
+	if includePursuits, _ := strconv.ParseBool(c.Query("includePursuits")); includePursuits {
+		provider, ok := h.service.(interface {
+			DashboardWithPursuitsForOwner(string) (*Dashboard, error)
+		})
+		if !ok {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "dashboard pursuit records are unavailable"})
+			return
+		}
+		record, err = provider.DashboardWithPursuitsForOwner(ownerIdentity)
+	} else {
+		record, err = h.service.DashboardForOwner(ownerIdentity)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -42,6 +42,21 @@ describe('PursuitsComponent action lanes', () => {
     ));
   });
 
+  it('reuses active pursuits returned by the dashboard instead of issuing a second list request', () => {
+    const pursuitService = (component as any).pursuitsService;
+    pursuitService.dashboard = jasmine.createSpy('dashboard').and.returnValue(of({
+      counts: {}, pursuits: [{ id: 'pursuit-1', title: 'Ready pursuit' }],
+    }));
+    pursuitService.list = jasmine.createSpy('list').and.returnValue(of([]));
+    spyOn<any>(component as any, 'selectPursuit');
+
+    component.load();
+
+    expect(pursuitService.dashboard).toHaveBeenCalledWith(true);
+    expect(pursuitService.list).not.toHaveBeenCalled();
+    expect(component.pursuits.map((pursuit) => pursuit.id)).toEqual(['pursuit-1']);
+  });
+
   it('opens the first action in the selected operational lane', () => {
     const action: IPursuitAction = {
       label: 'Prepare the evidence index',

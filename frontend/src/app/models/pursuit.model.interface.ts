@@ -217,6 +217,7 @@ export interface IPursuitListItem {
 
 export interface IPursuitDashboard {
   counts: Record<string, number>;
+  pursuits?: IPursuit[];
   decisionQueue: IPursuitDashboardDecision[];
   needsRobert: IPursuitListItem[];
   vaReady: IPursuitListItem[];

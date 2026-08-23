@@ -318,6 +318,7 @@ type AmbientOpportunityRouteResult struct {
 
 type Dashboard struct {
 	Counts               map[string]int64           `json:"counts"`
+	Pursuits             []models.Pursuit           `json:"pursuits,omitempty"`
 	DecisionQueue        []PursuitDashboardDecision `json:"decisionQueue"`
 	NeedsRobert          []PursuitListItem          `json:"needsRobert"`
 	VAReady              []PursuitListItem          `json:"vaReady"`
@@ -1107,6 +1108,27 @@ func (s *service) DashboardForOwner(ownerIdentity string) (*Dashboard, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.dashboardForPursuits(ownerIdentity, pursuits)
+}
+
+// DashboardWithPursuitsForOwner reuses the active records already loaded for
+// the dashboard projection. The route exposes this only when a client asks for
+// it, avoiding a second owner-scoped list request during the initial Pursuits
+// page load while keeping ordinary dashboard responses compact.
+func (s *service) DashboardWithPursuitsForOwner(ownerIdentity string) (*Dashboard, error) {
+	pursuits, err := s.ListForOwner(ownerIdentity, false)
+	if err != nil {
+		return nil, err
+	}
+	dashboard, err := s.dashboardForPursuits(ownerIdentity, pursuits)
+	if err != nil {
+		return nil, err
+	}
+	dashboard.Pursuits = pursuits
+	return dashboard, nil
+}
+
+func (s *service) dashboardForPursuits(ownerIdentity string, pursuits []models.Pursuit) (*Dashboard, error) {
 	dashboard := &Dashboard{
 		Counts: map[string]int64{
 			"active": 0, "waiting": 0, "blocked": 0, "completed": 0, "needsRobert": 0, "decisionQueue": 0, "stale": 0, "reviewDue": 0, "planningNeeded": 0, "highRisk": 0, "completionCandidates": 0,

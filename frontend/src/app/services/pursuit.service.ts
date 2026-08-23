@@ -61,8 +61,11 @@ export class PursuitService {
     }).pipe(map((records) => (records || []).map((record) => this.normalizePursuit(record))));
   }
 
-  dashboard(): Observable<IPursuitDashboard> {
-    return this.http.get<IPursuitDashboard>(`${this.apiUrl}/dashboard`).pipe(
+  dashboard(includePursuits: boolean = false): Observable<IPursuitDashboard> {
+    const options = includePursuits
+      ? { params: new HttpParams().set('includePursuits', 'true') }
+      : undefined;
+    return this.http.get<IPursuitDashboard>(`${this.apiUrl}/dashboard`, options).pipe(
       map((dashboard) => this.normalizeDashboard(dashboard)),
     );
   }
@@ -307,6 +310,7 @@ export class PursuitService {
     return {
       ...source,
       counts: source.counts || {},
+      pursuits: (source.pursuits || []).map((pursuit) => this.normalizePursuit(pursuit)),
       decisionQueue: source.decisionQueue || [],
       needsRobert: source.needsRobert || [],
       vaReady: source.vaReady || [],
