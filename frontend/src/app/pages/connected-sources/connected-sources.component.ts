@@ -105,6 +105,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   private readonly operationTimeoutMs = 15000;
   private readonly extractionPageLimit = 100;
   private refreshSubscription?: Subscription;
+  private connectionHealthSubscription?: Subscription;
 
   sourceForm: FormGroup = this.fb.group({
     connectorKey: ['local-folder', [Validators.required]],
@@ -180,10 +181,12 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.refreshSubscription?.unsubscribe();
+    this.connectionHealthSubscription?.unsubscribe();
   }
 
   refresh(): void {
     this.refreshSubscription?.unsubscribe();
+    this.connectionHealthSubscription?.unsubscribe();
     this.loading = true;
     this.loadWarnings = [];
     this.refreshSubscription = forkJoin({
@@ -1491,13 +1494,14 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   }
 
   private loadConnectionHealth(sources: IConnectedSource[]): void {
+    this.connectionHealthSubscription?.unsubscribe();
     if (!sources.length) {
       this.connectionHealth = {};
       this.connectionHealthUnavailable = {};
       return;
     }
     this.connectionHealthUnavailable = {};
-    this.sourceService.connectionHealths().pipe(
+    this.connectionHealthSubscription = this.sourceService.connectionHealths().pipe(
       timeout(this.loadTimeoutMs),
       catchError(() => {
         this.connectionHealthUnavailable = sources.reduce<Record<string, boolean>>((unavailable, source) => {

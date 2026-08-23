@@ -2,7 +2,7 @@ import { FormBuilder } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { Subject, of, throwError } from 'rxjs';
-import { IConnectedSource, ISourcePursuitRoutingOutcome } from '../../models/connected-source.model.interface';
+import { IConnectedSource, ISourceConnectionHealth, ISourcePursuitRoutingOutcome } from '../../models/connected-source.model.interface';
 import { ConnectedSourcesComponent } from './connected-sources.component';
 
 describe('ConnectedSourcesComponent pursuit handoff', () => {
@@ -327,6 +327,24 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(sourceService.connectionHealths).toHaveBeenCalledTimes(1);
     expect(component.sourceHealthUnavailable(source)).toBeTrue();
     expect(component.sourceHealth(source)).toBeUndefined();
+  });
+
+  it('cancels obsolete source health requests so stale health cannot replace a newer refresh', () => {
+    const { component, sourceService } = createComponent();
+    const firstHealth = new Subject<ISourceConnectionHealth[]>();
+    const secondHealth = new Subject<ISourceConnectionHealth[]>();
+    const source = { id: 'gmail-source', connectorKey: 'gmail', name: 'Personal Gmail' } as IConnectedSource;
+    sourceService.connectionHealths.and.returnValues(firstHealth.asObservable(), secondHealth.asObservable());
+
+    (component as any).loadConnectionHealth([source]);
+    (component as any).loadConnectionHealth([source]);
+
+    secondHealth.next([{ sourceId: source.id, status: 'ready' } as ISourceConnectionHealth]);
+    secondHealth.complete();
+    firstHealth.next([{ sourceId: source.id, status: 'blocked' } as ISourceConnectionHealth]);
+    firstHealth.complete();
+
+    expect(component.sourceHealth(source)?.status).toBe('ready');
   });
 
   it('builds constant-time source record and latest-job lookups', () => {
