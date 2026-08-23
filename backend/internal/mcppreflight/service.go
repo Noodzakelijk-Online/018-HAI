@@ -8,6 +8,7 @@
 package mcppreflight
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -39,11 +40,12 @@ const (
 var serverIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 var preflightCatalogIDs = map[string]bool{
-	"mcp-inspector":        true,
-	"github-mcp-server":    true,
-	"playwright-mcp":       true,
-	"google-genai-toolbox": true,
-	"serena":               true,
+	"chatgpt-codex-mcp-daemon": true,
+	"mcp-inspector":            true,
+	"github-mcp-server":        true,
+	"playwright-mcp":           true,
+	"google-genai-toolbox":     true,
+	"serena":                   true,
 }
 
 // Server is a reviewed MCP endpoint. It intentionally has no auth fields:
@@ -311,7 +313,7 @@ func (s *Service) rpc(ctx context.Context, server Server, method string, id int,
 		return rpcResponse{}, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("MCP-Protocol-Version", protocolVersion)
 	req.Header.Set("User-Agent", "HAI-MCP-Preflight/1.0")
 	if sessionID != "" {
@@ -325,7 +327,7 @@ func (s *Service) rpc(ctx context.Context, server Server, method string, id int,
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return rpcResponse{}, "", fmt.Errorf("HTTP %d", response.StatusCode)
 	}
-	decoded, err := decodeResponse(response.Body)
+	decoded, err := decodeResponse(response.Body, response.Header.Get("Content-Type"))
 	if err != nil {
 		return rpcResponse{}, "", err
 	}
@@ -352,7 +354,7 @@ func (s *Service) notifyInitialized(ctx context.Context, server Server, sessionI
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("MCP-Protocol-Version", version)
 	req.Header.Set("User-Agent", "HAI-MCP-Preflight/1.0")
 	if sessionID != "" {
@@ -369,7 +371,7 @@ func (s *Service) notifyInitialized(ctx context.Context, server Server, sessionI
 	return nil
 }
 
-func decodeResponse(body io.Reader) (rpcResponse, error) {
+func decodeResponse(body io.Reader, contentType ...string) (rpcResponse, error) {
 	limited := io.LimitReader(body, maxResponseBytes+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
@@ -379,6 +381,20 @@ func decodeResponse(body io.Reader) (rpcResponse, error) {
 		return rpcResponse{}, fmt.Errorf("response exceeds %d byte limit", maxResponseBytes)
 	}
 	var decoded rpcResponse
+	if len(contentType) > 0 && strings.Contains(strings.ToLower(contentType[0]), "text/event-stream") {
+		scanner := bufio.NewScanner(bytes.NewReader(data))
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+			candidate := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if json.Unmarshal([]byte(candidate), &decoded) == nil && decoded.JSONRPC == "2.0" {
+				return decoded, nil
+			}
+		}
+		return rpcResponse{}, fmt.Errorf("response event stream did not contain JSON-RPC")
+	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return rpcResponse{}, fmt.Errorf("response is not JSON")
 	}
@@ -452,8 +468,15 @@ var playwrightReadOnlyContextTools = map[string]struct{}{
 	"browser_route_list": {}, "browser_snapshot": {},
 }
 
+var chatgptLogsReadOnlyContextTools = map[string]struct{}{
+	"get_context": {}, "get_conversation": {}, "get_message": {}, "get_raw": {},
+	"list_conversations": {}, "list_sources": {}, "search": {}, "stats": {}, "sync_status": {},
+}
+
 func readOnlyToolContract(catalogID string) (map[string]struct{}, string, bool) {
 	switch strings.TrimSpace(catalogID) {
+	case "chatgpt-codex-mcp-daemon":
+		return chatgptLogsReadOnlyContextTools, "ChatGPT logs MCP", true
 	case "github-mcp-server":
 		return githubReadOnlyContextTools, "GitHub MCP", true
 	case "playwright-mcp":

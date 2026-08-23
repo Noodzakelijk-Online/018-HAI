@@ -374,6 +374,15 @@ var entries = []Entry{
 		VerifiedAt: "2026-07-20", VerificationNote: "Current jlowin/fastmcp main revision and Apache-2.0 license checked on 2026-07-20. The isolated profile pins fastmcp 3.4.4 and implements no upstream tool execution, source access, or write capability by default.",
 	},
 	{
+		ID: "chatgpt-codex-mcp-daemon", Name: "ChatGPT/Codex Conversation History MCP", UpstreamURL: "https://github.com/oogxdd/chatgpt-codex-mcp-daemon", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10105/repos/", SourceCollection: "MCP Servers",
+		Status: StatusIntegrated, Category: "local conversation-history retrieval", IntegrationMode: "opt-in bounded read-only MCP task-context adapter",
+		Capabilities: []string{"conversation-history search", "project-filtered retrieval", "bounded provenance-bearing task context"}, RecommendedFor: []string{"project continuity", "prior-decision recall", "conversation-history evidence discovery"},
+		RequiresApproval: true, LocalFirstCompatible: true,
+		Activation: "Run the operator-managed hist MCP helper behind a reviewed local Streamable HTTP adapter, set HAI_CHATGPT_LOGS_MCP_ENABLED=true and HAI_CHATGPT_LOGS_MCP_URL, then recreate the backend. HAI verifies the declared inventory and calls only search with fixed result and character limits.",
+		Rationale:  "A narrow search-only consumer gives task planning useful prior-conversation context without exposing arbitrary MCP tool execution, starting a process, refreshing the corpus, or granting retrieved text any authority.",
+		VerifiedAt: "2026-08-23", VerificationNote: "The upstream stdio MCP handshake and nine-tool read-only inventory were exercised on Windows. HAI's adapter supports JSON and Streamable HTTP SSE responses but intentionally invokes only search; a database-backed tool-call smoke test still requires an initialized operator corpus.",
+	},
+	{
 		ID: "vllm", Name: "vLLM", UpstreamURL: "https://github.com/vllm-project/vllm", SourceCatalogURL: "https://api.ossinsight.io/v1/collections/10109/repos/", SourceCollection: "LLM Inference Engines",
 		Status: StatusIntegrated, Category: "local high-throughput model inference", IntegrationMode: "integrated loopback OpenAI-compatible provider profile",
 		Capabilities: []string{"local model serving", "OpenAI-compatible API", "batched inference", "model capability discovery"}, RecommendedFor: []string{"local reasoning", "larger local models", "high-volume extraction"},

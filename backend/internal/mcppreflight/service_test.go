@@ -65,6 +65,37 @@ func TestPreflightUsesHandshakeAndNeverCallsTool(t *testing.T) {
 	}
 }
 
+func TestPreflightAcceptsStreamableHTTPSSEForChatGPTLogs(t *testing.T) {
+	methods := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept") != "application/json, text/event-stream" {
+			t.Fatalf("Accept = %q", r.Header.Get("Accept"))
+		}
+		var request struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		methods = append(methods, request.Method)
+		w.Header().Set("Content-Type", "text/event-stream")
+		switch request.Method {
+		case "initialize":
+			w.Header().Set("MCP-Session-Id", "history-session")
+			_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-06-18\"}}\n\n"))
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"search\",\"inputSchema\":{\"type\":\"object\"}},{\"name\":\"list_sources\",\"inputSchema\":{\"type\":\"object\"}}]}}\n\n"))
+		}
+	}))
+	defer server.Close()
+
+	svc := NewService(Config{Enabled: true, Servers: []Server{{ID: "history", CatalogID: "chatgpt-codex-mcp-daemon", URL: server.URL}}})
+	result, found := svc.Preflight(context.Background(), "history")
+	if !found || result.Status != "ready" || !result.ReadOnlyVerified || result.ToolCount != 2 || strings.Join(methods, ",") != "initialize,notifications/initialized,tools/list" {
+		t.Fatalf("unexpected SSE preflight: result=%#v methods=%v", result, methods)
+	}
+}
+
 func TestPreflightIsFailClosedForDisabledOrUnsafeConfig(t *testing.T) {
 	disabled := NewService(Config{Enabled: false, Servers: []Server{{ID: "local", CatalogID: "mcp-inspector", URL: "http://127.0.0.1:3000/mcp"}}})
 	result, found := disabled.Preflight(context.Background(), "local")
