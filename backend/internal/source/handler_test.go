@@ -116,6 +116,42 @@ func TestHandlerListsOnlyVisibleConnectionHealthInOneBatch(t *testing.T) {
 	}
 }
 
+func TestHandlerLoadsOwnerScopedRecentActivityFromRepository(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID, bobID := uuid.New(), uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
+	)
+	repo.jobs = []models.SourceSyncJob{{ID: uuid.New(), SourceID: aliceID}, {ID: uuid.New(), SourceID: bobID}}
+	repo.auditLogs = []models.SourceAuditLog{{ID: uuid.New(), SourceID: aliceID}, {ID: uuid.New(), SourceID: bobID}}
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/sync-jobs", handler.SyncJobs)
+	router.GET("/sources/audit-logs", handler.AuditLogs)
+
+	for _, path := range []string{"/sources/sync-jobs", "/sources/audit-logs"} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, body=%s", path, response.Code, response.Body.String())
+		}
+	}
+	if len(repo.lastSyncJobSourceIDs) != 1 || repo.lastSyncJobSourceIDs[0] != aliceID {
+		t.Fatalf("sync-job query source IDs = %#v, want only Alice source", repo.lastSyncJobSourceIDs)
+	}
+	if repo.lastSyncJobLimit != 100 {
+		t.Fatalf("sync-job history limit = %d, want 100", repo.lastSyncJobLimit)
+	}
+	if len(repo.lastAuditLogSourceIDs) != 1 || repo.lastAuditLogSourceIDs[0] != aliceID {
+		t.Fatalf("audit-log query source IDs = %#v, want only Alice source", repo.lastAuditLogSourceIDs)
+	}
+	if repo.lastAuditLogLimit != 100 {
+		t.Fatalf("audit-log history limit = %d, want 100", repo.lastAuditLogLimit)
+	}
+}
+
 func TestGoogleOAuthStartRejectsForeignSourceBeforeConfigurationLookup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	foreignID := uuid.New()

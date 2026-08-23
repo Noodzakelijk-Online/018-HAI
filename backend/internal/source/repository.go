@@ -24,6 +24,7 @@ type Repository interface {
 	CreateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
 	UpdateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
 	FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
+	FindSyncJobsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceSyncJob, error)
 	FindRawItem(sourceID uuid.UUID, externalID string) (*models.SourceRawItem, error)
 	SaveRawItem(item *models.SourceRawItem) (*models.SourceRawItem, error)
 	FindRawItems(sourceID uuid.UUID) ([]models.SourceRawItem, error)
@@ -41,6 +42,7 @@ type Repository interface {
 	DeletePendingVectorIndex(extractionID uuid.UUID) error
 	SaveAuditLog(log *models.SourceAuditLog) (*models.SourceAuditLog, error)
 	FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error)
+	FindAuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error)
 	SaveOAuthToken(token *models.SourceOAuthToken) error
 	FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error)
 }
@@ -239,6 +241,15 @@ func (r *GormRepository) FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJ
 	return jobs, err
 }
 
+func (r *GormRepository) FindSyncJobsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceSyncJob, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceSyncJob{}, nil
+	}
+	var jobs []models.SourceSyncJob
+	err := r.DB.Where("source_id IN ?", sourceIDs).Order("created_at desc").Limit(boundedHistoryLimit(limit)).Find(&jobs).Error
+	return jobs, err
+}
+
 func (r *GormRepository) FindRawItem(sourceID uuid.UUID, externalID string) (*models.SourceRawItem, error) {
 	var item models.SourceRawItem
 	if err := r.DB.Where("source_id = ? AND external_id = ?", sourceID, externalID).First(&item).Error; err != nil {
@@ -400,6 +411,25 @@ func (r *GormRepository) FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAudi
 	}
 	err := query.Find(&logs).Error
 	return logs, err
+}
+
+func (r *GormRepository) FindAuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceAuditLog{}, nil
+	}
+	var logs []models.SourceAuditLog
+	err := r.DB.Where("source_id IN ?", sourceIDs).Order("created_at desc").Limit(boundedHistoryLimit(limit)).Find(&logs).Error
+	return logs, err
+}
+
+func boundedHistoryLimit(limit int) int {
+	if limit <= 0 {
+		return 100
+	}
+	if limit > 250 {
+		return 250
+	}
+	return limit
 }
 
 // SaveOAuthToken upserts the token for a source (one token set per source).

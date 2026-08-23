@@ -703,6 +703,10 @@ func (s *service) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) 
 	return s.repo.FindSyncJobs(sourceID)
 }
 
+func (s *service) SyncJobsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceSyncJob, error) {
+	return s.repo.FindSyncJobsForSources(sourceIDs, limit)
+}
+
 func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error) {
 	source, err := s.repo.FindSource(sourceID)
 	if err != nil {
@@ -1789,6 +1793,10 @@ func (s *service) DeleteExtractionAuthorized(
 
 func (s *service) AuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error) {
 	return s.repo.FindAuditLogs(sourceID)
+}
+
+func (s *service) AuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error) {
+	return s.repo.FindAuditLogsForSources(sourceIDs, limit)
 }
 
 func (s *service) localFolderItems(source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {

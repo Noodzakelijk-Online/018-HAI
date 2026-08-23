@@ -2339,6 +2339,10 @@ type fakeSourceRepo struct {
 	index                   []models.SourceIndexEntry
 	lastExtractionSourceIDs []uuid.UUID
 	lastVisibleSourceOwner  string
+	lastSyncJobSourceIDs    []uuid.UUID
+	lastSyncJobLimit        int
+	lastAuditLogSourceIDs   []uuid.UUID
+	lastAuditLogLimit       int
 	auditLogs               []models.SourceAuditLog
 	deleteExtractionErr     error
 	oauthTokens             map[uuid.UUID]*models.SourceOAuthToken
@@ -2538,6 +2542,25 @@ func (r *fakeSourceRepo) FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJ
 	return result, nil
 }
 
+func (r *fakeSourceRepo) FindSyncJobsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceSyncJob, error) {
+	r.lastSyncJobSourceIDs = append([]uuid.UUID(nil), sourceIDs...)
+	r.lastSyncJobLimit = limit
+	allowed := make(map[uuid.UUID]bool, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		allowed[sourceID] = true
+	}
+	result := make([]models.SourceSyncJob, 0, len(r.jobs))
+	for _, job := range r.jobs {
+		if allowed[job.SourceID] {
+			result = append(result, job)
+		}
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
 func (r *fakeSourceRepo) FindRawItem(sourceID uuid.UUID, externalID string) (*models.SourceRawItem, error) {
 	for _, item := range r.rawItems {
 		if item.SourceID == sourceID && item.ExternalID == externalID {
@@ -2723,6 +2746,25 @@ func (r *fakeSourceRepo) FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAudi
 		if sourceID == nil || log.SourceID == *sourceID {
 			result = append(result, log)
 		}
+	}
+	return result, nil
+}
+
+func (r *fakeSourceRepo) FindAuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error) {
+	r.lastAuditLogSourceIDs = append([]uuid.UUID(nil), sourceIDs...)
+	r.lastAuditLogLimit = limit
+	allowed := make(map[uuid.UUID]bool, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		allowed[sourceID] = true
+	}
+	result := make([]models.SourceAuditLog, 0, len(r.auditLogs))
+	for _, log := range r.auditLogs {
+		if allowed[log.SourceID] {
+			result = append(result, log)
+		}
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
 	}
 	return result, nil
 }

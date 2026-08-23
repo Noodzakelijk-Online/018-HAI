@@ -27,6 +27,11 @@ type ownerScopedSources interface {
 	SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error)
 }
 
+type sourceHistoryService interface {
+	SyncJobsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceSyncJob, error)
+	AuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error)
+}
+
 func NewHandler(service Service, transcribers ...whispercpp.Service) *Handler {
 	transcriber := whispercpp.DefaultService()
 	if len(transcribers) > 0 && transcribers[0] != nil {
@@ -133,18 +138,24 @@ func (h *Handler) SyncJobs(c *gin.Context) {
 			return
 		}
 	}
-	jobs, err := h.service.SyncJobs(sourceID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
 	if sourceID == nil {
 		visibleSourceIDs, err := h.visibleSourceIDs(c)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		jobs = filterVisibleSyncJobs(jobs, visibleSourceIDs)
+		jobs, err := h.recentSyncJobs(sourceIDsFromSet(visibleSourceIDs))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, jobs)
+		return
+	}
+	jobs, err := h.recentSyncJobs([]uuid.UUID{*sourceID})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 	c.JSON(http.StatusOK, jobs)
 }
@@ -557,18 +568,24 @@ func (h *Handler) AuditLogs(c *gin.Context) {
 			return
 		}
 	}
-	logs, err := h.service.AuditLogs(sourceID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
 	if sourceID == nil {
 		visibleSourceIDs, err := h.visibleSourceIDs(c)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		logs = filterVisibleAuditLogs(logs, visibleSourceIDs)
+		logs, err := h.recentAuditLogs(sourceIDsFromSet(visibleSourceIDs))
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, logs)
+		return
+	}
+	logs, err := h.recentAuditLogs([]uuid.UUID{*sourceID})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 	c.JSON(http.StatusOK, logs)
 }
@@ -640,6 +657,22 @@ func (h *Handler) sourcesForOwner(ownerIdentity string, includeDisabled bool) ([
 		return nil, errors.New("owner-scoped source reads are unavailable")
 	}
 	return scoped.SourcesForOwner(ownerIdentity, includeDisabled)
+}
+
+func (h *Handler) recentSyncJobs(sourceIDs []uuid.UUID) ([]models.SourceSyncJob, error) {
+	history, ok := h.service.(sourceHistoryService)
+	if !ok {
+		return nil, errors.New("source history reads are unavailable")
+	}
+	return history.SyncJobsForSources(sourceIDs, 100)
+}
+
+func (h *Handler) recentAuditLogs(sourceIDs []uuid.UUID) ([]models.SourceAuditLog, error) {
+	history, ok := h.service.(sourceHistoryService)
+	if !ok {
+		return nil, errors.New("source history reads are unavailable")
+	}
+	return history.AuditLogsForSources(sourceIDs, 100)
 }
 
 func (h *Handler) visibleSourceIDs(c *gin.Context) (map[uuid.UUID]bool, error) {
