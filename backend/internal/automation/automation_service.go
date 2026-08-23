@@ -1856,7 +1856,11 @@ func (s *service) executeDockerLaunch(
 	}
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	endpoint := "http://docker/containers/" + url.PathEscape(containerName) + "/start"
-	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
+	executionContext := request.ExecutionContext
+	if executionContext == nil {
+		executionContext = context.Background()
+	}
+	req, err := http.NewRequestWithContext(executionContext, http.MethodPost, endpoint, nil)
 	if err != nil {
 		return failedLaunch(err.Error(), started, append(audit, "docker request creation failed"))
 	}
@@ -1883,11 +1887,12 @@ func (s *service) executeDockerLaunch(
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	output := trimOutput(body, 4096)
 	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotModified {
 		return launchExecution{
 			Status:      "completed",
 			Message:     fmt.Sprintf("Docker container %s start request accepted", containerName),
-			Output:      strings.TrimSpace(string(body)),
+			Output:      output,
 			ExitCode:    resp.StatusCode,
 			DurationMs:  time.Since(started).Milliseconds(),
 			AuditEvents: append(audit, "docker start request executed through Docker API"),
@@ -1896,7 +1901,7 @@ func (s *service) executeDockerLaunch(
 	return launchExecution{
 		Status:      "failed",
 		Message:     fmt.Sprintf("Docker API returned HTTP %d for container %s", resp.StatusCode, containerName),
-		Output:      strings.TrimSpace(string(body)),
+		Output:      output,
 		ExitCode:    resp.StatusCode,
 		DurationMs:  time.Since(started).Milliseconds(),
 		AuditEvents: append(audit, "docker start request failed"),

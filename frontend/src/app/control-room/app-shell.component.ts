@@ -52,6 +52,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
     if (this.detailRestoreTimer !== undefined) {
       window.clearTimeout(this.detailRestoreTimer)
     }
+    document.body.classList.remove('hai-view-advanced')
     document.removeEventListener('toggle', this.onDetailsToggle, true)
   }
 

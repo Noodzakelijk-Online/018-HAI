@@ -1207,6 +1207,37 @@ func TestLaunchAllowsDockerWithApproval(t *testing.T) {
 	}
 }
 
+func TestLaunchRedactsDockerFailureOutput(t *testing.T) {
+	socketPath, calls := startDockerTestServerWithResponse(t, http.StatusInternalServerError, "token=super-secret-token")
+	t.Setenv("AUTOMATION_DOCKER_CONTROL_ENABLED", "true")
+	t.Setenv("AUTOMATION_DOCKER_ALLOWED_CONTAINERS", "safe-container")
+	t.Setenv("AUTOMATION_DOCKER_SOCKET", socketPath)
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Docker failure redaction",
+		URLPath:      "docker-failure-redaction",
+		LaunchType:   "docker_service",
+		LaunchTarget: "safe-container",
+	})
+	service := newTestService(repo, events.Publisher{})
+
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{OwnerIdentity: "alice"}))
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if calls.Load() != 1 || result.Status != "failed" {
+		t.Fatalf("Docker launch result = %#v calls=%d, want one failed launch", result, calls.Load())
+	}
+	if strings.Contains(result.Output, "super-secret-token") {
+		t.Fatalf("Docker failure output leaked a secret: %#v", result)
+	}
+	if len(repo.launchEvents) != 1 || strings.Contains(repo.launchEvents[0].Output, "super-secret-token") {
+		t.Fatalf("Docker launch event leaked a secret: %#v", repo.launchEvents)
+	}
+}
+
 func TestLaunchBlocksDockerWhenContainerNotAllowlisted(t *testing.T) {
 	t.Setenv("AUTOMATION_DOCKER_CONTROL_ENABLED", "true")
 	t.Setenv("AUTOMATION_DOCKER_ALLOWED_CONTAINERS", "safe-container")
@@ -1384,6 +1415,10 @@ func approvedTaskLaunchRequest(
 }
 
 func startDockerTestServer(t *testing.T) (string, *atomic.Int32) {
+	return startDockerTestServerWithResponse(t, http.StatusNoContent, "")
+}
+
+func startDockerTestServerWithResponse(t *testing.T, status int, body string) (string, *atomic.Int32) {
 	t.Helper()
 	socketPath := filepath.Join(os.TempDir(), "hai-"+uuid.NewString()+".sock")
 	listener, err := net.Listen("unix", socketPath)
@@ -1396,7 +1431,8 @@ func startDockerTestServer(t *testing.T) (string, *atomic.Int32) {
 	calls := &atomic.Int32{}
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
 	})}
 	go func() {
 		_ = server.Serve(listener)
