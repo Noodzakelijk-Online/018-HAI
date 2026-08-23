@@ -23,6 +23,7 @@ $installer = [IO.File]::ReadAllText($installerScript)
 $support = [IO.File]::ReadAllText($supportScript)
 $initializer = [IO.File]::ReadAllText($initializerScript)
 $startScript = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"))
+$stopScript = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Stop-HAI.ps1"))
 $connectorTest = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Test-HAI-LocalConnector.ps1"))
 $ngrokStart = [IO.File]::ReadAllText((Join-Path $repositoryRoot "scripts\start-ngrok.ps1"))
 $docs = [IO.File]::ReadAllText($documentation)
@@ -89,6 +90,10 @@ if ($initializer -notmatch [Regex]::Escape('HAI_A2A_LOCAL_PORT') -or
 
 if ($startScript -notmatch [Regex]::Escape('--profile local-a2a')) {
     throw "The installed start command must activate the local A2A connector profile."
+}
+
+if ($stopScript -notmatch [Regex]::Escape('Assert-HaiSingleInstallation')) {
+    throw "The installed stop command must refuse to manage another HAI installation."
 }
 
 foreach ($required in @(
