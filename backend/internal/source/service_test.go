@@ -842,6 +842,20 @@ func TestSourceHTTPTransportReusesConnectionsOnlyWithinTheSamePolicy(t *testing.
 	}
 }
 
+func TestSourceSyncTimeoutUsesBoundedConfiguration(t *testing.T) {
+	t.Setenv("CONNECTED_SOURCE_SYNC_TIMEOUT_SECONDS", "90")
+	if got := sourceSyncTimeout(); got != 90*time.Second {
+		t.Fatalf("sourceSyncTimeout() = %s, want 90s", got)
+	}
+
+	for _, value := range []string{"", "29", "1801", "not-a-number"} {
+		t.Setenv("CONNECTED_SOURCE_SYNC_TIMEOUT_SECONDS", value)
+		if got := sourceSyncTimeout(); got != 10*time.Minute {
+			t.Fatalf("sourceSyncTimeout() with %q = %s, want 10m", value, got)
+		}
+	}
+}
+
 func TestSyncContextStopsBeforeAnyWorkWhenRequestIsCancelled(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{

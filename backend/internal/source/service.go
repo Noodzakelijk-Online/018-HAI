@@ -782,6 +782,14 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Individual connector requests already have tight network timeouts, but a
+	// full sync can involve several requests plus bounded extraction and
+	// persistence work. Give every invocation an overall deadline as well so a
+	// slow upstream or database cannot retain a durable worker indefinitely.
+	// A caller-provided deadline remains authoritative when it is sooner.
+	syncCtx, cancel := context.WithTimeout(ctx, sourceSyncTimeout())
+	defer cancel()
+	ctx = syncCtx
 	if !s.beginSync(sourceID) {
 		return nil, ErrSyncInProgress
 	}
@@ -3072,6 +3080,14 @@ func sourceHTTPTimeout() time.Duration {
 	seconds, err := strconv.Atoi(strings.TrimSpace(os.Getenv("CONNECTED_SOURCE_HTTP_TIMEOUT_SECONDS")))
 	if err != nil || seconds < 1 || seconds > 120 {
 		seconds = 20
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func sourceSyncTimeout() time.Duration {
+	seconds, err := strconv.Atoi(strings.TrimSpace(os.Getenv("CONNECTED_SOURCE_SYNC_TIMEOUT_SECONDS")))
+	if err != nil || seconds < 30 || seconds > 30*60 {
+		seconds = 10 * 60
 	}
 	return time.Duration(seconds) * time.Second
 }
