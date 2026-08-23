@@ -118,6 +118,43 @@ describe('ControlCenterComponent', () => {
     expect(component.hasLiveWork()).toBeTrue()
   })
 
+  it('cancels an obsolete dashboard refresh so stale data cannot replace the latest view', () => {
+    const run = jasmine.createSpy('run').and.returnValue(new Subject<any>().asObservable())
+    const { component } = createComponent({ run })
+    const firstWorkflow = new Subject<any>()
+    const firstAmbient = new Subject<any>()
+    const firstPursuits = new Subject<any>()
+    const secondWorkflow = new Subject<any>()
+    const secondAmbient = new Subject<any>()
+    const secondPursuits = new Subject<any>()
+    const workflow = jasmine.createSpy('dashboard').and.returnValues(firstWorkflow, secondWorkflow)
+    const ambient = jasmine.createSpy('overview').and.returnValues(firstAmbient, secondAmbient)
+    const pursuits = jasmine.createSpy('dashboard').and.returnValues(firstPursuits, secondPursuits)
+    ;(component as any).workflowService = { dashboard: workflow }
+    ;(component as any).ambientService = { overview: ambient }
+    ;(component as any).pursuitService = { dashboard: pursuits }
+
+    component.refresh()
+    component.refresh()
+
+    secondWorkflow.next({ counts: { current: 2 } })
+    secondWorkflow.complete()
+    secondAmbient.next({ scans: [] })
+    secondAmbient.complete()
+    secondPursuits.next({ counts: { active: 2 } })
+    secondPursuits.complete()
+
+    firstWorkflow.next({ counts: { current: 99 } })
+    firstWorkflow.complete()
+    firstAmbient.next({ scans: [] })
+    firstAmbient.complete()
+    firstPursuits.next({ counts: { active: 99 } })
+    firstPursuits.complete()
+
+    expect(component.workflowDashboard?.counts?.['current']).toBe(2)
+    expect(component.pursuitDashboard?.counts?.['active']).toBe(2)
+  })
+
   it('does not present failed diagnostics as an empty automation registry', () => {
     const run = jasmine.createSpy('run').and.returnValue(new Subject<any>().asObservable())
     const { component } = createComponent({ run })

@@ -1,6 +1,6 @@
-import { Component, Inject, OnInit, ViewEncapsulation } from '@angular/core'
+import { Component, Inject, OnDestroy, OnInit, ViewEncapsulation } from '@angular/core'
 import { Router } from '@angular/router'
-import { forkJoin, of } from 'rxjs'
+import { forkJoin, of, Subscription } from 'rxjs'
 import { catchError, finalize, timeout } from 'rxjs/operators'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { IAgentCycleRunResult } from '../../models/agent-cycle.model.interface'
@@ -81,7 +81,7 @@ interface NavigationItem {
     encapsulation: ViewEncapsulation.None,
     standalone: false
 })
-export class ControlCenterComponent implements OnInit {
+export class ControlCenterComponent implements OnInit, OnDestroy {
   readonly currentHour = new Date().getHours()
   automations: IAutomationModel[] = []
   summary?: IAutomationHealthSummary
@@ -113,6 +113,7 @@ export class ControlCenterComponent implements OnInit {
   diagnosticsExpanded = false
   mobileNavigationOpen = false
   private readonly operationTimeoutMs = 30000
+  private dashboardRefreshSubscription?: Subscription
   private checkingIds = new Set<string>()
   private launchingIds = new Set<string>()
 
@@ -181,6 +182,10 @@ export class ControlCenterComponent implements OnInit {
     this.refresh()
   }
 
+  ngOnDestroy(): void {
+    this.dashboardRefreshSubscription?.unsubscribe()
+  }
+
   toggleTheme(): void {
     this.themeMode = this.themeService.toggle()
   }
@@ -194,66 +199,41 @@ export class ControlCenterComponent implements OnInit {
   }
 
   refresh(): void {
+    this.dashboardRefreshSubscription?.unsubscribe()
     this.loading = true
     this.dashboardLoadErrors = []
-    let pending = 3
-    const done = () => {
-      pending -= 1
-      if (pending <= 0) {
-        this.loading = false
-      }
-    }
-
-    this.workflowService.dashboard().pipe(
+    this.dashboardRefreshSubscription = forkJoin({
+      workflow: this.workflowService.dashboard().pipe(
         timeout(2500),
         catchError(() => {
           this.recordDashboardLoadFailure('Workflow status')
           return of(undefined)
         })
-      ).subscribe({
-        next: (workflow) => {
-          this.workflowDashboard = workflow
-          this.rebuildViewModel()
-          done()
-        },
-        error: () => {
-          done()
-        },
-      })
-
-    this.ambientService.overview().pipe(
+      ),
+      ambient: this.ambientService.overview().pipe(
         timeout(2500),
         catchError(() => {
           this.recordDashboardLoadFailure('Ambient scan')
           return of(undefined)
         })
-      ).subscribe({
-        next: (ambient) => {
-          this.ambientOverview = ambient
-          this.rebuildViewModel()
-          done()
-        },
-        error: () => {
-          done()
-        },
-      })
-
-    this.pursuitService.dashboard().pipe(
+      ),
+      pursuits: this.pursuitService.dashboard().pipe(
         timeout(1800),
         catchError(() => {
           this.recordDashboardLoadFailure('Pursuit status')
           return of(undefined)
         })
-      ).subscribe({
-        next: (pursuits) => {
-          this.pursuitDashboard = pursuits
-          this.rebuildViewModel()
-          done()
-        },
-        error: () => {
-          done()
-        },
-      })
+      ),
+    }).subscribe({
+      next: ({ workflow, ambient, pursuits }) => {
+        this.workflowDashboard = workflow
+        this.ambientOverview = ambient
+        this.pursuitDashboard = pursuits
+        this.rebuildViewModel()
+        this.loading = false
+      },
+      error: () => (this.loading = false),
+    })
   }
 
   hasDashboardLoadError(): boolean {
