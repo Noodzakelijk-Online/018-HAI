@@ -746,6 +746,17 @@ export interface AgentTeamMessageAttentionPage {
   messages: AgentTeamMessageAttention[]
 }
 
+export interface AgentTeamMessageAttentionIndexTeam {
+  teamId: string
+  teamVersion: string
+  messages: AgentTeamMessageAttention[]
+}
+
+export interface AgentTeamMessageAttentionIndex {
+  generatedAt: string
+  teams: AgentTeamMessageAttentionIndexTeam[]
+}
+
 export interface LifeOntologyProvenance {
   referenceId?: string
   uri?: string

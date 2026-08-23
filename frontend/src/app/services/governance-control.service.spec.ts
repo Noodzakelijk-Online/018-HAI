@@ -246,6 +246,11 @@ describe('GovernanceControlService', () => {
     expect(attention.request.method).toBe('GET')
     attention.flush({ generatedAt: '2026-08-08T10:00:00Z', messages: [] })
 
+    service.agentTeamMessageAttentionIndex().subscribe()
+    const attentionIndex = http.expectOne('/api/v1/framework-registry/teams/message-attention')
+    expect(attentionIndex.request.method).toBe('GET')
+    attentionIndex.flush({ generatedAt: '2026-08-08T10:00:00Z', teams: [] })
+
     service.listLifeEntities(25, false).subscribe()
     const entities = http.expectOne((request) =>
       request.url === '/api/v1/life-ontology/entities' &&

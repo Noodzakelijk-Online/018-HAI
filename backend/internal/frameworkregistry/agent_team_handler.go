@@ -42,6 +42,7 @@ func RegisterAgentTeamRoutes(parent *gin.RouterGroup, handler *AgentTeamHandler,
 	routes.Use(guards.AuthenticatedOwner, guards.RecognizedRole)
 	{
 		routes.GET("", guards.Read, handler.List)
+		routes.GET("/message-attention", guards.Read, handler.MessageAttentionIndex)
 		routes.POST("", guards.Govern, handler.Create)
 		routes.POST("/guided", guards.Govern, handler.CreateGuided)
 		routes.GET("/:id/versions", guards.Read, handler.ListVersions)
@@ -297,6 +298,15 @@ func (h *AgentTeamHandler) MessageAttention(c *gin.Context) {
 		return
 	}
 	result, err := h.service.MessageAttention(owner, c.Param("id"), c.Param("version"))
+	respondAgentTeam(c, result, err, http.StatusOK)
+}
+
+func (h *AgentTeamHandler) MessageAttentionIndex(c *gin.Context) {
+	owner, ok := frameworkOwner(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.MessageAttentionIndex(owner)
 	respondAgentTeam(c, result, err, http.StatusOK)
 }
 

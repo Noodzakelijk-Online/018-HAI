@@ -8,6 +8,7 @@ import {
   AgentLifecycleState,
   AgentRecord,
   AgentTeamList,
+  AgentTeamMessageAttentionIndex,
   AgentTeamMessageAttentionPage,
   AgentTransitionList,
   CreateOutcomeEvaluationRequest,
@@ -263,6 +264,15 @@ export class GovernanceControlService {
       generatedAt: response.generatedAt,
       messages: response?.messages || [],
     })))
+  }
+
+  agentTeamMessageAttentionIndex(): Observable<AgentTeamMessageAttentionIndex> {
+    return this.http.get<AgentTeamMessageAttentionIndex>(`${this.teamUrl}/message-attention`).pipe(
+      map((response) => ({
+        generatedAt: response?.generatedAt || '',
+        teams: response?.teams || [],
+      }))
+    )
   }
 
   listLifeEntities(

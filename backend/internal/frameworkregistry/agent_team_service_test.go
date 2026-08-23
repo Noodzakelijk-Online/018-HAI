@@ -293,6 +293,33 @@ func TestAgentTeamMessageAttentionBatchesAcknowledgmentReadsWhenSupported(t *tes
 	}
 }
 
+func TestAgentTeamMessageAttentionIndexIsOwnerScopedAndUsesOneOverviewRead(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 9, 10, 0, 0, 0, time.UTC)
+	service := newAgentTeamService(NewMemoryAgentTeamRepository(), func() time.Time { return now }, deterministicTeamIDs("attention-index"))
+	team := createActiveTestTeam(t, service, "robert", now)
+	message := decisionMessage(t, team, now, deterministicUUID("attention-index-correlation"), team.Members[0], team.Members[1], TeamVoteSupport, "Keep the bounded plan.", "attention-index-message")
+	if _, created, err := service.StoreCoordinationMessage("robert", team.ID, team.Version, message); err != nil || !created {
+		t.Fatalf("StoreCoordinationMessage = created %v, err %v", created, err)
+	}
+
+	index, err := service.MessageAttentionIndex("robert")
+	if err != nil {
+		t.Fatalf("MessageAttentionIndex: %v", err)
+	}
+	if len(index.Teams) != 1 || index.Teams[0].TeamID != team.ID || index.Teams[0].TeamVersion != team.Version || len(index.Teams[0].Messages) != 1 {
+		t.Fatalf("unexpected owner-scoped attention index: %#v", index)
+	}
+	other, err := service.MessageAttentionIndex("someone-else")
+	if err != nil {
+		t.Fatalf("MessageAttentionIndex(other owner): %v", err)
+	}
+	if len(other.Teams) != 0 {
+		t.Fatalf("owner-scoped attention leaked teams: %#v", other)
+	}
+}
+
 type batchAttentionRepository struct {
 	AgentTeamRepository
 	batchCalls      int

@@ -518,6 +518,32 @@ func (s *AgentTeamService) MessageAttention(owner, teamID, version string) (*Tea
 	if _, err := s.repo.GetTeam(owner, strings.TrimSpace(teamID), strings.TrimSpace(version)); err != nil {
 		return nil, err
 	}
+	return s.messageAttention(owner, teamID, version, s.now().UTC())
+}
+
+// MessageAttentionIndex derives overview attention for every owner-scoped
+// team. It avoids the client-side N+1 request pattern without changing the
+// detailed team inspector contract.
+func (s *AgentTeamService) MessageAttentionIndex(owner string) (*TeamMessageAttentionIndex, error) {
+	teams, err := s.repo.ListTeams(owner)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	result := make([]TeamMessageAttentionByTeam, 0, len(teams))
+	for _, team := range teams {
+		page, err := s.messageAttention(owner, team.ID, team.Version, now)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, TeamMessageAttentionByTeam{
+			TeamID: team.ID, TeamVersion: team.Version, Messages: page.Messages,
+		})
+	}
+	return &TeamMessageAttentionIndex{GeneratedAt: now, Teams: result}, nil
+}
+
+func (s *AgentTeamService) messageAttention(owner, teamID, version string, now time.Time) (*TeamMessageAttentionPage, error) {
 	messages, err := s.repo.ListCoordinationMessages(owner, teamID, version, "")
 	if err != nil {
 		return nil, err
@@ -533,7 +559,6 @@ func (s *AgentTeamService) MessageAttention(owner, teamID, version string) (*Tea
 			return nil, err
 		}
 	}
-	now := s.now().UTC()
 	result := make([]TeamMessageAttention, 0, len(messages))
 	for _, message := range messages {
 		acknowledgments, found := acknowledgmentsByMessage[message.ID]

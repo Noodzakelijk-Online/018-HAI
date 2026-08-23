@@ -2,7 +2,7 @@ import { HttpErrorResponse } from '@angular/common/http'
 import { Component, OnDestroy, OnInit } from '@angular/core'
 import { NzModalService } from 'ng-zorro-antd/modal'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
-import { catchError, forkJoin, map, of, Subscription, switchMap, throwError } from 'rxjs'
+import { catchError, forkJoin, of, Subscription, throwError } from 'rxjs'
 import {
   AgentAssignment,
   AgentLifecycleState,
@@ -498,24 +498,17 @@ export class GovernanceControlComponent implements OnInit, OnDestroy {
     if (!open || !this.shouldLoadAdvisory('teams', force)) return
     this.beginAdvisoryLoad('teams')
     this.advisorySubscriptions.teams?.unsubscribe()
-    this.advisorySubscriptions.teams = this.service.listAgentTeams().pipe(
-      switchMap((response) => {
+    this.advisorySubscriptions.teams = forkJoin({
+      teams: this.service.listAgentTeams(),
+      attention: this.service.agentTeamMessageAttentionIndex(),
+    }).subscribe({
+      next: ({ teams: response, attention }) => {
         const teams = response.teams || []
-        if (!teams.length) return of({ teams, attention: [] as Array<{ key: string; page: AgentTeamMessageAttentionPage }> })
-        return forkJoin(teams.map((team) =>
-          this.service.agentTeamMessageAttention(team.id, team.version).pipe(
-            map((page) => ({ key: this.agentTeamAttentionKey(team), page })),
-            catchError(() => of({
-              key: this.agentTeamAttentionKey(team),
-              page: { generatedAt: '', messages: [] } as AgentTeamMessageAttentionPage,
-            }))
-          )
-        )).pipe(map((attention) => ({ teams, attention })))
-      })
-    ).subscribe({
-      next: ({ teams, attention }) => {
         this.agentTeams = teams
-        this.agentTeamAttention = Object.fromEntries(attention.map((item) => [item.key, item.page]))
+        this.agentTeamAttention = Object.fromEntries((attention.teams || []).map((item) => [
+          this.agentTeamAttentionKey({ id: item.teamId, version: item.teamVersion } as AgentTeamContract),
+          { generatedAt: attention.generatedAt, messages: item.messages || [] } as AgentTeamMessageAttentionPage,
+        ]))
         this.finishAdvisoryLoad('teams', this.agentTeams.length)
       },
       error: (error) => this.failAdvisoryLoad('teams', error, 'Agent-team records could not be loaded.'),

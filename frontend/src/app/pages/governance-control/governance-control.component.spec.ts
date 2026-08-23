@@ -275,6 +275,7 @@ describe('GovernanceControlComponent', () => {
         'decideLearningProposal',
         'listAgentTeams',
         'agentTeamMessageAttention',
+        'agentTeamMessageAttentionIndex',
         'listLifeEntities',
         'listLifeRelations',
         'listLifeMergeProposals',
@@ -335,6 +336,7 @@ describe('GovernanceControlComponent', () => {
     service.effectiveDomainPack.and.returnValue(of(domain))
     service.listAgentTeams.and.returnValue(of({ teams: [] }))
     service.agentTeamMessageAttention.and.returnValue(of({ generatedAt: '2026-08-08T10:00:00Z', messages: [] }))
+    service.agentTeamMessageAttentionIndex.and.returnValue(of({ generatedAt: '2026-08-08T10:00:00Z', teams: [] }))
     service.listLifeEntities.and.returnValue(of({ entities: [] }))
     service.listLifeRelations.and.returnValue(of({ relations: [] }))
     service.listLifeMergeProposals.and.returnValue(of({ proposals: [] }))
@@ -1564,21 +1566,22 @@ describe('GovernanceControlComponent', () => {
       updatedAt: '2026-08-01T00:00:00Z',
     }
     service.listAgentTeams.and.returnValue(of({ teams: [team] }))
-    service.agentTeamMessageAttention.and.returnValue(of({
+    service.agentTeamMessageAttentionIndex.and.returnValue(of({
       generatedAt: '2026-08-08T10:00:00Z',
-      messages: [{
+      teams: [{ teamId: 'team-1', teamVersion: '1.0.0', messages: [{
         messageId: 'message-1', correlationId: 'correlation-1', recipientId: 'reviewer',
         subject: 'Review evidence', requiresAcknowledgment: true, state: 'overdue',
         reason: 'acknowledgment remained overdue after reminders',
         dueAt: '2026-08-08T09:00:00Z', expiresAt: '2026-08-08T11:00:00Z',
         humanReviewRequired: true, advisoryOnly: true, grantsExecutionAuthority: false,
         executionAuthorizationRequired: true,
-      }],
+      }] }],
     }))
 
     component.loadAgentTeams(true, true)
 
-    expect(service.agentTeamMessageAttention).toHaveBeenCalledWith('team-1', '1.0.0')
+    expect(service.agentTeamMessageAttentionIndex).toHaveBeenCalled()
+    expect(service.agentTeamMessageAttention).not.toHaveBeenCalled()
     expect(component.agentTeamReviewCount).toBe(1)
     expect(component.agentTeamReviewItems(team).map((item) => item.state)).toEqual(['overdue'])
   })

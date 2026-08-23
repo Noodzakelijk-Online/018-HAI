@@ -223,6 +223,20 @@ type TeamMessageAttentionPage struct {
 	Messages    []TeamMessageAttention `json:"messages"`
 }
 
+// TeamMessageAttentionIndex is the owner-scoped overview read model. It keeps
+// the detailed per-team endpoint available for inspectors while letting an
+// overview avoid one HTTP request and team lookup per team.
+type TeamMessageAttentionIndex struct {
+	GeneratedAt time.Time                    `json:"generatedAt"`
+	Teams       []TeamMessageAttentionByTeam `json:"teams"`
+}
+
+type TeamMessageAttentionByTeam struct {
+	TeamID      string                 `json:"teamId"`
+	TeamVersion string                 `json:"teamVersion"`
+	Messages    []TeamMessageAttention `json:"messages"`
+}
+
 // TeamLifecycleEvent is append-only and hash-linked per team version.
 type TeamLifecycleEvent struct {
 	Sequence            uint64    `json:"sequence"`
