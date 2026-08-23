@@ -1,9 +1,9 @@
-import { Component, Inject, OnInit, ViewEncapsulation } from '@angular/core';
+import { Component, Inject, OnDestroy, OnInit, ViewEncapsulation } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { NzModalService } from 'ng-zorro-antd/modal';
-import { catchError, forkJoin, of, timeout } from 'rxjs';
+import { catchError, forkJoin, of, Subscription, timeout } from 'rxjs';
 import {
   IPursuitDetail,
   IPursuitMatchCandidate,
@@ -40,7 +40,7 @@ type FrameworkProvenanceState = 'missing' | 'invalid' | 'recorded' | 'verified';
     encapsulation: ViewEncapsulation.None,
     standalone: false
 })
-export class WorkflowEngineComponent implements OnInit {
+export class WorkflowEngineComponent implements OnInit, OnDestroy {
   overview?: IWorkflowOverview;
   dashboard?: IWorkflowDashboard;
   reminderProposals?: IWorkflowReminderProposalSnapshot;
@@ -83,6 +83,8 @@ export class WorkflowEngineComponent implements OnInit {
   activeQueue: 'all' | 'approval' | 'ready' | 'blocked' | 'review' = 'all';
   private frameworkSelectionLookup = 0;
   activationBusyId?: string;
+  private refreshSubscription?: Subscription;
+  private intakeChangesSubscription?: Subscription;
 
   intakeForm: FormGroup = this.fb.group({
     input: ['', [Validators.required]],
@@ -125,7 +127,7 @@ export class WorkflowEngineComponent implements OnInit {
 
   ngOnInit(): void {
     this.refresh();
-    this.intakeForm.valueChanges.subscribe(() => {
+    this.intakeChangesSubscription = this.intakeForm.valueChanges.subscribe(() => {
       // A changed signal must be matched again; never link edited intake to a stale pursuit choice.
       this.selectedPursuitMatch = undefined;
       this.pursuitMatches = [];
@@ -139,10 +141,16 @@ export class WorkflowEngineComponent implements OnInit {
     }
   }
 
+  ngOnDestroy(): void {
+    this.refreshSubscription?.unsubscribe();
+    this.intakeChangesSubscription?.unsubscribe();
+  }
+
   refresh(showNotification = false, preserveLastOperation = false): void {
     if (this.runningAction && this.runningAction !== 'refresh') {
       return;
     }
+    this.refreshSubscription?.unsubscribe();
     const blockingRefresh = !preserveLastOperation;
     this.loading = true;
     this.reminderProposals = undefined;
@@ -154,7 +162,7 @@ export class WorkflowEngineComponent implements OnInit {
     if (blockingRefresh) {
       this.runningAction = 'refresh';
     }
-    forkJoin({
+    this.refreshSubscription = forkJoin({
       overview: this.workflowService.overview(),
       dashboard: this.workflowService.dashboard(),
       reminderProposals: this.workflowService.reminderProposals().pipe(catchError(() => {

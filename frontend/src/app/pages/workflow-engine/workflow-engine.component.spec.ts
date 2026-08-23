@@ -1,6 +1,6 @@
 import { FormBuilder } from '@angular/forms';
 import { convertToParamMap } from '@angular/router';
-import { of, throwError } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import {
   IWorkflowFrameworkSelectionDecision,
   IWorkflowFrameworkSelectionProvenance,
@@ -314,6 +314,33 @@ describe('WorkflowEngineComponent', () => {
     expect(component.reminderActivationUnavailable).toBeFalse();
     expect(component.dashboard).toBeDefined();
     expect(notification.error).not.toHaveBeenCalled();
+  });
+
+  it('cancels an obsolete refresh so stale workflows cannot replace the newest queue', () => {
+    const { component, workflowService } = createComponent();
+    const firstItems = new Subject<any[]>();
+    const secondItems = new Subject<any[]>();
+    workflowService.overview.and.returnValue(of({ capabilities: [], states: [], safetyRules: [], rules: [] }));
+    workflowService.dashboard.and.returnValue(of({
+      counts: {}, approvalItems: [], blockedItems: [], readyItems: [], highRiskItems: [],
+      itemsWithoutNextAction: [], dueOpenLoops: [], rules: [],
+    }));
+    workflowService.reminderProposals.and.returnValue(of(undefined));
+    workflowService.reminderActivationHistory.and.returnValue(of(undefined));
+    workflowService.reminderDeliveryHistory.and.returnValue(of(undefined));
+    workflowService.items.and.returnValues(firstItems.asObservable(), secondItems.asObservable());
+    workflowService.approvals.and.returnValue(of([]));
+    (component.refresh as jasmine.Spy).and.callThrough();
+
+    component.refresh();
+    component.refresh();
+
+    secondItems.next([{ id: 'new-workflow' }]);
+    secondItems.complete();
+    firstItems.next([{ id: 'old-workflow' }]);
+    firstItems.complete();
+
+    expect(component.items.map((item) => item.id)).toEqual(['new-workflow']);
   });
 
   it('authorizes exactly one internal reminder from a current approved decision', () => {
