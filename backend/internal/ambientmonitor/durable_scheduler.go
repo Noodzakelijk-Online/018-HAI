@@ -147,9 +147,10 @@ func monitorSweepInterval() time.Duration {
 
 func monitorPollInterval() time.Duration {
 	// Outcome monitoring is advisory and queued work is lease-protected. A
-	// 30-second idle poll halves the default database wake-ups while preserving
-	// a bounded recovery delay for the local-first single-node deployment.
-	return envSeconds("OUTCOME_MONITOR_POLL_SECONDS", 30, 1, 300)
+	// Startup executes immediately and recurring work persists its next due
+	// time. A five-minute idle poll therefore removes most empty-installation
+	// database wake-ups while retaining bounded recovery after a worker loss.
+	return envSeconds("OUTCOME_MONITOR_POLL_SECONDS", 300, 1, 300)
 }
 
 func monitorLeaseDuration() time.Duration {

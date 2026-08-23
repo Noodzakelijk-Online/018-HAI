@@ -317,11 +317,18 @@ func (r *Runner) safeInvoke(ctx context.Context, handler Handler, job models.Dur
 	return handler(ctx, job)
 }
 
-// Start polls the queue until the context is cancelled. This is the long-running
-// worker loop; call it from a goroutine at startup.
+// Start polls the queue until the context is cancelled. It performs one pass
+// immediately because RegisterRecurring may have recovered work that is already
+// due at process startup. Waiting for the idle interval here makes restart
+// recovery unnecessarily slow and pressures callers to use wasteful short
+// polling intervals.
 func (r *Runner) Start(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 5 * time.Second
+	}
+	if _, err := r.RunOnce(ctx); err != nil {
+		// A repository error is transient (for example a database restart). The
+		// first scheduled poll retries it without bringing down the API process.
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

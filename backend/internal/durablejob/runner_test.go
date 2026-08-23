@@ -35,6 +35,31 @@ func (r *leaseLosingRepo) ExtendLease(
 
 func newFakeRepo() *fakeRepo { return &fakeRepo{jobs: map[uuid.UUID]*models.DurableJob{}} }
 
+func TestRunnerStartProcessesAlreadyDueWorkWithoutWaitingForPollInterval(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Now().UTC()
+	if _, err := repo.Enqueue(&models.DurableJob{
+		Queue: "startup", Kind: "due", RunAt: now, MaxAttempts: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(repo, Options{WorkerID: "startup-worker", Queue: "startup"})
+	processed := make(chan struct{}, 1)
+	runner.Register("due", func(context.Context, Job) error {
+		processed <- struct{}{}
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go runner.Start(ctx, time.Hour)
+
+	select {
+	case <-processed:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("due work waited for the polling interval instead of running at worker startup")
+	}
+}
+
 func (f *fakeRepo) Enqueue(job *models.DurableJob) (*models.DurableJob, error) {
 	if job.ID == uuid.Nil {
 		job.ID = uuid.New()

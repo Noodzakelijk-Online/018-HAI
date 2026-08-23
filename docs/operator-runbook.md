@@ -876,7 +876,7 @@ History limits are bounded; keep operator requests smaller than the maximum.
 | --- | ---: | --- |
 | `OUTCOME_MONITOR_SCHEDULER_ENABLED` | `true` | Enables the persisted `outcome-monitor.sweep` singleton. |
 | `OUTCOME_MONITOR_SWEEP_SECONDS` | `300` | 60-86400 seconds between recurring sweeps. |
-| `OUTCOME_MONITOR_POLL_SECONDS` | `30` | 1-300 seconds between durable queue polls. The default halves idle queue wake-ups while keeping advisory recovery bounded. |
+| `OUTCOME_MONITOR_POLL_SECONDS` | `300` | 1-300 seconds between durable queue polls. Workers process already-due jobs immediately at startup; the five-minute idle default avoids repeated empty-database wake-ups while keeping advisory recovery bounded. |
 | `OUTCOME_MONITOR_LEASE_SECONDS` | `120` | 5-1800 seconds; repository/database rules cap an active lease to one hour. |
 | `OUTCOME_MONITOR_SCOPE_LIMIT` | `50` | 1-100 due owner/workspace scopes per sweep. |
 | `OUTCOME_MONITOR_BATCH_LIMIT` | `20` | 1-100 targets claimed per scope. |

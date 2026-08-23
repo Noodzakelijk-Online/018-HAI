@@ -200,6 +200,11 @@ out-of-range values fall back to bounded defaults documented in
 `.env.example`. Disabling the scheduler does not remove the records or grant a
 different execution path.
 
+Durable workers process work already due when HAI starts, then use five-minute
+idle polls by default. This keeps a local installation quiet when no source,
+workflow, ambient, or outcome work is pending; explicit manual passes and
+normal recurring due times remain governed by their existing schedules.
+
 Required acceptance before relying on this path includes exact replay without
 duplicate observations or inbox items, two-owner isolation, active-lease
 fencing and expired-lease recovery, disable behavior, and proof that a monitor

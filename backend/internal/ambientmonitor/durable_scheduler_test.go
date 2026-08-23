@@ -81,7 +81,7 @@ func TestMonitorSchedulerEnvironmentBounds(t *testing.T) {
 	t.Setenv("OUTCOME_MONITOR_BATCH_LIMIT", "999")
 	t.Setenv("OUTCOME_MONITOR_POLL_SECONDS", "0")
 	t.Setenv("OUTCOME_MONITOR_SCHEDULER_ENABLED", "off")
-	if monitorBatchLimit() != 20 || monitorPollInterval() != 30*time.Second || DurableSchedulerEnabled() {
+	if monitorBatchLimit() != 20 || monitorPollInterval() != 5*time.Minute || DurableSchedulerEnabled() {
 		t.Fatal("invalid scheduler environment did not fall back safely")
 	}
 }

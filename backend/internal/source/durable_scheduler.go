@@ -38,7 +38,8 @@ const (
 	// A sweep is cheap and re-runs on the next interval, so retry it only briefly.
 	scanMaxAttempts = 3
 	// An individual sync is worth retrying harder before dead-lettering.
-	syncMaxAttempts = 5
+	syncMaxAttempts            = 5
+	defaultDurablePollInterval = 5 * time.Minute
 )
 
 // syncJobPayload identifies which source a sync job refers to.
@@ -62,16 +63,18 @@ func startDurableScheduler(ctx context.Context, service Service, interval time.D
 	return nil
 }
 
-// durablePollInterval is how often the worker checks for due jobs. It is much
-// shorter than the scan interval because it also drives retries.
+// durablePollInterval bounds recovery and retry latency when no immediate
+// worker pass is available. The runner performs a pass at startup, while
+// recurring work holds its own due time, so a five-minute idle interval avoids
+// continuous database wake-ups on an empty local installation.
 func durablePollInterval() time.Duration {
 	value := strings.TrimSpace(os.Getenv("SOURCE_WORKER_POLL_SECONDS"))
 	if value == "" {
-		return 15 * time.Second
+		return defaultDurablePollInterval
 	}
 	var seconds int64
 	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 1 {
-		return 15 * time.Second
+		return defaultDurablePollInterval
 	}
 	return time.Duration(seconds) * time.Second
 }
