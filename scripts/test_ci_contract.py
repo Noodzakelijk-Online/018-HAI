@@ -650,7 +650,7 @@ class CIWorkflowContractTest(unittest.TestCase):
     ) -> None:
         backend = job_block("backend")
         self.assertIn(
-            "go test -count=1 -race ./internal/automation ./internal/task",
+            "go test -count=1 -race ./internal/automation ./internal/task ./internal/source ./internal/llm ./internal/agentruntime ./internal/durablejob",
             backend,
         )
 

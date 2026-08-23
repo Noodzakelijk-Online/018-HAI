@@ -45,7 +45,11 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - name: Execution-boundary race tests
-        run: go test -count=1 -race ./internal/automation ./internal/task
+        # Keep concurrency coverage limited to stateful boundary packages. This
+        # catches duplicate lease, approval, model-refresh, source-sync, and
+        # runtime-registration races without making every CI package pay the
+        # race-detector cost.
+        run: go test -count=1 -race ./internal/automation ./internal/task ./internal/source ./internal/llm ./internal/agentruntime ./internal/durablejob
       - run: go build ./...
       - name: Vulnerability scan
         run: |
