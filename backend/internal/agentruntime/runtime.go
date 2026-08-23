@@ -805,7 +805,7 @@ func (a *hermesAdapter) ExecuteTask(parent context.Context, task Task) Result {
 		status = "failed"
 		message = safety.RedactSecrets(strings.TrimSpace(stderr.String()))
 		if message == "" {
-			message = err.Error()
+			message = "Hermes process failed without diagnostic output"
 		}
 		exitCode = -1
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -1255,7 +1255,7 @@ func (a *openClawAdapter) ExecuteTask(parent context.Context, task Task) Result 
 		status = "failed"
 		message = safety.RedactSecrets(strings.TrimSpace(stderr.String()))
 		if message == "" {
-			message = err.Error()
+			message = "OpenClaw process failed without diagnostic output"
 		}
 		exitCode = -1
 		if exitErr, ok := err.(*exec.ExitError); ok {

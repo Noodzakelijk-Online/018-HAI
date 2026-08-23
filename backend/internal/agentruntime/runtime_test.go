@@ -685,6 +685,34 @@ func TestHermesAdapterInvokesControlledCli(t *testing.T) {
 	}
 }
 
+func TestHermesExecutionFailureDoesNotEchoTaskPrompt(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	sensitivePrompt := "sensitive prompt: do-not-expose-6f7d8a"
+	adapter := &hermesAdapter{
+		enabled:       true,
+		executable:    filepath.Join(root, "missing-hermes-executable"),
+		workspace:     workspace,
+		workspaceRoot: root,
+		timeout:       time.Second,
+		outputLimit:   defaultOutputLimit,
+	}
+
+	result := adapter.ExecuteTask(context.Background(), Task{ID: "task-1", Prompt: sensitivePrompt})
+	if result.Status != "failed" {
+		t.Fatalf("result = %#v", result)
+	}
+	if strings.Contains(result.Message, sensitivePrompt) {
+		t.Fatalf("execution error leaked task prompt: %#v", result)
+	}
+	if result.Message != "Hermes process failed without diagnostic output" {
+		t.Fatalf("unexpected failure message: %#v", result)
+	}
+}
+
 func TestOpenClawInfoAdvertisesEcosystemAndControls(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "openclaw")
