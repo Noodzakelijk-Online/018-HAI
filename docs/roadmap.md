@@ -6,10 +6,10 @@ source of truth for current state.
 ## Near-term hardening
 
 - **Fresh-clone Windows acceptance (phase 032, TD-8):** the maintained Windows
-  Compose installation now builds and runs with healthy Postgres, Redis, Kafka,
-  nginx, IDP, backend, and frontend services. Repeat the same acceptance from a
-  clean clone and empty volumes before calling installation reproducibility
-  complete.
+  Compose installation runs the core Postgres, Redis, nginx, IDP, backend, and
+  frontend services by default. Kafka-compatible delivery is an explicit
+  `event-bus` profile. Repeat the same acceptance from a clean clone and empty
+  volumes before calling installation reproducibility complete.
 - **RBAC — done on the backend (phase 008/TD-9):** IDP-JWT identity→role is wired + runtime-proven. Remaining: IDP emits a `role` claim; broaden `requirePermission` onto more routes.
 - **Frontend dependency posture (TD-6/BH-7):** Angular 20/ng-zorro 20 is clean
   on the production dependency audit and that audit is blocking in CI. Keep the
