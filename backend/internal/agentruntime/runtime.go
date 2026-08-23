@@ -191,6 +191,7 @@ func DefaultRegistryWithFinalEffectVerifier(verifier FinalEffectProofVerifier) *
 	return NewRegistryWithFinalEffectVerifier(
 		verifier,
 		newHermesAdapterFromEnv(),
+		newDeepSeekHarnessAdapterFromEnv(),
 		newOdysseusAdapterFromEnv(),
 		newOpenClawAdapterFromEnv(),
 	)
@@ -198,7 +199,7 @@ func DefaultRegistryWithFinalEffectVerifier(verifier FinalEffectProofVerifier) *
 
 func (r *Registry) List() []Info {
 	result := []Info{}
-	for _, id := range []string{"hermes", "odysseus", "openclaw"} {
+	for _, id := range []string{"hermes", "deepseek-harness", "odysseus", "openclaw"} {
 		if adapter := r.adapters[id]; adapter != nil {
 			result = append(result, adapter.Info())
 		}
@@ -208,7 +209,7 @@ func (r *Registry) List() []Info {
 
 func (r *Registry) Health(ctx context.Context) []Health {
 	result := []Health{}
-	for _, id := range []string{"hermes", "odysseus", "openclaw"} {
+	for _, id := range []string{"hermes", "deepseek-harness", "odysseus", "openclaw"} {
 		if adapter := r.adapters[id]; adapter != nil {
 			result = append(result, adapter.HealthCheck(ctx))
 		}

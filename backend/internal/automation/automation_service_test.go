@@ -1148,6 +1148,36 @@ func TestAgentRuntimeLaunchAllowsOpenClaw(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeLaunchAllowsDeepSeekHarness(t *testing.T) {
+	id := uuid.New()
+	adapter := &fakeAgentRuntimeAdapter{id: "deepseek-harness"}
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "DeepSeek Harness Runtime",
+		URLPath:      "deepseek-harness-runtime",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "agent_runtime",
+		RuntimeType:  "deepseek-harness",
+		LaunchTarget: "runtime://deepseek-harness",
+	})
+	service := newTestServiceWithAuthorizedRuntime(t, repo, events.Publisher{}, adapter)
+
+	completed, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
+		Task:       "Inspect the approved workspace and report evidence.",
+		ProjectKey: "018-hai",
+	}))
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if completed.Status != "completed" || !adapter.called {
+		t.Fatalf("approved DeepSeek Harness task did not run: %#v", completed)
+	}
+	if adapter.task.Prompt != "Inspect the approved workspace and report evidence." || adapter.task.ProjectKey != "018-hai" {
+		t.Fatalf("task context was not propagated: %#v", adapter.task)
+	}
+}
+
 func TestLaunchBlocksDockerWithoutApprovalBeforeSocketAccess(t *testing.T) {
 	socketPath, calls := startDockerTestServer(t)
 	t.Setenv("AUTOMATION_DOCKER_CONTROL_ENABLED", "true")

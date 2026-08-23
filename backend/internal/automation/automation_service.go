@@ -779,7 +779,7 @@ func (s *service) stopRuntimeTask(id uuid.UUID, ownerIdentity string) (*agentrun
 	started := time.Now().UTC()
 	runtimeID := strings.ToLower(strings.TrimSpace(automation.RuntimeType))
 	taskID := automation.ID.String()
-	if automation.LaunchType != "agent_runtime" || (runtimeID != "hermes" && runtimeID != "odysseus" && runtimeID != "openclaw") {
+	if automation.LaunchType != "agent_runtime" || !isSupportedAgentRuntime(runtimeID) {
 		result := &agentruntime.StopResult{
 			RuntimeID: runtimeID,
 			TaskID:    taskID,
@@ -1551,8 +1551,8 @@ func (s *service) executeAgentRuntime(
 	audit []string,
 ) launchExecution {
 	runtimeID := strings.ToLower(strings.TrimSpace(automation.RuntimeType))
-	if runtimeID != "hermes" && runtimeID != "odysseus" && runtimeID != "openclaw" {
-		return blockedLaunch("agent_runtime launch type requires runtimeType hermes, odysseus, or openclaw", started, append(audit, "agent runtime type rejected"))
+	if !isSupportedAgentRuntime(runtimeID) {
+		return blockedLaunch("agent_runtime launch type requires runtimeType deepseek-harness, hermes, odysseus, or openclaw", started, append(audit, "agent runtime type rejected"))
 	}
 	if s.runtimeRegistry == nil {
 		return blockedLaunch("agent runtime registry is not configured", started, append(audit, "agent runtime registry unavailable"))
@@ -1572,6 +1572,15 @@ func (s *service) executeAgentRuntime(
 		RequiresApproval:  result.Status == "blocked",
 		RuntimeTaskID:     runtimeTask.ID,
 		AuditEvents:       append(audit, result.AuditEvents...),
+	}
+}
+
+func isSupportedAgentRuntime(runtimeID string) bool {
+	switch strings.ToLower(strings.TrimSpace(runtimeID)) {
+	case "deepseek-harness", "hermes", "odysseus", "openclaw":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -745,12 +745,18 @@ and probe history, not as a live-service guarantee.
 
 ### Agent runtimes
 
-Hermes, Odysseus, and OpenClaw are optional controlled adapters. HAI can inspect
+Hermes, DeepSeek Harness, Odysseus, and OpenClaw are optional controlled adapters. HAI can inspect
 their configured capabilities and run a bounded approved task only after the
 operator installs the upstream runtime, configures scoped credentials/workspace
 state, enables the adapter, and validates it. HAI does not bundle these tools,
 send messages through them, control browsers, create cron jobs, or bypass their
 or HAI's security boundaries.
+
+DeepSeek Harness uses only its documented `dsh --profile headless` path in a
+dedicated workspace. The Web UI, ACP server, plugin installation, model keys,
+and its own permission configuration remain operator-managed. The upstream is
+an MIT-licensed developer preview with compatibility-breaking changes, so an
+operator must pin and validate the installed version before relying on it.
 
 API, script, and Docker adapters have the same default posture: disabled until
 explicitly allowlisted and configured. The emergency stop blocks runtime

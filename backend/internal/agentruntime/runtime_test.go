@@ -1527,6 +1527,69 @@ func executableFakeAdapter() *fakeAdapter {
 	}}
 }
 
+func TestDeepSeekHarnessAdapterIsRegisteredAndDisabledByDefault(t *testing.T) {
+	t.Setenv("DEEPSEEK_HARNESS_ENABLED", "false")
+	t.Setenv("DEEPSEEK_HARNESS_WORKSPACE", "")
+	t.Setenv("AGENT_RUNTIME_WORKSPACE_ROOT", "")
+	registry := NewRegistry(newDeepSeekHarnessAdapterFromEnv())
+	infos := registry.List()
+	if len(infos) != 1 {
+		t.Fatalf("runtime count = %d, want 1", len(infos))
+	}
+	info := infos[0]
+	if info.ID != "deepseek-harness" || info.Enabled || info.ExecutionEnabled || info.Type != "deepseek_harness" {
+		t.Fatalf("unexpected DeepSeek Harness info: %#v", info)
+	}
+	if !containsString(info.MissingConfiguration, "DEEPSEEK_HARNESS_WORKSPACE") {
+		t.Fatalf("missing configuration = %#v, want workspace", info.MissingConfiguration)
+	}
+	if skills, err := registry.Skills(context.Background(), "deepseek-harness"); err != nil || len(skills) != 1 || skills[0].ExecutionMode != "approved_headless_cli" {
+		t.Fatalf("skills = %#v, err = %v", skills, err)
+	}
+}
+
+func TestDeepSeekHarnessAdapterRejectsNonHeadlessProfile(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:       true,
+		executable:    "dsh",
+		workspace:     workspace,
+		workspaceRoot: root,
+		profile:       "web",
+		timeout:       time.Second,
+		outputLimit:   defaultOutputLimit,
+	}
+	info := adapter.Info()
+	if info.Configured || info.ExecutionEnabled || !containsString(info.MissingConfiguration, "DEEPSEEK_HARNESS_PROFILE=headless") {
+		t.Fatalf("non-headless adapter must fail closed: %#v", info)
+	}
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "headless") {
+		t.Fatalf("result = %#v, want headless profile block", result)
+	}
+}
+
+func TestDeepSeekHarnessAdapterRejectsWorkspaceOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	adapter := &deepSeekHarnessAdapter{
+		enabled:       true,
+		executable:    "dsh",
+		workspace:     outside,
+		workspaceRoot: root,
+		profile:       "headless",
+		timeout:       time.Second,
+		outputLimit:   defaultOutputLimit,
+	}
+	if reason := adapter.workspaceBlockedReason(); !strings.Contains(reason, "must stay inside") {
+		t.Fatalf("workspace block reason = %q", reason)
+	}
+}
+
 type fakeAdapter struct {
 	info   Info
 	called bool

@@ -3209,7 +3209,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   canStopAutomation(automation: IPursuitAutomation): boolean {
     return automation.launchType === 'agent_runtime' &&
       !!automation.id &&
-      ['hermes', 'odysseus', 'openclaw'].includes((automation.runtimeType || '').toLowerCase());
+      ['deepseek-harness', 'hermes', 'odysseus', 'openclaw'].includes((automation.runtimeType || '').toLowerCase());
   }
 
   stopRuntimeAutomation(automation: IPursuitAutomation): void {
