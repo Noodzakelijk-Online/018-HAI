@@ -24,13 +24,13 @@ against a real local Postgres instance.
 ```powershell
 cd 018-HAI
 Copy-Item .env.example .env.local
-docker compose --env-file .env.local -f docker-compose.local.yml config --quiet
-docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
-docker compose --env-file .env.local -f docker-compose.local.yml ps
-curl.exe -i http://localhost/
-curl.exe -i http://localhost/healthz
-curl.exe -i http://localhost/readyz
-curl.exe -i http://localhost/api/v1/llm/policy
+docker compose --env-file .env.local config --quiet
+docker compose --env-file .env.local up --build -d
+docker compose --env-file .env.local ps
+curl.exe -i http://localhost:8088/
+curl.exe -i http://localhost:8088/healthz
+curl.exe -i http://localhost:8088/readyz
+curl.exe -i http://localhost:8088/api/v1/llm/policy
 ```
 
 Expected result:
@@ -43,6 +43,11 @@ Expected result:
   ready response through the nginx gateway.
 - An unauthenticated protected engine route, such as `/api/v1/llm/policy`, is
   rejected with `401` rather than being proxied as an anonymous backend call.
+
+The default Compose file is a compatibility wrapper around
+`docker-compose.local.yml`; both commands resolve to this source-built local
+stack. The old prebuilt-image stack is no longer a runnable repository entry
+point.
 
 The nginx gateway resolves Docker service names per request. Recreating the
 frontend or backend must not leave nginx pinned to a prior container IP.

@@ -518,6 +518,11 @@ docker compose --env-file .env.local -f docker-compose.local.yml up --build -d
 docker compose --env-file .env.local -f docker-compose.local.yml ps
 ```
 
+`docker compose --env-file .env.local up --build -d` is equivalent. The
+default `docker-compose.yml` intentionally delegates to the same local,
+source-built stack. It does not pull the old `jacksonbarreto/*` images or start
+the retired multi-broker Kafka topology.
+
 Open [http://localhost:8088](http://localhost:8088) with the default
 configuration. If you deliberately override `GATEWAY_HOST_PORT`, use that port
 instead.

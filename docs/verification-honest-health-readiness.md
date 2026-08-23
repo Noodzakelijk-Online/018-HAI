@@ -12,11 +12,12 @@ in `docs/operator-runbook.md`.
 - Stack file: `docker-compose.local.yml` with `--env-file .env.local`
 - Go build/test run in `golang:1.23` container (no Go toolchain on host)
 
-> Note on which compose file is authoritative: `docker-compose.local.yml` builds
-> the backend, frontend and IDP **from source**. `docker-compose.yml` pulls
-> prebuilt upstream `jacksonbarreto/*` images and is not the HAI stack. Use the
-> local file. This corrects the earlier `ANALYSIS_REPORT.md`, which recommended
-> the opposite.
+> Historical note: at the time of this verification,
+> `docker-compose.local.yml` was the only source-built stack and
+> `docker-compose.yml` still pulled prebuilt upstream `jacksonbarreto/*` images.
+> The latter was subsequently replaced with a compatibility wrapper around the
+> maintained local stack. `docker compose up` and the explicit local-file form
+> now resolve to the same topology.
 
 ---
 

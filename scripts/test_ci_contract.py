@@ -572,6 +572,20 @@ class CIWorkflowContractTest(unittest.TestCase):
                 content = (ROOT / compose_file).read_text(encoding="utf-8")
                 self.assertNotIn("/var/run/docker.sock", content)
 
+    def test_all_compose_entry_points_delegate_to_the_source_built_stack(self) -> None:
+        expected = {
+            "docker-compose.yml": "./docker-compose.local.yml",
+            "backend/docker-compose.yml": "../docker-compose.local.yml",
+            "idp/docker-compose.yml": "../docker-compose.local.yml",
+            "gate/docker-compose.yml": "../docker-compose.local.yml",
+        }
+        for compose_file, local_stack_path in expected.items():
+            with self.subTest(compose_file=compose_file):
+                content = (ROOT / compose_file).read_text(encoding="utf-8")
+                self.assertIn("include:", content)
+                self.assertIn(local_stack_path, content)
+                self.assertNotIn("jacksonbarreto/", content)
+
     def test_idp_toolchain_matches_ci_and_container(self) -> None:
         go_mod = (ROOT / "idp" / "go.mod").read_text(encoding="utf-8")
         dockerfile = (ROOT / "idp" / "Dockerfile").read_text(encoding="utf-8")
