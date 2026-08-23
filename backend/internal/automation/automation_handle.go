@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+const maxAutomationUpdateBodyBytes = 1 << 20
 
 type Handler struct {
 	service Service
@@ -260,9 +263,14 @@ func (h *Handler) SwapPosition(c *gin.Context) {
 func (h *Handler) Update(c *gin.Context) {
 	var automation models.Automation
 
-	body, err := io.ReadAll(c.Request.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, maxAutomationUpdateBodyBytes))
 	defer c.Request.Body.Close()
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "automation update exceeds maximum request size"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read request body"})
 		return
 	}
