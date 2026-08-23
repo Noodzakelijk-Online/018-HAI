@@ -198,6 +198,44 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("app-pursuits .pursuit-health", pursuit_styles)
         self.assertIn("ViewEncapsulation.None", pursuit_component)
 
+    def test_pursuit_portfolio_planner_styles_load_with_the_lazy_module(self) -> None:
+        global_styles = (ROOT / "frontend" / "src" / "styles.scss").read_text(
+            encoding="utf-8"
+        )
+        pursuit_styles = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "pages"
+            / "pursuits"
+            / "pursuits.component.scss"
+        ).read_text(encoding="utf-8")
+
+        # The planner opens only from the lazy Pursuits route. Its overlay
+        # selectors need ViewEncapsulation.None, but they do not belong in the
+        # startup stylesheet for every other HAI module.
+        self.assertNotIn(".portfolio-planner {", global_styles)
+        self.assertIn(".portfolio-planner {", pursuit_styles)
+        self.assertIn(".portfolio-workflow-settlement__usage", pursuit_styles)
+
+    def test_component_style_budget_allows_a_deferred_complex_workspace(self) -> None:
+        angular = json.loads(
+            (ROOT / "frontend" / "angular.json").read_text(encoding="utf-8")
+        )
+        budgets = angular["projects"]["app"]["architect"]["build"][
+            "configurations"
+        ]["production"]["budgets"]
+        component_budget = next(
+            budget for budget in budgets if budget["type"] == "anyComponentStyle"
+        )
+
+        # Route styles are loaded on demand. The portfolio workspace is an
+        # intentional advanced surface, not a reason to ship its CSS in the
+        # initial bundle. Keep a ceiling to catch accidental style growth.
+        self.assertEqual(component_budget["maximumWarning"], "20kb")
+        self.assertEqual(component_budget["maximumError"], "48kb")
+
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:
