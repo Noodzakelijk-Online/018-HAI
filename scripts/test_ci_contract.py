@@ -169,6 +169,35 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("app-workflow-engine .workflow-more-tools {", workflow_styles)
         self.assertIn("ViewEncapsulation.None", workflow_component)
 
+    def test_pursuits_disclosure_styles_load_with_the_lazy_module(self) -> None:
+        global_styles = (ROOT / "frontend" / "src" / "styles.scss").read_text(
+            encoding="utf-8"
+        )
+        pursuit_styles = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "pages"
+            / "pursuits"
+            / "pursuits.component.scss"
+        ).read_text(encoding="utf-8")
+        pursuit_component = (
+            ROOT
+            / "frontend"
+            / "src"
+            / "app"
+            / "pages"
+            / "pursuits"
+            / "pursuits.component.ts"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn(
+            "/* Pursuits uses the same calm, progressive-disclosure pattern", global_styles
+        )
+        self.assertIn("app-pursuits .pursuit-health", pursuit_styles)
+        self.assertIn("ViewEncapsulation.None", pursuit_component)
+
     def test_canonical_service_runtime_images_do_not_float_on_latest(
         self,
     ) -> None:
