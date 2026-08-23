@@ -36,6 +36,7 @@
             formControlName="userName"
             placeholder="Email"
             aria-label="Email"
+            autocomplete="username"
             data-testid="login-email"
           />
         </nz-input-group>
@@ -54,6 +55,8 @@
             nz-input
             formControlName="resetToken"
             placeholder="One-time reset code"
+            aria-label="One-time reset code"
+            autocomplete="one-time-code"
           />
         </nz-input-group>
       </nz-form-control>
@@ -74,16 +77,21 @@
             placeholder="{{ recoveryMode ? 'New password' : 'Password' }}"
             [type]="hidePassword ? 'password' : 'text'"
             [attr.aria-label]="recoveryMode ? 'New password' : 'Password'"
+            [attr.autocomplete]="recoveryMode ? 'new-password' : 'current-password'"
             data-testid="login-password"
           />
         </nz-input-group>
 
         <ng-template #suffixIcon>
-          <i
-            nz-icon
-            [nzType]="hidePassword ? 'eye-invisible' : 'eye'"
+          <button
+            type="button"
+            class="password-visibility-toggle"
+            [attr.aria-label]="hidePassword ? 'Show password' : 'Hide password'"
+            [attr.title]="hidePassword ? 'Show password' : 'Hide password'"
             (click)="hidePassword = !hidePassword"
-          ></i>
+          >
+            <i nz-icon [nzType]="hidePassword ? 'eye-invisible' : 'eye'" aria-hidden="true"></i>
+          </button>
         </ng-template>
       </nz-form-control>
     </nz-form-item>
@@ -101,6 +109,8 @@
             formControlName="confirmPassword"
             placeholder="{{ recoveryMode ? 'Confirm new password' : 'Confirm password' }}"
             [type]="hidePassword ? 'password' : 'text'"
+            [attr.aria-label]="recoveryMode ? 'Confirm new password' : 'Confirm password'"
+            autocomplete="new-password"
           />
         </nz-input-group>
       </nz-form-control>
