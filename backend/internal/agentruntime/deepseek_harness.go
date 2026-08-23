@@ -106,15 +106,37 @@ func (a *deepSeekHarnessAdapter) HealthCheck(ctx context.Context) Health {
 		health.Reason = "DeepSeek Harness executable was not found"
 		return health
 	}
-	select {
-	case <-ctx.Done():
-		health.Status = "blocked"
-		health.Reason = "DeepSeek Harness health check was cancelled"
+	probeTimeout := a.timeout
+	if probeTimeout > 10*time.Second {
+		probeTimeout = 10 * time.Second
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	// `--help` is handled by the documented headless profile without accepting
+	// a task. It validates the exact command grammar without creating a session
+	// or running model, tool, or workspace operations.
+	probe := exec.CommandContext(probeCtx, path, "--profile", "headless", "--help")
+	probe.Dir = a.workspace
+	probe.Env = safeEnvironment(a.envAllow, map[string]string{
+		"DSH_HOME":     filepath.Join(a.workspace, ".hai-dsh"),
+		"TERMINAL_CWD": a.workspace,
+	})
+	var stderr bytes.Buffer
+	probe.Stderr = &limitedWriter{writer: &stderr, remaining: a.outputLimit / 4}
+	if err := probe.Run(); err != nil {
+		health.Status = "unavailable"
+		if probeCtx.Err() == context.DeadlineExceeded {
+			health.Reason = "DeepSeek Harness headless profile probe timed out"
+		} else {
+			health.Reason = safety.RedactSecrets(strings.TrimSpace(stderr.String()))
+			if health.Reason == "" {
+				health.Reason = "DeepSeek Harness does not support the required headless profile"
+			}
+		}
 		return health
-	default:
 	}
 	health.Status = "ready"
-	health.Reason = "DeepSeek Harness executable and dedicated workspace are available: " + filepath.Base(path)
+	health.Reason = "DeepSeek Harness headless profile and dedicated workspace are available: " + filepath.Base(path)
 	health.LatencyMs = time.Since(started).Milliseconds()
 	return health
 }

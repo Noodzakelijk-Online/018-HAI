@@ -1616,6 +1616,27 @@ func TestDeepSeekHarnessAdapterKeepsHarnessStateInsideDedicatedWorkspace(t *test
 	}
 }
 
+func TestDeepSeekHarnessHealthProbesTheRequiredHeadlessProfile(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:       true,
+		executable:    os.Args[0],
+		workspace:     workspace,
+		workspaceRoot: root,
+		profile:       "headless",
+		timeout:       time.Second,
+		outputLimit:   defaultOutputLimit,
+	}
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "ready" || !strings.Contains(health.Reason, "headless profile") {
+		t.Fatalf("health = %#v, want ready headless profile probe", health)
+	}
+}
+
 type fakeAdapter struct {
 	info   Info
 	called bool
