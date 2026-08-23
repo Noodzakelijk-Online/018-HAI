@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"automation-hub-backend/internal/durablejob"
 )
 
 type schedulerStub struct {
@@ -62,8 +64,10 @@ func TestRunMonitorSweepStopsWhenPermissionIsWithdrawnMidSweep(t *testing.T) {
 		allowedChecks++
 		return stub.processed == 0
 	}
-	if err := runMonitorSweep(t.Context(), stub, time.Date(2026, time.August, 5, 9, 0, 0, 0, time.UTC), allowed); err != nil {
-		t.Fatal(err)
+	err := runMonitorSweep(t.Context(), stub, time.Date(2026, time.August, 5, 9, 0, 0, 0, time.UTC), allowed)
+	var deferred *durablejob.DeferredError
+	if !errors.As(err, &deferred) {
+		t.Fatalf("error = %v, want deferred pause", err)
 	}
 	if stub.processed != 1 || stub.recovered != 1 || stub.compositionRecovered != 1 {
 		t.Fatalf("processed=%d recovered=%d compositionRecovered=%d, want 1/1/1 after permission withdrawal", stub.processed, stub.recovered, stub.compositionRecovered)

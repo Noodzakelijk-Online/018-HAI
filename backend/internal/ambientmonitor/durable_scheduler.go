@@ -37,7 +37,7 @@ func RegisterDurableScheduling(runner *durablejob.Runner, service schedulerServi
 	}
 	return runner.RegisterRecurring(monitorSweepJobKind, interval, monitorMaxAttempts, func(ctx context.Context) error {
 		if !allowed() {
-			return nil
+			return durablejob.Defer("background processing is paused by safety policy")
 		}
 		return runMonitorSweep(ctx, service, time.Now().UTC(), allowed)
 	})
@@ -56,7 +56,10 @@ func runMonitorSweep(ctx context.Context, service schedulerService, now time.Tim
 	failures := 0
 	for _, scope := range scopes {
 		if ctx.Err() != nil || !allowed() {
-			return nil
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return durablejob.Defer("background processing is paused by safety policy")
 		}
 		if _, err := service.RecoverExpiredLeases(ctx, scope, now); err != nil {
 			failures++
@@ -68,7 +71,10 @@ func runMonitorSweep(ctx context.Context, service schedulerService, now time.Tim
 		}
 		for processed := 0; processed < monitorBatchLimit(); processed++ {
 			if ctx.Err() != nil || !allowed() {
-				return nil
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				return durablejob.Defer("background processing is paused by safety policy")
 			}
 			asOf := time.Now().UTC().Truncate(time.Microsecond)
 			result, err := service.ProcessDue(ctx, ProcessDueRequest{
