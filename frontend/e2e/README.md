@@ -37,11 +37,14 @@ npx playwright install chromium
 $env:E2E_BASE_URL = 'http://localhost'
 $env:E2E_OPERATOR_EMAIL = 'your-seeded-operator@example.com'
 $env:E2E_OPERATOR_PASSWORD = 'your-local-password'
+$env:E2E_ALLOW_MUTATION = 'true'
 npm test
 ```
 
-Credentials come from the environment and are never committed. The test is
-skipped when `E2E_OPERATOR_PASSWORD` is absent.
+Credentials come from the environment and are never committed. The test creates
+temporary local records, so it is skipped unless both `E2E_OPERATOR_PASSWORD`
+and `E2E_ALLOW_MUTATION=true` are supplied. Set that flag only for a disposable
+acceptance stack, not a personal or shared HAI database.
 
 ## Current evidence
 

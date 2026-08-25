@@ -34,6 +34,7 @@ import (
 	"automation-hub-backend/internal/crewai"
 	"automation-hub-backend/internal/deepeval"
 	"automation-hub-backend/internal/deepteam"
+	"automation-hub-backend/internal/demomode"
 	"automation-hub-backend/internal/docling"
 	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/domainpack"
@@ -52,6 +53,8 @@ import (
 	"automation-hub-backend/internal/haios"
 	"automation-hub-backend/internal/hardwareprofile"
 	"automation-hub-backend/internal/health"
+	"automation-hub-backend/internal/hostruntime"
+	"automation-hub-backend/internal/hostruntimereconcile"
 	"automation-hub-backend/internal/i18n"
 	"automation-hub-backend/internal/knowledgegraph"
 	"automation-hub-backend/internal/langfuse"
@@ -131,6 +134,12 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 
 	relativePathV1 := config.AppConfig.BaseUrl + "/v1"
 	docs.SwaggerInfo.BasePath = relativePathV1
+	// The Windows host bridge carries its own bearer credential, which is not
+	// an IDP JWT. Keep it outside identityMiddleware so that a valid bridge
+	// token cannot be misinterpreted as a browser session. The main dashboard
+	// gateway blocks this path; only the loopback host-runtime gateway reaches it.
+	hostRuntimeV1 := router.Group(relativePathV1)
+	hostRuntimeV1.Use(backendAPIKeyMiddleware())
 	v1 := router.Group(relativePathV1)
 	v1.Use(backendAPIKeyMiddleware())
 	v1.Use(identityMiddleware())
@@ -317,6 +326,7 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 		}
 		lifeOpsService := lifeops.NewService(lifeOpsRepository)
 		pursuitService = pursuit.WithPortfolioCapacity(pursuitService, lifeOpsService)
+		pursuitService = pursuit.WithLifeDomainLinker(pursuitService, lifeOpsService)
 		initializeLifeOpsRoutes(v1, lifeops.NewHandler(lifeOpsService))
 		lifeOntologyRepository, err := lifeontology.DefaultRepository()
 		if err != nil {
@@ -637,8 +647,21 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 		if err != nil {
 			return err
 		}
-		runtimeRegistry := agentruntime.DefaultRegistryWithFinalEffectVerifier(
+		hostRuntimeRepository, err := hostruntime.DefaultRepository()
+		if err != nil {
+			return fmt.Errorf("initialize host runtime bridge repository: %w", err)
+		}
+		hostRuntimeService := hostruntime.NewService(hostRuntimeRepository)
+		initializeHostRuntimeRoutes(
+			hostRuntimeV1,
+			hostruntime.NewHandler(
+				hostRuntimeService,
+				hostruntime.DefaultConfig(),
+			),
+		)
+		runtimeRegistry := agentruntime.DefaultRegistryWithFinalEffectVerifierAndHostRuntime(
 			finalEffectBridge,
+			hostRuntimeService,
 		)
 		// Runtime control and automation execution share one registry so the
 		// exact task that exercised a receipt can also be cancelled by its owner.
@@ -657,14 +680,21 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 		if err != nil {
 			return fmt.Errorf("initialize durable automation approval proofs: %w", err)
 		}
+		automationRepository := automation.DefaultRepository()
 		automationService := automation.NewServiceWithRuntimeRegistryApprovalProofsExecutionAuthorizationAndFinalEffects(
-			automation.DefaultRepository(),
+			automationRepository,
 			*events.DefaultPublisher(),
 			runtimeRegistry,
 			approvalProofService,
 			executionAuthorizationService,
 			finalEffectBridge,
 		)
+		if err := hostruntimereconcile.StartDurableScheduler(
+			runtimeCtx,
+			hostruntimereconcile.NewService(hostRuntimeService, automationRepository),
+		); err != nil {
+			return fmt.Errorf("initialize host runtime completion reconciliation: %w", err)
+		}
 		autoHandler := automation.NewHandler(automationService)
 		if err := initializeAutomationsRoutes(v1, autoHandler); err != nil {
 			return err
@@ -742,10 +772,7 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 		initializeSourceRoutes(v1, source.NewHandlerWithDocumentExtractor(sourceService, doclingService, whisperService))
 		initializeWorkflowRoutes(v1, workflow.NewHandlerWithPursuitIntakeRouter(workflowService, pursuitService))
 		initializePursuitRoutes(v1, pursuit.NewHandler(pursuitService))
-		memoryEngineSecret := config.AppConfig.MemoryEngineKey
-		if strings.TrimSpace(memoryEngineSecret) == "" {
-			memoryEngineSecret = config.AppConfig.BackendAPIKey
-		}
+		memoryEngineSecret := memoryEngineEncryptionSecret(config.AppConfig)
 		memoryEngineService := memoryengine.NewServiceWithPursuitLinker(
 			memoryengine.DefaultRepository(),
 			memoryService,
@@ -793,6 +820,20 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 	}
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 	return nil
+}
+
+// memoryEngineEncryptionSecret permits the historical shared-key fallback only
+// in explicit demo/test mode. Private conversation archives require a separate
+// encryption key in production so one gateway credential cannot also decrypt
+// retained personal context.
+func memoryEngineEncryptionSecret(cfg config.Configuration) string {
+	if secret := strings.TrimSpace(cfg.MemoryEngineKey); secret != "" {
+		return secret
+	}
+	if demomode.Parse(cfg.RunMode).IsProduction() {
+		return ""
+	}
+	return strings.TrimSpace(cfg.BackendAPIKey)
 }
 
 // backgroundProcessingAllowed is the single gate shared by every autonomous
@@ -1105,6 +1146,14 @@ func initializeAgentRuntimeRoutes(apiVersion *gin.RouterGroup, handler *agentrun
 	}
 }
 
+// initializeHostRuntimeRoutes deliberately does not use browser identity or
+// ordinary RBAC. A separate, loopback-only gateway presents its own dedicated
+// bridge token, so this endpoint cannot become an accidental public API route.
+func initializeHostRuntimeRoutes(apiVersion *gin.RouterGroup, handler *hostruntime.Handler) {
+	routes := apiVersion.Group("/host-runtime")
+	handler.RegisterRoutes(routes)
+}
+
 func initializeBrainCatalogRoutes(apiVersion *gin.RouterGroup, handler *braincatalog.Handler) {
 	routes := apiVersion.Group("/brain-catalog")
 	routes.Use(requireAuthenticatedOwner())
@@ -1187,7 +1236,19 @@ const backendAPIKeyHeader = "X-HAI-Backend-Key"
 func backendAPIKeyMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		expected := strings.TrimSpace(config.AppConfig.BackendAPIKey)
-		if expected == "" || c.Request.Method == http.MethodOptions {
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		if expected == "" || doctor.IsPlaceholderSecret(expected) {
+			// A production process with no real shared gateway secret must never
+			// make protected routes anonymously reachable, or accept a known
+			// example key, through a direct backend port. Demo and test modes
+			// retain their deliberate local no-key workflow.
+			if demomode.Parse(config.AppConfig.RunMode).IsProduction() {
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "backend API key is not securely configured"})
+				return
+			}
 			c.Next()
 			return
 		}
@@ -1946,6 +2007,7 @@ func initializePursuitRoutes(apiVersion *gin.RouterGroup, pursuitHandler *pursui
 	{
 		pursuitRoutes.GET("/", requirePermission(rbac.PermRead), pursuitHandler.List)
 		pursuitRoutes.POST("/", requirePermission(rbac.PermWrite), pursuitHandler.Create)
+		pursuitRoutes.POST("/reconcile-life-domains", requirePermission(rbac.PermWrite), pursuitHandler.ReconcileLifeDomains)
 		pursuitRoutes.GET("/dashboard", requirePermission(rbac.PermRead), pursuitHandler.Dashboard)
 		pursuitRoutes.GET("/brief", requirePermission(rbac.PermRead), pursuitHandler.Brief)
 		pursuitRoutes.GET("/decisions", requirePermission(rbac.PermRead), pursuitHandler.Decisions)

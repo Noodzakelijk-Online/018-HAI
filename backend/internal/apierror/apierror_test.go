@@ -2,6 +2,7 @@ package apierror
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 )
@@ -49,5 +50,14 @@ func TestEnvelopeSerialization(t *testing.T) {
 	}
 	if round.Error.Code != "not_found" || round.Error.Message != "memory not found" {
 		t.Fatalf("envelope round-trip wrong: %+v", round)
+	}
+}
+
+func TestPublicMessageDoesNotExposeUnexpectedErrorDetails(t *testing.T) {
+	if got := PublicMessage(errors.New(`database password=real-secret at C:\\private`), "Service is unavailable"); got != "Service is unavailable" {
+		t.Fatalf("unexpected error message = %q", got)
+	}
+	if got := PublicMessage(New(CodeValidation, "name is required"), "Service is unavailable"); got != "name is required" {
+		t.Fatalf("structured error message = %q", got)
 	}
 }

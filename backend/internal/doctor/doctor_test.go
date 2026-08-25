@@ -93,6 +93,20 @@ func TestDiagnoseEmptySecretsWarnButDoNotFail(t *testing.T) {
 	}
 }
 
+func TestDiagnoseEmptySecuritySecretsFailInProduction(t *testing.T) {
+	cfg := healthyConfig()
+	cfg.RunMode = "production"
+	cfg.BackendAPIKey = ""
+	cfg.JWTSecret = ""
+
+	report := Diagnose(cfg)
+	for _, name := range []string{"security.backendApiKey", "security.jwtSecret"} {
+		if check, ok := find(report, name); !ok || check.Severity != SeverityFail {
+			t.Fatalf("%s severity = %s (found=%v), want fail", name, check.Severity, ok)
+		}
+	}
+}
+
 func TestDiagnoseFailsPlaceholderDatabasePasswordInProduction(t *testing.T) {
 	cfg := healthyConfig()
 	cfg.RunMode = "production"

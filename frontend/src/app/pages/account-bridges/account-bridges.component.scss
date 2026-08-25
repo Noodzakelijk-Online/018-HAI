@@ -23,6 +23,13 @@
     margin: 0;
   }
 
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
   &__feeds {
     margin-bottom: 24px;
     overflow-x: auto;

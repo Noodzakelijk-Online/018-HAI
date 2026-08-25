@@ -17,7 +17,7 @@ reviewed runtime, policy, and evidence path are configured.
 > `/control-center`, gateway health routes responded, and protected APIs rejected
 > unsigned sessions. Those observations are local-environment evidence, not a
 > claim that every Windows machine or account integration is ready. Backend/IDP
-> tests, frontend production build and 443 unit tests, Compose validation, and a
+> tests, frontend production build and 447 unit tests, Compose validation, and a
 > Postgres-backed critical-path smoke have been exercised. A signed-in browser
 > acceptance run on the local Windows Compose stack also completed source intake,
 > pursuit creation, exact runtime selection, durable approval, a real read-only
@@ -163,7 +163,7 @@ Constitution, run an approval-gated task, or resolve a task review item.
 | Optional local runners | Disabled-by-default Compose profiles for aggregate security scans, no-tool planning drafts, selected-folder document extraction, and disposable patch proposals. | They publish no host ports and have private networks, read-only mounts, and resource limits. Configuration or container health is not live proof; each real snapshot, model, or document path still needs retained approval, audit, and verification evidence. |
 | Proactive planning | Ambient scans identify stale work, blockers, approvals, open loops, contradiction candidates, and delegation opportunities. Governance Control records owner `accept`, `dismiss`, bounded `snooze`, indefinite `suppress`, and `resume` feedback in an immutable owner-scoped ledger that changes later attention evaluation. | Ambient mode is suggestion-first and cannot bypass approval, verification, leases, audit, or emergency stop. Attention feedback has `canExecute:false`, grants no delivery or execution authority, and invokes no notification or external effect. |
 | Advisory ambient outcome monitor | Governance Control can bind an existing outcome indicator to one of three fixed read-only local collectors: `workflow_open_loop_count`, `workflow_verified_completion_count`, or `overdue_commitment_count`. A durable singleton sweep leases due targets, appends immutable source-digested observations and run receipts, composes them into the existing outcome-evaluation service, and may surface an owner-scoped proactivity inbox decision. | The monitor is `advisory_monitor_only`. It cannot execute or deliver work, notify anyone, write Calendar data, mutate a workflow, authorize a mandate, or mutate learning. It reads only canonical local ledgers and accepts no caller-supplied SQL, URL, script, expression, or arbitrary tool instruction. Live external-account correctness and target-machine acceptance remain separate gates. |
-| Operations | nginx gateway, IDP, Postgres, Redis, optional Kafka-compatible event bus, health/readiness, support bundle, doctor/reconcile/migrate commands, versioned SQL migrations, a durable job runner (persisted retry + crash recovery), CI, Compose validation, and local smoke coverage. | **Source, workflow, and ambient** scheduling all run on the durable worker: each is a self-rescheduling singleton job with backoff retry and lease-based crash recovery, and each falls back to its in-process ticker (logging that it did) if the queue is unreachable. The workflow schedule also consumes only separately owner-authorized internal reminder deliveries; each delivery is revalidated, source-bound, idempotently receipted, and recorded as a local proactivity signal. No external notification, Calendar write, provider invocation, or follow-up execution is performed. This is a single-node worker, not a distributed or HA platform. |
+| Operations | nginx gateway, IDP, Postgres, Redis, optional Kafka-compatible event bus, health/readiness, support bundle, doctor/reconcile/migrate commands, versioned SQL migrations, a durable job runner (persisted retry + crash recovery), CI, Compose validation, and local smoke coverage. | **Source, workflow, and ambient** scheduling all run on the durable worker: each is a self-rescheduling singleton job with backoff retry and lease-based crash recovery. The terminal state of a recurring occurrence and creation of its replacement are one database transaction, preventing a failed terminal write from leaving an untracked duplicate future schedule. Each falls back to its in-process ticker (logging that it did) if the queue is unreachable. The workflow schedule also consumes only separately owner-authorized internal reminder deliveries; each delivery is revalidated, source-bound, idempotently receipted, and recorded as a local proactivity signal. No external notification, Calendar write, provider invocation, or follow-up execution is performed. This is a single-node worker, not a distributed or HA platform. |
 
 ### Readiness Terms
 
@@ -247,8 +247,8 @@ target-machine checks before relying on a path for real work.
 | Surface | Current evidence | Still required before operational trust |
 | --- | --- | --- |
 | Local Compose and gateway | The local services are running; `/`, `/control-center`, `/healthz`, and `/readyz` are served through nginx. Both health probes are intentionally public; protected `/api/v1/*` engine routes still require a signed session. Angular deep links return the application shell. | Fresh-clone Windows 11 run with a newly created `.env.local`. |
-| Browser session | The unauthenticated session check returns `401`; Angular routes a browser without a refreshable session to `/login`. A signed-in Playwright acceptance run completed source intake, pursuit creation, exact runtime selection, durable approval, read-only execution, terminal verification, and creation of an immutable completion attestation. | Repeat the acceptance run on each release target and add retained coverage for any new mutable or external action. |
-| Go and Angular code | The full Go suite, frontend production build, 443 headless Angular tests, migration-chain contract through `0064`, isolated PostgreSQL reminder-ledger tests, live workflow-repository PostgreSQL test, and signed-in browser reminder prepare/approve/persist/cleanup acceptance pass. Migrations `0046` and `0047` define the append-only owner-scoped preparation/decision ledger; `0055` through `0057` add the separately authorized internal-delivery receipt ledger; `0060` through `0064` add connected-source, memory, verification, and source-history query indexes. | Keep these gates green and close the existing CSS/initial-bundle budget warnings before a production release. The browser exercise proves preparation and approval persistence only. It does not prove a scheduled internal delivery or any Calendar write, message delivery, provider invocation, or follow-up execution. |
+| Browser session | The unauthenticated session check returns `401`; Angular routes a browser without a refreshable session to `/login`. A signed-in Playwright acceptance run completed source intake, pursuit creation, exact runtime selection, durable approval, read-only execution, terminal verification, and creation of an immutable completion attestation. CI now also defines this local, read-only path as an isolated Compose browser-acceptance gate. | The new CI job must complete successfully before it can be cited as hosted release evidence. Repeat the acceptance run on each release target and add retained coverage for any new mutable or external action. |
+| Go and Angular code | The full Go suite, frontend production build, 447 headless Angular tests, migration-chain contract through `0067`, isolated PostgreSQL reminder-ledger tests, live workflow-repository PostgreSQL test, and signed-in browser reminder prepare/approve/persist/cleanup acceptance pass. Migrations `0046` and `0047` define the append-only owner-scoped preparation/decision ledger; `0055` through `0057` add the separately authorized internal-delivery receipt ledger; `0060` through `0064` add connected-source, memory, verification, and source-history query indexes; `0065` through `0067` add host-runtime job persistence and launch-event execution/idempotency fields. | Keep these gates green and close the existing CSS/initial-bundle budget warnings before a production release. The browser exercise proves preparation and approval persistence only. It does not prove a scheduled internal delivery or any Calendar write, message delivery, provider invocation, or follow-up execution. |
 | Sources and LLMs | Local/export ingestion, provider probes, GitHub sync, and bounded Gmail/Trello acceptance evidence exist. | A scoped local-model task and any newly configured account need their own retained audit and verification evidence. |
 | Runtimes and external effects | Script, Docker, Hermes, Odysseus, and OpenClaw adapters have bounded, approval-aware interfaces. The local registry-to-read-only-API path is acceptance-tested with deterministic receipt verification. | Explicit upstream installation, narrow allowlists, a reviewed dry run, and a verified approved task for every mutable or external adapter. |
 
@@ -726,7 +726,7 @@ areas are:
 - `/llm`: policy, probes, routing, generation, and redacted decision history.
 - `/memory` and `/memory-engine`: compact memory, encrypted conversation import, search, and insights.
 - `/sources`: source registry, connectors, sync, extraction management, search, and audit records.
-- `/pursuits`: high-level objectives, matching, intake, navigable related-pursuit links, summary, review, decisions, evidence, blockers, next actions, approvals, activity, planning, and approval-gated candidate acceptance.
+- `/pursuits`: high-level objectives, matching, intake, navigable related-pursuit links, summary, review, decisions, evidence, blockers, next actions, approvals, activity, planning, approval-gated candidate acceptance, and an Advanced-only **Reindex life domains** maintenance action. The reindex projects already-owned canonical pursuit classifications into HAI's local whole-life index; it does not alter pursuit content, call an external provider, or execute work.
 - `/workflow`: intake, state transitions, approvals, due work, follow-ups, owner-scoped reminder proposals, non-executing reminder activation request/decision evidence, quality/review state, and dashboard data.
 - `/task`: bounded plans/runs, durable owner-scoped completion logs, review
   queue, and exact-action review resolution.
@@ -771,20 +771,28 @@ DeepSeek Harness remains an upstream developer preview, but it now documents a
 one-shot headless profile: `dsh --profile headless "task"`. HAI integrates only
 that documented process boundary. It is disabled by default and requires both
 `DEEPSEEK_HARNESS_ENABLED=true` and
-`DEEPSEEK_HARNESS_EXECUTION_ENABLED=true`, an executable, a dedicated workspace
-and state directory under `AGENT_RUNTIME_WORKSPACE_ROOT`, and a pinned
-`DEEPSEEK_HARNESS_VERSION` matching `dsh --version`, plus HAI's
-server-side approval and consumed final-effect proof. The adapter applies a
-timeout, output cap, environment allowlist, cancellation path, and secret
-redaction. HAI serializes its own Harness runs per backend process so concurrent
-headless tasks cannot race over the shared Harness state directory; do not
-horizontally scale this optional adapter against the same `DSH_HOME`. It does
-not launch the Harness Web UI or ACP server, install plugins,
-control a browser, or supply model credentials; model keys and permissions stay
-operator-managed. Because the upstream may introduce breaking changes, HAI
-probes `dsh --version` before health is reported ready and again before task
-execution; a mismatch blocks the task. An unavailable or failed
-Harness run remains a governed failure, not a reason to bypass HAI controls.
+`DEEPSEEK_HARNESS_EXECUTION_ENABLED=true`, a pinned
+`DEEPSEEK_HARNESS_VERSION`, and HAI's server-side approval and consumed
+final-effect proof. In the Windows deployment, the backend does **not** execute
+`dsh` inside Docker. It persists an approved job and the separately started
+`hai-dsh-bridge` Windows worker pulls it through a dedicated gateway bound only
+to `127.0.0.1:8092`. That bridge requires its own random 32+ character token,
+an exact workspace key, and a local Windows workspace/state directory. It uses
+only `dsh --profile headless`, probes the pinned version at startup, applies a
+timeout, output cap, environment allowlist, and secret redaction, and never
+opens a listener. The dashboard/ngrok gateway explicitly returns `404` for the
+host bridge path. HAI does not launch the Harness Web UI or ACP server, install
+plugins, control a browser, or supply model credentials; model keys and
+permissions stay operator-managed. A missing bridge worker leaves approved work
+queued rather than falling back to a container process. While DSH is running,
+the bridge reconfirms its lease every two seconds; an emergency stop, expired
+lease, or failed confirmation cancels the local DSH process and records a
+bounded failure result. Worker liveness reporting remains a release gate; it is
+not represented as a completed capability. When the bridge submits a terminal result, HAI's
+durable-job worker projects it into the linked automation audit ledger using an
+idempotent completion key. This records success or failure without re-running
+DSH; an unlinked host job remains visible for investigation instead of being
+treated as complete.
 
 API, script, and Docker adapters have the same default posture: disabled until
 explicitly allowlisted and configured. The emergency stop blocks runtime
@@ -852,7 +860,13 @@ With the matching local Go toolchains installed, run the backend commands from
 `backend/`, and the IDP and nginx-config-manager commands from their respective
 directories. These are the same build-and-test surfaces required by CI. The
 critical-path smoke is `scripts/smoke-critical-path.sh` from a Bash-capable
-shell with its prerequisites.
+shell with its prerequisites. CI also provisions a temporary production-mode
+Compose stack and runs `frontend/e2e` against it; the browser suite covers
+login, owner-scoped source intake, governed workflow approval, and one verified
+read-only backend-health execution. It uses CI-only values and does not
+authorize external providers or mutable external actions. The suite creates
+temporary local records and requires an explicit `E2E_ALLOW_MUTATION=true` flag;
+use it only against a disposable acceptance stack.
 
 The repository's verification evidence is in:
 

@@ -119,7 +119,14 @@ $content = Set-DotEnvValue $content "BACKEND_API_SHARED_KEY" (New-HaiSecret)
 $content = Set-DotEnvValue $content "HAI_MEMORY_ENCRYPTION_KEY" (New-HaiSecret)
 $content = Set-DotEnvValue $content "JWT_SECRET" (New-HaiSecret)
 $content = Set-DotEnvValue $content "HAI_APPROVAL_PROOF_SIGNING_KEY" (New-HaiSecret)
-$content = Set-DotEnvValue $content "DB_PASSWORD" (New-HaiSecret)
+$databasePassword = New-HaiSecret
+$content = Set-DotEnvValue $content "DB_PASSWORD" $databasePassword
+# Compose applies migrations with DB_USER, then creates this DML-only API role
+# before backend starts. Keep the runtime password independent from the schema
+# owner secret even on a local first run.
+$content = Set-DotEnvValue $content "BACKEND_DB_USER" "hai_runtime"
+$content = Set-DotEnvValue $content "BACKEND_DB_PASSWORD" (New-HaiSecret)
+$content = Set-DotEnvValue $content "DB_MIGRATIONS_ENABLED" "false"
 $content = Set-DotEnvValue $content "FIRST_RUN_ADMIN_EMAIL" $AdminEmail
 $content = Set-DotEnvValue $content "FIRST_RUN_ADMIN_PASSWORD" ("'" + $AdminPasswordPlainText + "'")
 $a2aLocalPort = 8091

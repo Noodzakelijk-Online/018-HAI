@@ -125,6 +125,43 @@ func TestPursuitRoutesRequireAnAuthenticatedOwner(t *testing.T) {
 	}
 }
 
+func TestReconcileLifeDomainsUsesAuthenticatedOwner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newFakeRepo()
+	linker := &fakeLifeDomainLinker{}
+	service := WithLifeDomainLinker(NewService(repo, nil), linker)
+	if _, err := service.Create(CreateRequest{OwnerIdentity: "alice", Title: "Alice legal case", Domain: "legal_government"}); err != nil {
+		t.Fatalf("Create Alice pursuit: %v", err)
+	}
+	if _, err := service.Create(CreateRequest{OwnerIdentity: "bob", Title: "Bob financial review", Domain: "financial"}); err != nil {
+		t.Fatalf("Create Bob pursuit: %v", err)
+	}
+	linker.requests = nil
+
+	handler := NewHandler(service)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	routes := router.Group("/pursuits")
+	routes.Use(RequireAuthenticatedOwner())
+	routes.POST("/reconcile-life-domains", handler.ReconcileLifeDomains)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/pursuits/reconcile-life-domains", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("reconcile response=%d body=%s", response.Code, response.Body.String())
+	}
+	var result LifeDomainReconciliationResult
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode reconciliation response: %v", err)
+	}
+	if result.Projected != 1 || len(linker.requests) != 1 || linker.requests[0].OwnerIdentity != "alice" {
+		t.Fatalf("unexpected owner-scoped reconciliation: result=%#v requests=%#v", result, linker.requests)
+	}
+}
+
 func TestArchiveEndpointRequiresExplicitArchiveIntent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := newFakeRepo()

@@ -25,4 +25,17 @@ describe('AccountBridgesComponent', () => {
     pending.complete();
     expect(component.syncingAll).toBeFalse();
   });
+
+  it('opens Connected Sources for provider-native connection state', () => {
+    const router = jasmine.createSpyObj('router', ['navigate']);
+    const component = new AccountBridgesComponent(
+      jasmine.createSpyObj('AccountBridgesService', ['syncDue']),
+      jasmine.createSpyObj<NzNotificationService>('notification', ['success', 'error']),
+      router,
+    );
+
+    component.openConnectedSources();
+
+    expect(router.navigate).toHaveBeenCalledWith(['/connected-sources']);
+  });
 });

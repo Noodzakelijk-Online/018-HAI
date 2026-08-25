@@ -10,9 +10,10 @@ $buildScript = Join-Path $PSScriptRoot "build-windows-installer.ps1"
 $installerScript = Join-Path $repositoryRoot "installer\windows\HAI.iss"
 $supportScript = Join-Path $repositoryRoot "installer\windows\Hai-InstallerSupport.ps1"
 $initializerScript = Join-Path $PSScriptRoot "initialize-windows.ps1"
+$runtimeDatabaseRoleScript = Join-Path $PSScriptRoot "provision-runtime-db-role.ps1"
 $documentation = Join-Path $repositoryRoot "docs\windows-installer.md"
 
-foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $initializerScript, $documentation)) {
+foreach ($requiredFile in @($buildScript, $installerScript, $supportScript, $initializerScript, $runtimeDatabaseRoleScript, $documentation)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Windows installer contract is missing: $requiredFile"
     }
@@ -22,9 +23,11 @@ $build = [IO.File]::ReadAllText($buildScript)
 $installer = [IO.File]::ReadAllText($installerScript)
 $support = [IO.File]::ReadAllText($supportScript)
 $initializer = [IO.File]::ReadAllText($initializerScript)
+$runtimeDatabaseRole = [IO.File]::ReadAllText($runtimeDatabaseRoleScript)
 $startScript = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Start-HAI.ps1"))
 $stopScript = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Stop-HAI.ps1"))
 $connectorTest = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Test-HAI-LocalConnector.ps1"))
+$hostRuntimeWorker = [IO.File]::ReadAllText((Join-Path $repositoryRoot "installer\windows\Run-HAI-DeepSeekBridge.ps1"))
 $ngrokStart = [IO.File]::ReadAllText((Join-Path $repositoryRoot "scripts\start-ngrok.ps1"))
 $exampleEnvironment = [IO.File]::ReadAllText((Join-Path $repositoryRoot ".env.example"))
 $secretGenerator = [IO.File]::ReadAllText((Join-Path $repositoryRoot "scripts\generate-secrets.sh"))
@@ -42,7 +45,9 @@ foreach ($script in @(
     (Join-Path $repositoryRoot "installer\windows\Stop-HAI.ps1"),
     (Join-Path $repositoryRoot "installer\windows\HAI-Status.ps1"),
     (Join-Path $repositoryRoot "installer\windows\Test-HAI-LocalConnector.ps1"),
-    (Join-Path $repositoryRoot "installer\windows\Open-HAI.ps1")
+    (Join-Path $repositoryRoot "installer\windows\Run-HAI-DeepSeekBridge.ps1"),
+    (Join-Path $repositoryRoot "installer\windows\Open-HAI.ps1"),
+    $runtimeDatabaseRoleScript
 )) {
     $tokens = $null
     $errors = $null
@@ -57,6 +62,16 @@ foreach ($required in @(
 )) {
     if ($build -notmatch [Regex]::Escape($required)) {
         throw "Installer build contract is missing '$required'."
+    }
+}
+
+foreach ($required in @(
+    "AllowDirtyWorktree",
+    "status --porcelain=v1 --untracked-files=all",
+    "Refusing to build a release installer from a dirty worktree"
+)) {
+    if ($build -notmatch [Regex]::Escape($required)) {
+        throw "Installer release-integrity contract is missing '$required'."
     }
 }
 
@@ -82,6 +97,36 @@ foreach ($required in @(
 )) {
     if ($support -notmatch [Regex]::Escape($required)) {
         throw "Installer runtime contract is missing '$required'."
+    }
+}
+
+foreach ($required in @(
+    "hai-dsh-bridge.exe",
+    "./cmd/hai-dsh-bridge",
+    "GOOS=windows",
+    "golang:1.25.13"
+)) {
+    if ($build -notmatch [Regex]::Escape($required)) {
+        throw "Installer build contract is missing bundled host-runtime worker support: $required"
+    }
+}
+
+foreach ($required in @(
+    "Start-HaiHostRuntimeWorker",
+    "Stop-HaiHostRuntimeWorker",
+    "Get-HaiHostRuntimeWorkerStatus",
+    "Test-HaiHostRuntimeWorkerProcess",
+    "Win32_Process",
+    "pid record does not reference the HAI runtime worker",
+    "HAI_HOST_RUNTIME_BRIDGE_TOKEN",
+    "DEEPSEEK_HARNESS_ENABLED",
+    "DEEPSEEK_HARNESS_EXECUTION_ENABLED",
+    "HAI_HOST_RUNTIME_BRIDGE_URL",
+    "DEEPSEEK_HARNESS_WORKSPACE_KEY",
+    'Get-Command $executable'
+)) {
+    if ($support -notmatch [Regex]::Escape($required)) {
+        throw "Installer support contract is missing host-runtime lifecycle control: $required"
     }
 }
 
@@ -127,6 +172,33 @@ $initializerEnvironmentKeys = [Regex]::Matches($initializer, 'Set-DotEnvValue\s+
 foreach ($key in $initializerEnvironmentKeys) {
     if ($exampleEnvironment -notmatch "(?m)^$([Regex]::Escape($key))=") {
         throw "The first-run initializer writes '$key', but .env.example does not define it."
+    }
+}
+
+foreach ($required in @(
+    "BACKEND_DB_USER",
+    "BACKEND_DB_PASSWORD",
+    "DB_MIGRATIONS_ENABLED"
+)) {
+    if ($exampleEnvironment -notmatch "(?m)^$([Regex]::Escape($required))=") {
+        throw "The least-privilege database contract is missing '$required' from .env.example."
+    }
+    if ($initializer -notmatch [Regex]::Escape($required)) {
+        throw "The Windows initializer does not configure '$required'."
+    }
+}
+
+foreach ($required in @(
+    "BACKEND_DB_USER",
+    "BACKEND_DB_PASSWORD",
+    "ALTER DEFAULT PRIVILEGES",
+    "NOSUPERUSER",
+    "NOCREATEDB",
+    "NOCREATEROLE",
+    "DB_MIGRATIONS_ENABLED=false"
+)) {
+    if ($runtimeDatabaseRole -notmatch [Regex]::Escape($required)) {
+        throw "The runtime database role provisioner is missing '$required'."
     }
 }
 

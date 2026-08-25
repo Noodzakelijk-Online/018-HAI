@@ -275,8 +275,11 @@ without the backend having counted it locally.
 
 Default is unchanged (`RATE_LIMIT_PER_MINUTE=0`, disabled): 12 rapid requests
 all return 200, so normal use is unaffected. Unit tests cover the limit
-boundary, per-key isolation, and fail-open/fail-closed behaviour when Redis is
-unavailable, using a deterministic fake so they need no running Redis.
+boundary, per-key isolation, and Redis-outage behavior using a deterministic
+fake so they need no running Redis. When Redis is unreachable after startup,
+the limiter now uses a bounded in-process fallback rather than silently
+allowing unlimited requests. That fallback is per-process and resets on restart,
+so Redis remains required for shared durable enforcement.
 
 ## 12. Honest connector status
 

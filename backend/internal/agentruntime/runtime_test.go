@@ -17,7 +17,10 @@ import (
 	"testing"
 	"time"
 
+	"automation-hub-backend/internal/hostruntime"
 	"automation-hub-backend/internal/safety"
+
+	"github.com/google/uuid"
 )
 
 func TestMain(m *testing.M) {
@@ -1580,6 +1583,43 @@ func TestDeepSeekHarnessAdapterRequiresExplicitHeadlessExecutionOptIn(t *testing
 	}
 }
 
+func TestDeepSeekHarnessAdapterQueuesApprovedTaskToHostBridge(t *testing.T) {
+	dispatcher := &capturingHostRuntimeDispatcher{}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:             true,
+		executionEnabled:    true,
+		expectedVersion:     "0.1.1-rc.2",
+		workspaceKey:        "hai",
+		dispatcher:          dispatcher,
+		hostDispatchEnabled: true,
+	}
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "queued" || !strings.Contains(result.Message, "Windows host bridge") {
+		t.Fatalf("result = %#v, want queued host bridge task", result)
+	}
+	if dispatcher.task.RuntimeID != "deepseek-harness" || dispatcher.task.TaskID != "harness-task" || !dispatcher.task.Approved {
+		t.Fatalf("host runtime task = %#v", dispatcher.task)
+	}
+}
+
+func TestDeepSeekHarnessAdapterDoesNotQueueWhenHostBridgeIsDisabled(t *testing.T) {
+	dispatcher := &capturingHostRuntimeDispatcher{}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:          true,
+		executionEnabled: true,
+		expectedVersion:  "0.1.1-rc.2",
+		workspaceKey:     "hai",
+		dispatcher:       dispatcher,
+	}
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "host bridge is disabled") {
+		t.Fatalf("result = %#v, want disabled host bridge block", result)
+	}
+	if dispatcher.task.TaskID != "" {
+		t.Fatalf("disabled host bridge unexpectedly received task: %#v", dispatcher.task)
+	}
+}
+
 func TestDeepSeekHarnessAdapterRunsDocumentedHeadlessProfile(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "deepseek-harness")
@@ -1587,16 +1627,17 @@ func TestDeepSeekHarnessAdapterRunsDocumentedHeadlessProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapter := &deepSeekHarnessAdapter{
-		enabled:          true,
-		executionEnabled: true,
-		executable:       os.Args[0],
-		expectedVersion:  "test-preview-1.0",
-		versionProbe:     func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
-		workspace:        workspace,
-		workspaceRoot:    root,
-		stateDir:         filepath.Join(workspace, ".dsh-state"),
-		timeout:          time.Second,
-		outputLimit:      defaultOutputLimit,
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "test-preview-1.0",
+		versionProbe:                func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
+		workspace:                   workspace,
+		workspaceRoot:               root,
+		stateDir:                    filepath.Join(workspace, ".dsh-state"),
+		timeout:                     time.Second,
+		outputLimit:                 defaultOutputLimit,
+		allowDirectExecutionForTest: true,
 	}
 	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
 	if result.Status != "completed" || !strings.Contains(result.Output, "--profile") || !strings.Contains(result.Output, "headless") {
@@ -1614,16 +1655,17 @@ func TestDeepSeekHarnessAdapterRejectsOptionLikePrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapter := &deepSeekHarnessAdapter{
-		enabled:          true,
-		executionEnabled: true,
-		executable:       os.Args[0],
-		expectedVersion:  "test-preview-1.0",
-		versionProbe:     func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
-		workspace:        workspace,
-		workspaceRoot:    root,
-		stateDir:         filepath.Join(workspace, ".dsh-state"),
-		timeout:          time.Second,
-		outputLimit:      defaultOutputLimit,
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "test-preview-1.0",
+		versionProbe:                func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
+		workspace:                   workspace,
+		workspaceRoot:               root,
+		stateDir:                    filepath.Join(workspace, ".dsh-state"),
+		timeout:                     time.Second,
+		outputLimit:                 defaultOutputLimit,
+		allowDirectExecutionForTest: true,
 	}
 
 	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "--install-plugin=untrusted"))
@@ -1639,15 +1681,16 @@ func TestDeepSeekHarnessAdapterRejectsLauncherSubcommandPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapter := &deepSeekHarnessAdapter{
-		enabled:          true,
-		executionEnabled: true,
-		executable:       os.Args[0],
-		expectedVersion:  "test-preview-1.0",
-		workspace:        workspace,
-		workspaceRoot:    root,
-		stateDir:         filepath.Join(workspace, ".dsh-state"),
-		timeout:          time.Second,
-		outputLimit:      defaultOutputLimit,
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "test-preview-1.0",
+		workspace:                   workspace,
+		workspaceRoot:               root,
+		stateDir:                    filepath.Join(workspace, ".dsh-state"),
+		timeout:                     time.Second,
+		outputLimit:                 defaultOutputLimit,
+		allowDirectExecutionForTest: true,
 	}
 
 	for _, prompt := range []string{"web", "plugin"} {
@@ -1665,15 +1708,16 @@ func TestDeepSeekHarnessAdapterBoundsWaitingForSharedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapter := &deepSeekHarnessAdapter{
-		enabled:          true,
-		executionEnabled: true,
-		executable:       os.Args[0],
-		expectedVersion:  "test-preview-1.0",
-		workspace:        workspace,
-		workspaceRoot:    root,
-		stateDir:         filepath.Join(workspace, ".dsh-state"),
-		timeout:          10 * time.Millisecond,
-		outputLimit:      defaultOutputLimit,
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "test-preview-1.0",
+		workspace:                   workspace,
+		workspaceRoot:               root,
+		stateDir:                    filepath.Join(workspace, ".dsh-state"),
+		timeout:                     10 * time.Millisecond,
+		outputLimit:                 defaultOutputLimit,
+		allowDirectExecutionForTest: true,
 	}
 	if !adapter.acquireExecutionGate(context.Background()) {
 		t.Fatal("could not acquire test execution gate")
@@ -1704,13 +1748,14 @@ func TestDeepSeekHarnessAdapterRejectsWorkspaceOutsideRoot(t *testing.T) {
 func TestDeepSeekHarnessAdapterRejectsMissingWorkspaceRoot(t *testing.T) {
 	workspace := t.TempDir()
 	adapter := &deepSeekHarnessAdapter{
-		enabled:          true,
-		executionEnabled: true,
-		executable:       os.Args[0],
-		expectedVersion:  "test-preview-1.0",
-		workspace:        workspace,
-		workspaceRoot:    "",
-		stateDir:         filepath.Join(workspace, ".dsh-state"),
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "test-preview-1.0",
+		workspace:                   workspace,
+		workspaceRoot:               "",
+		stateDir:                    filepath.Join(workspace, ".dsh-state"),
+		allowDirectExecutionForTest: true,
 	}
 
 	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
@@ -1726,13 +1771,14 @@ func TestDeepSeekHarnessAdapterRejectsStateDirectoryOutsideRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	adapter := &deepSeekHarnessAdapter{
-		enabled:          true,
-		executionEnabled: true,
-		executable:       os.Args[0],
-		expectedVersion:  "test-preview-1.0",
-		workspace:        workspace,
-		workspaceRoot:    root,
-		stateDir:         filepath.Join(t.TempDir(), ".dsh-state"),
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "test-preview-1.0",
+		workspace:                   workspace,
+		workspaceRoot:               root,
+		stateDir:                    filepath.Join(t.TempDir(), ".dsh-state"),
+		allowDirectExecutionForTest: true,
 	}
 	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
 	if result.Status != "blocked" || !strings.Contains(result.Message, "state directory must stay inside") {
@@ -1794,21 +1840,35 @@ func TestDeepSeekHarnessAdapterBlocksVersionMismatchBeforeTaskExecution(t *testi
 		t.Fatal(err)
 	}
 	adapter := &deepSeekHarnessAdapter{
-		enabled:          true,
-		executionEnabled: true,
-		executable:       os.Args[0],
-		expectedVersion:  "different-preview",
-		versionProbe:     func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
-		workspace:        workspace,
-		workspaceRoot:    root,
-		stateDir:         filepath.Join(workspace, ".dsh-state"),
-		timeout:          time.Second,
-		outputLimit:      defaultOutputLimit,
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "different-preview",
+		versionProbe:                func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
+		workspace:                   workspace,
+		workspaceRoot:               root,
+		stateDir:                    filepath.Join(workspace, ".dsh-state"),
+		timeout:                     time.Second,
+		outputLimit:                 defaultOutputLimit,
+		allowDirectExecutionForTest: true,
 	}
 	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
 	if result.Status != "blocked" || !strings.Contains(result.Message, "version mismatch") {
 		t.Fatalf("result = %#v, want version mismatch block", result)
 	}
+}
+
+type capturingHostRuntimeDispatcher struct {
+	task hostruntime.ApprovedTask
+	err  error
+}
+
+func (d *capturingHostRuntimeDispatcher) Enqueue(task hostruntime.ApprovedTask) (*hostruntime.Job, error) {
+	d.task = task
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &hostruntime.Job{ID: uuid.New(), Status: hostruntime.StatusPending}, nil
 }
 
 type fakeAdapter struct {

@@ -6,6 +6,7 @@ import (
 	"automation-hub-backend/migrations"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -51,8 +52,10 @@ func GetDefaultDB() (*gorm.DB, error) {
 		return nil, err
 	}
 
-	if err := runDefaultMigrations(db); err != nil {
-		return nil, err
+	if migrationsEnabledAtStartup() {
+		if err := runDefaultMigrations(db); err != nil {
+			return nil, err
+		}
 	}
 
 	defaultDB = db
@@ -65,6 +68,20 @@ func resetDefaultDBForTest() {
 	defaultDBMu.Lock()
 	defer defaultDBMu.Unlock()
 	defaultDB = nil
+}
+
+// migrationsEnabledAtStartup keeps existing installations compatible while
+// allowing a production API process to run with a DML-only database role.
+// Schema migrations must then be applied by the explicit `app migrate up`
+// command using the separate migration-owner credentials. An invalid value
+// fails closed: the process will not silently assume schema privileges.
+func migrationsEnabledAtStartup() bool {
+	value, exists := os.LookupEnv("DB_MIGRATIONS_ENABLED")
+	if !exists || strings.TrimSpace(value) == "" {
+		return true
+	}
+	enabled, err := strconv.ParseBool(strings.TrimSpace(value))
+	return err == nil && enabled
 }
 
 // autoMigrateEnabled reports whether Gorm AutoMigrate should run for table

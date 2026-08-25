@@ -3,7 +3,10 @@ param(
     [string]$Version = "",
     [string]$OutputDirectory = "",
     [string]$ISCCPath = "",
-    [switch]$SkipCompile
+    [switch]$SkipCompile,
+    # Deliberately opt-in for developer-only payload experiments. A release
+    # build must otherwise be reproducible from one committed Git revision.
+    [switch]$AllowDirtyWorktree
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +18,15 @@ $installerScript = Join-Path $installerRoot "windows\HAI.iss"
 
 if (-not (Test-Path -LiteralPath (Join-Path $repositoryRoot ".git") -PathType Any)) {
     throw "The Windows installer must be built from a Git checkout so it cannot accidentally package local data."
+}
+if (-not $AllowDirtyWorktree) {
+    $dirtyPaths = @(& git -C $repositoryRoot status --porcelain=v1 --untracked-files=all)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not determine whether the Git worktree is clean."
+    }
+    if ($dirtyPaths.Count -gt 0) {
+        throw "Refusing to build a release installer from a dirty worktree. Commit or stash the changes first, or use -AllowDirtyWorktree only for a non-release developer payload."
+    }
 }
 if (-not (Test-Path -LiteralPath $installerScript -PathType Leaf)) {
     throw "Missing Inno Setup script: $installerScript"
@@ -90,6 +102,45 @@ foreach ($relativePath in $sourceFiles) {
     New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
     Copy-Item -LiteralPath $source -Destination $destination -Force
     $included.Add($normalizedPath)
+}
+
+if (-not $SkipCompile) {
+    $bridgeOutput = Join-Path $payloadRoot "installer\windows\hai-dsh-bridge.exe"
+    $go = Get-Command go -ErrorAction SilentlyContinue
+    if ($go) {
+        Push-Location (Join-Path $payloadRoot "backend")
+        try {
+            $previousCGO = $env:CGO_ENABLED
+            $previousGOOS = $env:GOOS
+            $previousGOARCH = $env:GOARCH
+            $env:CGO_ENABLED = "0"
+            $env:GOOS = "windows"
+            $env:GOARCH = "amd64"
+            & $go.Source build -trimpath -o $bridgeOutput ./cmd/hai-dsh-bridge
+        } finally {
+            $env:CGO_ENABLED = $previousCGO
+            $env:GOOS = $previousGOOS
+            $env:GOARCH = $previousGOARCH
+            Pop-Location
+        }
+    } else {
+        if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+            throw "A Go toolchain or Docker Desktop is required to build the bundled HAI host runtime worker."
+        }
+        $dockerServer = & docker version --format '{{.Server.Version}}' 2>$null
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($dockerServer)) {
+            throw "Docker Desktop is installed but its Linux engine is not ready; it is required when Go is unavailable."
+        }
+        & docker run --rm `
+            -v "${payloadRoot}:/src" `
+            -w /src/backend `
+            golang:1.25.13 `
+            sh -c 'CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o /src/installer/windows/hai-dsh-bridge.exe ./cmd/hai-dsh-bridge'
+    }
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $bridgeOutput -PathType Leaf)) {
+        throw "Could not build the bundled HAI host runtime worker."
+    }
+    $included.Add("installer/windows/hai-dsh-bridge.exe")
 }
 
 $manifest = [ordered]@{

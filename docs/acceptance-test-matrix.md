@@ -28,7 +28,7 @@ Go test asserts it; "manual" means a documented step.
 | Provider fallback | Free before paid; never paid unless allowed | Automated — `providerfallback` |
 | Autonomy gate | Risky/irreversible never auto-runs | Automated — `autonomygate` |
 | Upload safety | Traversal/extension/size rejected | Automated — `upload`, `pathsafety` |
-| Full-stack boot | Compose stack healthy end-to-end | **Manual/pending** — `docs/fresh-clone-dryrun.md` |
+| Full-stack boot | Compose stack healthy end-to-end, including an authenticated browser flow | **Required CI gate** — `browser-acceptance` provisions an isolated production-mode Compose stack, waits for `/readyz`, and runs `frontend/e2e`. The first successful hosted run and a fresh Windows 11 target-machine run remain release evidence to record. |
 | Accessibility / responsive | WCAG + breakpoints | **Pending** — frontend work |
 
 ## Gate

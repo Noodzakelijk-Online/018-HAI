@@ -38,6 +38,10 @@ type Repository interface {
 	// incrementing attempts. Policy gates use it to preserve work for resume.
 	MarkDeferred(id uuid.UUID, workerID string, leaseGeneration int64, runAt time.Time, reason string) (bool, error)
 	MarkDead(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, attempts int, lastErr string) (bool, error)
+	// CompleteRecurring terminalizes the owned current occurrence and creates
+	// its replacement occurrence in one transaction. It returns whether the
+	// current lease was still owned and whether it created the replacement.
+	CompleteRecurring(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, terminalStatus string, attempts int, lastErr string, next *models.DurableJob) (bool, bool, error)
 	// ExtendLease heartbeats a running job only while the caller still owns its
 	// current lease generation.
 	ExtendLease(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error)
@@ -221,6 +225,61 @@ func (r *gormRepository) MarkDead(id uuid.UUID, workerID string, leaseGeneration
 		"locked_at":    nil,
 	})
 	return result.RowsAffected == 1, result.Error
+}
+
+func (r *gormRepository) CompleteRecurring(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, terminalStatus string, attempts int, lastErr string, next *models.DurableJob) (bool, bool, error) {
+	if terminalStatus != models.DurableJobSucceeded && terminalStatus != models.DurableJobDead {
+		return false, false, fmt.Errorf("recurring terminal status %q is invalid", terminalStatus)
+	}
+	if next == nil {
+		return false, false, fmt.Errorf("recurring replacement job is required")
+	}
+	normalizeJob(next)
+	owned, scheduled := false, false
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		lockMaterial := next.Queue + "\x00" + next.Kind
+		lockKey := fmt.Sprintf("%x", sha256.Sum256([]byte(lockMaterial)))
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey).Error; err != nil {
+			return err
+		}
+
+		updates := map[string]any{
+			"status":       terminalStatus,
+			"completed_at": now.UTC(),
+			"locked_by":    "",
+			"locked_at":    nil,
+			"last_error":   lastErr,
+		}
+		if terminalStatus == models.DurableJobDead {
+			updates["attempts"] = attempts
+		}
+		result := tx.Model(&models.DurableJob{}).
+			Where("id = ? AND status = ? AND locked_by = ? AND lease_generation = ?", id, models.DurableJobRunning, workerID, leaseGeneration).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return nil
+		}
+		owned = true
+
+		var active int64
+		if err := tx.Model(&models.DurableJob{}).
+			Where("queue = ? AND kind = ? AND id <> ? AND status IN ?", next.Queue, next.Kind, id, []string{models.DurableJobPending, models.DurableJobRunning}).
+			Count(&active).Error; err != nil {
+			return err
+		}
+		if active > 0 {
+			return nil
+		}
+		if err := tx.Create(next).Error; err != nil {
+			return err
+		}
+		scheduled = true
+		return nil
+	})
+	return owned, scheduled, err
 }
 
 func (r *gormRepository) ExtendLease(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error) {

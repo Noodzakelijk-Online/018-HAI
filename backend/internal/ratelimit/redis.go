@@ -23,14 +23,14 @@ type counter interface {
 // limit is enforced consistently across restarts and across multiple backend
 // instances sharing one Redis — which the in-process limiter cannot do.
 type RedisLimiter struct {
-	counter counter
-	limit   int
-	window  time.Duration
-	prefix  string
-	// failOpen decides what happens when Redis is unreachable. It is true:
-	// a rate limiter must not become a single point of failure for the whole
-	// API. An unreachable Redis degrades to "allow", loudly logged, rather than
-	// rejecting every request.
+	counter  counter
+	limit    int
+	window   time.Duration
+	prefix   string
+	fallback Enforcer
+	// failOpen only applies when no bounded fallback is configured. Production
+	// construction always provides an in-process fallback so an outage does not
+	// silently remove the configured request bound.
 	failOpen bool
 }
 
@@ -53,6 +53,7 @@ func NewRedisLimiter(ctx context.Context, addr string, limit int, window time.Du
 		limit:    limit,
 		window:   window,
 		prefix:   "ratelimit:",
+		fallback: Memory(limit, window),
 		failOpen: true,
 	}, nil
 }
@@ -66,6 +67,10 @@ func (r *RedisLimiter) Allow(ctx context.Context, key string) Decision {
 
 	count, reset, err := r.counter.IncrementWindow(ctx, r.prefix+key, r.window)
 	if err != nil {
+		if r.fallback != nil {
+			log.Printf("ratelimit: redis unavailable, using bounded in-process fallback: %v", err)
+			return r.fallback.Allow(ctx, key)
+		}
 		if r.failOpen {
 			log.Printf("ratelimit: redis unavailable, allowing request (fail-open): %v", err)
 			return Decision{Allowed: true, Remaining: -1, RetryAfter: r.window}

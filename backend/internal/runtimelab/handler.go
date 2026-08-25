@@ -1,6 +1,7 @@
 package runtimelab
 
 import (
+	"automation-hub-backend/internal/apierror"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -21,7 +22,7 @@ func (h *Handler) Overview(c *gin.Context) {
 func (h *Handler) FeatureParity(c *gin.Context) {
 	overview, err := h.svc.FeatureParity()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "runtime feature parity is unavailable")})
 		return
 	}
 	c.JSON(http.StatusOK, overview)
@@ -30,7 +31,7 @@ func (h *Handler) FeatureParity(c *gin.Context) {
 func (h *Handler) RuntimeFeatureParity(c *gin.Context) {
 	inventory, ok, err := h.svc.RuntimeFeatureParity(c.Param("runtimeId"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "runtime parity inventory is unavailable")})
 		return
 	}
 	if !ok {
@@ -43,7 +44,7 @@ func (h *Handler) RuntimeFeatureParity(c *gin.Context) {
 func (h *Handler) Capabilities(c *gin.Context) {
 	overview, err := h.svc.CapabilityCards(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "runtime capabilities are unavailable")})
 		return
 	}
 	c.JSON(http.StatusOK, overview)

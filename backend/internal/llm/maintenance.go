@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -541,9 +542,20 @@ func (s *Service) refreshOllamaModel(
 	}
 
 	payload, _ := json.Marshal(map[string]any{"name": model.ID, "stream": false})
+	// A model pull is a final effect. Scheduled maintenance therefore gets a
+	// fresh, server-derived task identity for each actual pull attempt instead
+	// of reusing the long-lived scheduler identity whose authority was already
+	// consumed by a prior successful run.
+	attemptContext := modelMaintenanceAttemptEffectContext(
+		effectContext,
+		provider.ID,
+		model.ID,
+		result.CheckedAt,
+		atomic.AddUint64(&s.maintenanceAttemptSequence, 1),
+	)
 	authorization, err := buildFinalEffectAuthorizationRequest(
 		EffectOperationModelPull,
-		effectContext,
+		attemptContext,
 		provider,
 		model,
 		endpoint,
@@ -586,6 +598,22 @@ func (s *Service) refreshOllamaModel(
 		result.Reason = "Ollama refreshed the configured model tag before this model was used"
 	}
 	return s.recordMaintenance(result)
+}
+
+func modelMaintenanceAttemptEffectContext(
+	base *EffectContext,
+	providerID string,
+	modelID string,
+	checkedAt time.Time,
+	sequence uint64,
+) *EffectContext {
+	if base == nil {
+		return nil
+	}
+	attempt := normalizeEffectContext(*base)
+	identityDigest := sha256.Sum256([]byte(strings.TrimSpace(providerID) + "\x00" + strings.TrimSpace(modelID)))
+	attempt.TaskID = "system:model-maintenance:" + checkedAt.UTC().Format("20060102T150405.000000000Z") + ":" + fmt.Sprintf("%x", identityDigest[:8]) + ":" + strconv.FormatUint(sequence, 10)
+	return &attempt
 }
 
 func (s *Service) recordMaintenance(result ModelMaintenanceResult) ModelMaintenanceResult {

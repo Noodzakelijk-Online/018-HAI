@@ -191,12 +191,20 @@ func (s *Service) Authorize(ctx context.Context, input Request) (Receipt, error)
 	}
 
 	if err := s.verifyFrameworkSelection(ctx, request, &receipt); err != nil {
+		reasonCode := "framework.selection_unverified"
+		reason := "framework selection could not be independently verified"
+		if request.Governance != nil &&
+			request.Governance.FrameworkSelectionID != "" &&
+			request.Governance.FrameworkSelectorAlgorithmVersion != frameworkSelectorV5 {
+			reasonCode = "framework.selection_legacy_execution_denied"
+			reason = "legacy framework selections are read-only; fresh selector-v5 planning is required before execution"
+		}
 		return s.persistDecision(
 			ctx,
 			receipt,
 			OutcomeDenied,
-			"framework selection could not be independently verified",
-			"framework.selection_unverified",
+			reason,
+			reasonCode,
 		)
 	}
 	if err := s.verifyFrameworkEvidencePreflight(ctx, request, &receipt); err != nil {

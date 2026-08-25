@@ -28,6 +28,26 @@ docker compose -f docker-compose.local.yml --env-file .env.local down
 Do not add `-v` unless the reviewed operation is intentionally deleting local
 database and queue volumes.
 
+## Confirm Stack Ownership
+
+Before treating a healthy local dashboard as evidence for a source checkout,
+confirm that the running `018-hai` containers were started from that checkout.
+Docker Compose stores the owning directory as a container label:
+
+```powershell
+docker ps -q --filter "label=com.docker.compose.project=018-hai" |
+  ForEach-Object {
+    docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' $_
+  } |
+  Sort-Object -Unique
+```
+
+The output must be this repository's directory before its health result,
+dashboard behavior, or logs are used as release evidence. If another directory
+owns the project, stop that installation through its own checked-out copy
+before starting this one. Do not start two HAI stacks under the same Compose
+project name: they would compete for the same container names and volumes.
+
 ## Health Checks
 
 | Check | Command | Healthy |
@@ -774,7 +794,7 @@ executor, and postcondition evidence.
 
 Current retained acceptance evidence includes the migration-chain contract,
 isolated PostgreSQL `0046`+`0047` ledger test, live workflow-repository
-PostgreSQL test, full Go suite, 380 Angular tests, production build, and a
+PostgreSQL test, full Go suite, 447 Angular tests, production build, and a
 signed-in browser prepare/approve/persist/cleanup exercise. That browser run
 proves persistence and UI/API coordination only; it did not execute or test a
 reminder effect.

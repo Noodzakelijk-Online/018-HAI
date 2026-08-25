@@ -10,6 +10,7 @@ import (
 func TestGetDefaultDBCachesOnlySuccessfulMigration(t *testing.T) {
 	resetDefaultDBForTest()
 	defer resetDefaultDBForTest()
+	t.Setenv("DB_MIGRATIONS_ENABLED", "true")
 
 	originalOpen := openConfiguredDB
 	originalMigrate := runDefaultMigrations
@@ -52,6 +53,7 @@ func TestGetDefaultDBCachesOnlySuccessfulMigration(t *testing.T) {
 func TestGetDefaultDBRetriesAfterMigrationFailure(t *testing.T) {
 	resetDefaultDBForTest()
 	defer resetDefaultDBForTest()
+	t.Setenv("DB_MIGRATIONS_ENABLED", "true")
 
 	originalOpen := openConfiguredDB
 	originalMigrate := runDefaultMigrations
@@ -82,5 +84,39 @@ func TestGetDefaultDBRetriesAfterMigrationFailure(t *testing.T) {
 	}
 	if opens != 2 || migrations != 2 {
 		t.Fatalf("open/migration calls = %d/%d, want 2/2", opens, migrations)
+	}
+}
+
+func TestGetDefaultDBSkipsStartupMigrationsWhenDisabled(t *testing.T) {
+	resetDefaultDBForTest()
+	defer resetDefaultDBForTest()
+	t.Setenv("DB_MIGRATIONS_ENABLED", "false")
+
+	originalOpen := openConfiguredDB
+	originalMigrate := runDefaultMigrations
+	defer func() {
+		openConfiguredDB = originalOpen
+		runDefaultMigrations = originalMigrate
+	}()
+
+	openConfiguredDB = func() (*gorm.DB, error) { return &gorm.DB{}, nil }
+	runDefaultMigrations = func(*gorm.DB) error {
+		t.Fatal("startup migrations must be skipped for a runtime-only database role")
+		return nil
+	}
+
+	if _, err := GetDefaultDB(); err != nil {
+		t.Fatalf("GetDefaultDB with startup migrations disabled: %v", err)
+	}
+}
+
+func TestMigrationsEnabledAtStartupDefaultsTrueAndFailsClosed(t *testing.T) {
+	t.Setenv("DB_MIGRATIONS_ENABLED", "")
+	if !migrationsEnabledAtStartup() {
+		t.Fatal("empty migration setting should preserve compatible startup behavior")
+	}
+	t.Setenv("DB_MIGRATIONS_ENABLED", "not-a-bool")
+	if migrationsEnabledAtStartup() {
+		t.Fatal("invalid migration setting must not grant schema-changing startup behavior")
 	}
 }

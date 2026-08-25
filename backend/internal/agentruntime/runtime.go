@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"automation-hub-backend/internal/hostruntime"
 	"automation-hub-backend/internal/pathsafety"
 	"automation-hub-backend/internal/safety"
 
@@ -45,14 +46,18 @@ type Task struct {
 }
 
 type Result struct {
-	RuntimeID   string      `json:"runtimeId"`
-	Status      string      `json:"status"`
-	Message     string      `json:"message,omitempty"`
-	Output      string      `json:"output,omitempty"`
-	RouteTrace  *RouteTrace `json:"routeTrace,omitempty"`
-	ExitCode    int         `json:"exitCode"`
-	DurationMs  int64       `json:"durationMs"`
-	AuditEvents []string    `json:"auditEvents"`
+	RuntimeID string `json:"runtimeId"`
+	// ExecutionReference identifies durable work created outside the backend
+	// process, such as a host-runtime job. It is an opaque audit reference, not
+	// a user-supplied target or command.
+	ExecutionReference string      `json:"executionReference,omitempty"`
+	Status             string      `json:"status"`
+	Message            string      `json:"message,omitempty"`
+	Output             string      `json:"output,omitempty"`
+	RouteTrace         *RouteTrace `json:"routeTrace,omitempty"`
+	ExitCode           int         `json:"exitCode"`
+	DurationMs         int64       `json:"durationMs"`
+	AuditEvents        []string    `json:"auditEvents"`
 }
 
 type RouteTrace struct {
@@ -188,10 +193,18 @@ func DefaultRegistry() *Registry {
 // DefaultRegistryWithFinalEffectVerifier is the production composition point
 // for enabling runtime effects without exporting concrete adapter types.
 func DefaultRegistryWithFinalEffectVerifier(verifier FinalEffectProofVerifier) *Registry {
+	return DefaultRegistryWithFinalEffectVerifierAndHostRuntime(verifier, nil)
+}
+
+// DefaultRegistryWithFinalEffectVerifierAndHostRuntime is the production
+// composition point for runtimes that need a Windows-host execution bridge.
+// A nil dispatcher leaves DeepSeek Harness unavailable rather than allowing
+// the backend container to execute a host-oriented runtime directly.
+func DefaultRegistryWithFinalEffectVerifierAndHostRuntime(verifier FinalEffectProofVerifier, dispatcher hostruntime.Dispatcher) *Registry {
 	return NewRegistryWithFinalEffectVerifier(
 		verifier,
 		newHermesAdapterFromEnv(),
-		newDeepSeekHarnessAdapterFromEnv(),
+		newDeepSeekHarnessAdapterFromEnv(dispatcher),
 		newOdysseusAdapterFromEnv(),
 		newOpenClawAdapterFromEnv(),
 	)

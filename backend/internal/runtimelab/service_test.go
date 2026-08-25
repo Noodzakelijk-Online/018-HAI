@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -584,5 +585,25 @@ func TestRemoteHealthProbeDoesNotFollowRedirects(t *testing.T) {
 	probe := runtime.Probe(context.Background(), time.Now().UTC())
 	if probe.Status != executionbroker.RuntimeUnavailable || probe.Detail != "health HTTP 302" {
 		t.Fatalf("redirecting health endpoint must not be followed: %#v", probe)
+	}
+}
+
+func TestRemoteHealthProbeDoesNotExposeEndpointOnTransportFailure(t *testing.T) {
+	t.Setenv(runtimeLabAllowedHostsEnv, "127.0.0.1")
+	t.Setenv("OPENHANDS_BASE_URL", "http://127.0.0.1:1")
+	t.Setenv("OPENHANDS_HEALTH_PATH", "/health")
+	runtime := newRemoteRuntime("openhands", "OpenHands", "OPENHANDS_BASE_URL")
+
+	probe := runtime.Probe(context.Background(), time.Now().UTC())
+	if probe.Status != executionbroker.RuntimeUnavailable {
+		t.Fatalf("probe status = %q, want unavailable: %#v", probe.Status, probe)
+	}
+	if probe.Detail != "runtime discovery could not reach or validate the configured endpoint; review the local runtime configuration" {
+		t.Fatalf("probe detail = %q", probe.Detail)
+	}
+	for _, forbidden := range []string{"127.0.0.1", ":1", "connect"} {
+		if strings.Contains(strings.ToLower(probe.Detail), strings.ToLower(forbidden)) {
+			t.Fatalf("probe detail leaked %q: %q", forbidden, probe.Detail)
+		}
 	}
 }

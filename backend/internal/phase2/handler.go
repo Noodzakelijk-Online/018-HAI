@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"automation-hub-backend/internal/apierror"
 	"automation-hub-backend/internal/background"
 	"automation-hub-backend/internal/modelintelligence"
 	"automation-hub-backend/internal/models"
@@ -51,7 +52,7 @@ func (h *Handler) ListOperations(c *gin.Context) {
 	f := operationFilter(c, owner, workspace)
 	ops, err := h.m.svc.List(f)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeServerError(c, err, "background operations are unavailable")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"operations": ops})
@@ -63,12 +64,12 @@ func (h *Handler) Overview(c *gin.Context) {
 	owner, workspace := h.owner(c)
 	dashboard, err := h.m.svc.Dashboard(owner, workspace)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeServerError(c, err, "background operations overview is unavailable")
 		return
 	}
 	operationsList, err := h.m.svc.List(operationFilter(c, owner, workspace))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeServerError(c, err, "background operations are unavailable")
 		return
 	}
 	c.JSON(http.StatusOK, OperationsOverview{Dashboard: dashboard, Operations: operationsList})
@@ -95,7 +96,7 @@ func (h *Handler) Dashboard(c *gin.Context) {
 	owner, workspace := h.owner(c)
 	d, err := h.m.svc.Dashboard(owner, workspace)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeServerError(c, err, "background operations dashboard is unavailable")
 		return
 	}
 	c.JSON(http.StatusOK, d)
@@ -111,7 +112,7 @@ func (h *Handler) GetOperation(c *gin.Context) {
 	}
 	op, err := h.m.svc.Get(owner, workspace, id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		writeOperationLookupError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, op)
@@ -126,12 +127,12 @@ func (h *Handler) OperationEvents(c *gin.Context) {
 		return
 	}
 	if _, err := h.m.svc.Get(owner, workspace, id); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		writeOperationLookupError(c, err)
 		return
 	}
 	events, err := h.m.svc.Events(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeServerError(c, err, "operation audit history is unavailable")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"events": events})
@@ -149,7 +150,7 @@ func (h *Handler) Approve(c *gin.Context) {
 	}
 	op, err := h.m.svc.Get(owner, workspace, id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		writeOperationLookupError(c, err)
 		return
 	}
 	op.OwnerType = string(operations.OwnerRobert)
@@ -192,7 +193,7 @@ func (h *Handler) Later(c *gin.Context) {
 	op.NextReviewAt = &review
 	saved, err := h.m.svc.Save(*op, "postponed", string(operations.OwnerRobert), "postponed by operator; will resurface for review")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeServerError(c, err, "operation could not be postponed")
 		return
 	}
 	c.JSON(http.StatusOK, saved)
@@ -230,7 +231,7 @@ func (h *Handler) Approvals(c *gin.Context) {
 	}
 	events, err := h.m.svc.Events(op.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeServerError(c, err, "operation approval history is unavailable")
 		return
 	}
 	approvals := make([]models.OperationEvent, 0, len(events))
@@ -266,7 +267,7 @@ func (h *Handler) GenerateEvidencePack(c *gin.Context) {
 	}
 	events, err := h.m.svc.Events(op.ID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeServerError(c, err, "operation audit history is unavailable")
 		return
 	}
 	scan := privacyfilter.Scan(op.Title+"\n"+op.Description, 280)
@@ -332,7 +333,7 @@ func (h *Handler) loadOp(c *gin.Context, owner, workspace string) (*models.Opera
 	}
 	op, err := h.m.svc.Get(owner, workspace, id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		writeOperationLookupError(c, err)
 		return nil, false
 	}
 	return op, true
@@ -350,7 +351,7 @@ func (h *Handler) RunOperation(c *gin.Context) {
 	}
 	op, err := h.m.svc.Get(owner, workspace, id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		writeOperationLookupError(c, err)
 		return
 	}
 	outcome, err := background.ExecuteSafeOperation(c.Request.Context(), h.m.svc, h.m.broker, *op, time.Now().UTC())
@@ -372,10 +373,27 @@ func (h *Handler) RunBackground(c *gin.Context) {
 	}
 	rep, err := h.m.RunBackgroundForOwner(c.Request.Context(), owner)
 	if err != nil {
-		c.JSON(backgroundRunHTTPStatus(err), gin.H{"error": err.Error()})
+		status := backgroundRunHTTPStatus(err)
+		if status >= http.StatusInternalServerError {
+			writeServerError(c, err, "background pass could not be completed")
+			return
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, rep)
+}
+
+func writeServerError(c *gin.Context, err error, fallback string) {
+	c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, fallback)})
+}
+
+func writeOperationLookupError(c *gin.Context, err error) {
+	if errors.Is(err, operations.ErrNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "operation not found"})
+		return
+	}
+	writeServerError(c, err, "operation details are unavailable")
 }
 
 // backgroundRunHTTPStatus keeps a concurrent run distinguishable from an

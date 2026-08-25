@@ -23,6 +23,32 @@ type leaseLosingRepo struct {
 	*fakeRepo
 }
 
+type failingReapRepo struct {
+	*fakeRepo
+	err error
+}
+
+type failingRecurringCompletionRepo struct {
+	*fakeRepo
+}
+
+func (r *failingReapRepo) ReapExpiredLeases(time.Time, time.Duration) (int, error) {
+	return 0, r.err
+}
+
+func (r *failingRecurringCompletionRepo) CompleteRecurring(
+	_ uuid.UUID,
+	_ string,
+	_ int64,
+	_ time.Time,
+	_ string,
+	_ int,
+	_ string,
+	_ *models.DurableJob,
+) (bool, bool, error) {
+	return false, false, errors.New("simulated terminal transaction failure")
+}
+
 func (r *leaseLosingRepo) ExtendLease(
 	_ uuid.UUID,
 	_ string,
@@ -57,6 +83,28 @@ func TestRunnerStartProcessesAlreadyDueWorkWithoutWaitingForPollInterval(t *test
 	case <-processed:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("due work waited for the polling interval instead of running at worker startup")
+	}
+}
+
+func TestRunnerStatusRecordsPollFailureAndRecovery(t *testing.T) {
+	repository := &failingReapRepo{fakeRepo: newFakeRepo(), err: errors.New("database unavailable")}
+	runner := NewRunner(repository, Options{WorkerID: "status-worker", Queue: "status"})
+	runner.markStarted(time.Now().UTC())
+	runner.runAndReport(context.Background())
+	failed := runner.Status()
+	if !failed.Running || failed.LastError == "" || failed.ConsecutiveErrors != 1 || failed.LastPollAt.IsZero() {
+		t.Fatalf("failed worker status = %#v", failed)
+	}
+
+	repository.err = nil
+	runner.runAndReport(context.Background())
+	recovered := runner.Status()
+	if recovered.LastError != "" || recovered.ConsecutiveErrors != 0 || recovered.LastSuccessfulAt.IsZero() {
+		t.Fatalf("recovered worker status = %#v", recovered)
+	}
+	runner.markStopped()
+	if runner.Status().Running {
+		t.Fatal("runner status remained running after stop")
 	}
 }
 
@@ -179,6 +227,31 @@ func (f *fakeRepo) MarkDead(id uuid.UUID, workerID string, leaseGeneration int64
 	job.LockedBy = ""
 	job.LockedAt = nil
 	return true, nil
+}
+
+func (f *fakeRepo) CompleteRecurring(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, terminalStatus string, attempts int, lastErr string, next *models.DurableJob) (bool, bool, error) {
+	job := f.jobs[id]
+	if !fakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, false, nil
+	}
+	if terminalStatus != models.DurableJobSucceeded && terminalStatus != models.DurableJobDead {
+		return false, false, errors.New("invalid recurring terminal status")
+	}
+	job.Status = terminalStatus
+	job.CompletedAt = &now
+	job.LockedBy = ""
+	job.LockedAt = nil
+	job.LastError = lastErr
+	if terminalStatus == models.DurableJobDead {
+		job.Attempts = attempts
+	}
+	for _, existing := range f.jobs {
+		if existing.ID != id && existing.Queue == next.Queue && existing.Kind == next.Kind && (existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
+			return true, false, nil
+		}
+	}
+	_, err := f.Enqueue(next)
+	return true, err == nil, err
 }
 
 func (f *fakeRepo) ExtendLease(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error) {
@@ -591,6 +664,29 @@ func TestRegisterRecurringKeepsScheduleAliveAfterRepeatedFailures(t *testing.T) 
 	}
 	if pending != 1 {
 		t.Fatalf("pending occurrences = %d, want exactly 1 — the recurring schedule must survive failure", pending)
+	}
+}
+
+func TestRegisterRecurringDoesNotScheduleFutureWorkWhenTerminalTransactionFails(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	repo := &failingRecurringCompletionRepo{fakeRepo: newFakeRepo()}
+	runner := NewRunner(repo, Options{WorkerID: "w1", Now: fixedClock(&now)})
+	if err := runner.RegisterRecurring("tick", time.Minute, 1, func(context.Context) error { return nil }); err != nil {
+		t.Fatalf("RegisterRecurring: %v", err)
+	}
+
+	if _, err := runner.RunOnce(context.Background()); err == nil {
+		t.Fatal("RunOnce succeeded despite a failed terminal recurring transaction")
+	}
+
+	pending := 0
+	for _, job := range repo.jobs {
+		if job.Kind == "tick" && job.Status == models.DurableJobPending {
+			pending++
+		}
+	}
+	if pending != 0 {
+		t.Fatalf("pending recurring jobs = %d, want 0 when terminal transaction failed", pending)
 	}
 }
 

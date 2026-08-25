@@ -196,6 +196,63 @@ func TestOpenClawEcosystemHandlers(t *testing.T) {
 	}
 }
 
+func TestWriteEcosystemMutationErrorDoesNotExposeUnexpectedFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	writeEcosystemMutationError(context, errors.New(`write failed: password=runtime-secret C:\\private`))
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	for _, forbidden := range []string{"password", "runtime-secret", "C:\\\\private"} {
+		if strings.Contains(strings.ToLower(recorder.Body.String()), strings.ToLower(forbidden)) {
+			t.Fatalf("response leaked %q: %s", forbidden, recorder.Body.String())
+		}
+	}
+	if !strings.Contains(recorder.Body.String(), "runtime ecosystem mutation could not be completed") {
+		t.Fatalf("unexpected response: %s", recorder.Body.String())
+	}
+}
+
+func TestOpenClawEcosystemPathErrorDoesNotExposeLocalPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root := t.TempDir()
+	handler := NewHandlerWithEcosystemMutationAuthorizer(
+		NewRegistry(testOpenClawAdapter(root, "")),
+		allowingEcosystemMutationAuthorizer(nil),
+	)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.PATCH("/agent-runtimes/openclaw/ecosystem", handler.SetOpenClawEcosystem)
+
+	privatePath := filepath.Join(root, "private", "missing-openclaw.zip")
+	body, err := json.Marshal(map[string]string{"ecosystemPath": privatePath})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPatch, "/agent-runtimes/openclaw/ecosystem", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	addEcosystemAuthorizationHeaders(request)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	for _, forbidden := range []string{root, "missing-openclaw.zip"} {
+		if strings.Contains(response.Body.String(), forbidden) {
+			t.Fatalf("response leaked %q: %s", forbidden, response.Body.String())
+		}
+	}
+	if !strings.Contains(response.Body.String(), "does not meet configured safety requirements") {
+		t.Fatalf("unexpected response: %s", response.Body.String())
+	}
+}
+
 func TestOverviewReturnsRuntimeMetadataAndHealthInOneResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

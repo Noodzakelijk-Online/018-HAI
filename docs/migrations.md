@@ -51,6 +51,30 @@ startup and `GetDefaultDB`, executes:
 pre -> optional development AutoMigrate -> post
 ```
 
+## Runtime Database Least Privilege
+
+The default local install runs the API with a DML-only account. Compose starts
+the one-shot `backend-migrate` job with the database owner account, then the
+one-shot `backend-runtime-role` job creates or rotates the API account and
+grants DML and sequence permissions before allowing `backend` to start. The
+running API cannot create, alter, or drop schema objects.
+
+1. Set a strong, distinct `BACKEND_DB_PASSWORD` and a simple identifier in
+   `BACKEND_DB_USER` in the ignored environment file.
+2. Start the Compose stack normally. It will fail closed if the migration or
+   runtime-role job fails; the API will not start with stale schema or broad
+   credentials.
+3. Use `scripts/provision-runtime-db-role.ps1 -EnvFile .env.local` only to
+   rotate or repair the runtime role outside normal Compose startup. It grants
+   DML and sequence permissions plus default grants for future owner-created
+   tables.
+
+The explicit `backend migrate up` command always runs migrations even when
+`DB_MIGRATIONS_ENABLED=false`; it must be invoked with the owner credentials.
+An invalid startup setting fails closed and suppresses automatic migrations.
+Do not grant the runtime role `CREATEDB`, `CREATEROLE`, superuser, schema
+ownership, or external database access.
+
 ### CLI
 
 ```text
@@ -422,9 +446,9 @@ backend migrate down pre/0047_workflow_reminder_activation_decision_order
 backend migrate down pre/0046_workflow_reminder_activation_ledger
 ```
 
-The migration-chain contract through `0059`, isolated PostgreSQL reminder-ledger
+The migration-chain contract through `0067`, isolated PostgreSQL reminder-ledger
 tests, and live workflow-repository PostgreSQL test pass. The full Go
-suite, 380 Angular tests, production build, and signed-in browser
+suite, 447 Angular tests, production build, and signed-in browser
 prepare/approve/persist/cleanup acceptance also pass. These checks validate the
 preparation/decision ledger and its operator flow; they do not prove or
 activate Calendar, message, provider, notification, or follow-up effects.

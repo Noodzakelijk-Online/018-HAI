@@ -108,4 +108,8 @@ export class AccountBridgesComponent implements OnInit {
   goBack(): void {
     this.router.navigate(['/control-center'])
   }
+
+  openConnectedSources(): void {
+    this.router.navigate(['/connected-sources'])
+  }
 }

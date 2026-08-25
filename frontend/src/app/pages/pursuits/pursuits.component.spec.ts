@@ -57,6 +57,33 @@ describe('PursuitsComponent action lanes', () => {
     expect(component.pursuits.map((pursuit) => pursuit.id)).toEqual(['pursuit-1']);
   });
 
+  it('reconciles life domains and refreshes the pursuit view', () => {
+    const pursuitService = (component as any).pursuitsService;
+    pursuitService.reconcileLifeDomains = jasmine.createSpy('reconcileLifeDomains').and.returnValue(of({
+      scanned: 4, projected: 3, skipped: 1, failed: 0,
+    }));
+    spyOn(component, 'load');
+
+    component.reconcileLifeDomains();
+
+    expect(pursuitService.reconcileLifeDomains).toHaveBeenCalled();
+    expect(component.lifeDomainReconciliation).toEqual({ scanned: 4, projected: 3, skipped: 1, failed: 0 });
+    expect(notification.success).toHaveBeenCalledWith('Life domains updated', '3 indexed; 1 unchanged.');
+    expect(component.load).toHaveBeenCalled();
+  });
+
+  it('keeps the view stable when life-domain reconciliation fails', () => {
+    const pursuitService = (component as any).pursuitsService;
+    pursuitService.reconcileLifeDomains = jasmine.createSpy('reconcileLifeDomains').and.returnValue(
+      throwError(() => ({ error: { error: 'Life-domain projection is unavailable.' } })),
+    );
+
+    component.reconcileLifeDomains();
+
+    expect(component.lifeDomainReconciliationRunning).toBeFalse();
+    expect(notification.error).toHaveBeenCalledWith('Life-domain update unavailable', 'Life-domain projection is unavailable.');
+  });
+
   it('opens the first action in the selected operational lane', () => {
     const action: IPursuitAction = {
       label: 'Prepare the evidence index',

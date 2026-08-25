@@ -1,6 +1,7 @@
 package opscontrol
 
 import (
+	"automation-hub-backend/internal/apierror"
 	"errors"
 	"net/http"
 
@@ -84,7 +85,7 @@ func (h *Handler) Resume(c *gin.Context) {
 	)
 	if err != nil {
 		c.JSON(controlErrorStatus(err), gin.H{
-			"error":         err.Error(),
+			"error":         publicControlError(err),
 			"emergencyStop": h.svc.Control().EmergencyState(),
 		})
 		return
@@ -110,7 +111,7 @@ func (h *Handler) SetMode(c *gin.Context) {
 		h.controlAuthorization(c, req.controlAuthorizationRequest),
 	)
 	if err != nil {
-		c.JSON(controlErrorStatus(err), gin.H{"error": err.Error()})
+		c.JSON(controlErrorStatus(err), gin.H{"error": publicControlError(err)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"mode": mode})
@@ -149,7 +150,7 @@ func (h *Handler) Recovery(c *gin.Context) {
 func (h *Handler) VerifyEmergencyStop(c *gin.Context) {
 	v, err := h.svc.VerifyEmergencyStop(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": publicControlError(err)})
 		return
 	}
 	code := http.StatusOK
@@ -157,4 +158,23 @@ func (h *Handler) VerifyEmergencyStop(c *gin.Context) {
 		code = http.StatusInternalServerError // a non-halting emergency stop is a hard failure
 	}
 	c.JSON(code, v)
+}
+
+func publicControlError(err error) string {
+	switch {
+	case errors.Is(err, ErrUnauthenticated):
+		return "an authenticated actor is required"
+	case errors.Is(err, ErrAuthorizationDenied):
+		return "safety-control authorization was denied"
+	case errors.Is(err, ErrAuthorizationMismatch):
+		return "safety-control authorization does not match this change"
+	case errors.Is(err, ErrAuthorizationUnavailable):
+		return "safety-control authorization is unavailable"
+	case errors.Is(err, ErrControlPersistence):
+		return "safety-control state could not be persisted"
+	case errors.Is(err, ErrEmergencyStopStateChanged), errors.Is(err, ErrAutonomyModeStateChanged):
+		return "safety-control state changed; refresh and retry"
+	default:
+		return apierror.PublicMessage(err, "safety-control request could not be completed")
+	}
 }

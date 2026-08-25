@@ -12,6 +12,7 @@ import { expect, Page, test } from '@playwright/test';
 
 const email = process.env.E2E_OPERATOR_EMAIL || 'operator@example.com';
 const password = process.env.E2E_OPERATOR_PASSWORD || '';
+const allowMutation = process.env.E2E_ALLOW_MUTATION === 'true';
 
 async function login(page: Page) {
   await page.goto('/');
@@ -24,7 +25,10 @@ async function login(page: Page) {
 }
 
 test.describe('HAI operator acceptance flow', () => {
-  test.skip(!password, 'Set E2E_OPERATOR_PASSWORD and a seeded account to run against a live stack.');
+  test.skip(
+    !password || !allowMutation,
+    'Set E2E_OPERATOR_PASSWORD and E2E_ALLOW_MUTATION=true only for an isolated acceptance stack.',
+  );
 
   test('login -> source -> sync -> workflow -> approval -> exact bounded execution', async ({ page }) => {
     let sourceName = '';

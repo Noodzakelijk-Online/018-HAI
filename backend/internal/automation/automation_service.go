@@ -58,21 +58,22 @@ type HealthSummary struct {
 }
 
 type LaunchResult struct {
-	AutomationID      uuid.UUID                           `json:"automationId"`
-	LaunchEventID     uuid.UUID                           `json:"launchEventId,omitempty"`
-	RuntimeTaskID     string                              `json:"runtimeTaskId,omitempty"`
-	RuntimeType       string                              `json:"runtimeType,omitempty"`
-	LaunchType        string                              `json:"launchType"`
-	Target            string                              `json:"target"`
-	Status            string                              `json:"status"`
-	Message           string                              `json:"message,omitempty"`
-	Output            string                              `json:"output,omitempty"`
-	RuntimeRouteTrace *models.AutomationRuntimeRouteTrace `json:"runtimeRouteTrace,omitempty"`
-	ExitCode          int                                 `json:"exitCode"`
-	DurationMs        int64                               `json:"durationMs"`
-	RequiresApproval  bool                                `json:"requiresApproval"`
-	AuditEvents       []string                            `json:"auditEvents"`
-	LaunchedAt        time.Time                           `json:"launchedAt"`
+	AutomationID       uuid.UUID                           `json:"automationId"`
+	LaunchEventID      uuid.UUID                           `json:"launchEventId,omitempty"`
+	RuntimeTaskID      string                              `json:"runtimeTaskId,omitempty"`
+	ExecutionReference string                              `json:"executionReference,omitempty"`
+	RuntimeType        string                              `json:"runtimeType,omitempty"`
+	LaunchType         string                              `json:"launchType"`
+	Target             string                              `json:"target"`
+	Status             string                              `json:"status"`
+	Message            string                              `json:"message,omitempty"`
+	Output             string                              `json:"output,omitempty"`
+	RuntimeRouteTrace  *models.AutomationRuntimeRouteTrace `json:"runtimeRouteTrace,omitempty"`
+	ExitCode           int                                 `json:"exitCode"`
+	DurationMs         int64                               `json:"durationMs"`
+	RequiresApproval   bool                                `json:"requiresApproval"`
+	AuditEvents        []string                            `json:"auditEvents"`
+	LaunchedAt         time.Time                           `json:"launchedAt"`
 }
 
 type DiagnosticResult struct {
@@ -94,15 +95,16 @@ type DiagnosticResult struct {
 }
 
 type launchExecution struct {
-	Status            string
-	Message           string
-	Output            string
-	RuntimeRouteTrace *models.AutomationRuntimeRouteTrace
-	ExitCode          int
-	DurationMs        int64
-	RequiresApproval  bool
-	RuntimeTaskID     string
-	AuditEvents       []string
+	Status             string
+	Message            string
+	Output             string
+	RuntimeRouteTrace  *models.AutomationRuntimeRouteTrace
+	ExitCode           int
+	DurationMs         int64
+	RequiresApproval   bool
+	RuntimeTaskID      string
+	ExecutionReference string
+	AuditEvents        []string
 }
 
 type TaskLaunchRequest struct {
@@ -911,17 +913,18 @@ func (s *service) launch(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult
 		automation.LastFailureReason = safety.RedactSecrets(execution.Message)
 	}
 	event := &models.AutomationLaunchEvent{
-		ID:            uuid.New(),
-		AutomationID:  automation.ID,
-		OwnerIdentity: strings.TrimSpace(request.OwnerIdentity),
-		RuntimeType:   automation.RuntimeType,
-		LaunchType:    automation.LaunchType,
-		RuntimeTaskID: execution.RuntimeTaskID,
-		Target:        redactLaunchTarget(automation.LaunchTarget),
-		Status:        execution.Status,
-		Message:       safety.RedactSecrets(execution.Message),
-		Output:        safety.RedactSecrets(execution.Output),
-		AuditEvents:   redactAuditEvents(execution.AuditEvents),
+		ID:                 uuid.New(),
+		AutomationID:       automation.ID,
+		OwnerIdentity:      strings.TrimSpace(request.OwnerIdentity),
+		RuntimeType:        automation.RuntimeType,
+		LaunchType:         automation.LaunchType,
+		RuntimeTaskID:      execution.RuntimeTaskID,
+		ExecutionReference: execution.ExecutionReference,
+		Target:             redactLaunchTarget(automation.LaunchTarget),
+		Status:             execution.Status,
+		Message:            safety.RedactSecrets(execution.Message),
+		Output:             safety.RedactSecrets(execution.Output),
+		AuditEvents:        redactAuditEvents(execution.AuditEvents),
 		RuntimeRouteTrace: redactRuntimeRouteTrace(
 			execution.RuntimeRouteTrace,
 		),
@@ -933,17 +936,18 @@ func (s *service) launch(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult
 	if errEvent := s.repo.SaveLaunchEvent(event); errEvent != nil {
 		log.Printf("Failed to persist launch event for automation %s: %v", automation.ID, errEvent)
 		return &LaunchResult{
-			AutomationID:     automation.ID,
-			LaunchEventID:    intent.ID,
-			RuntimeTaskID:    execution.RuntimeTaskID,
-			RuntimeType:      automation.RuntimeType,
-			LaunchType:       automation.LaunchType,
-			Target:           redactLaunchTarget(automation.LaunchTarget),
-			Status:           "indeterminate",
-			Message:          "execution outcome audit could not be persisted; inspect the immutable pre-execution intent before retrying",
-			ExitCode:         -1,
-			DurationMs:       execution.DurationMs,
-			RequiresApproval: execution.RequiresApproval,
+			AutomationID:       automation.ID,
+			LaunchEventID:      intent.ID,
+			RuntimeTaskID:      execution.RuntimeTaskID,
+			ExecutionReference: execution.ExecutionReference,
+			RuntimeType:        automation.RuntimeType,
+			LaunchType:         automation.LaunchType,
+			Target:             redactLaunchTarget(automation.LaunchTarget),
+			Status:             "indeterminate",
+			Message:            "execution outcome audit could not be persisted; inspect the immutable pre-execution intent before retrying",
+			ExitCode:           -1,
+			DurationMs:         execution.DurationMs,
+			RequiresApproval:   execution.RequiresApproval,
 			AuditEvents: redactAuditEvents(append(
 				execution.AuditEvents,
 				"execution outcome audit persistence failed",
@@ -956,21 +960,22 @@ func (s *service) launch(id uuid.UUID, request TaskLaunchRequest) (*LaunchResult
 		return nil, errUpdate
 	}
 	return &LaunchResult{
-		AutomationID:      automation.ID,
-		LaunchEventID:     event.ID,
-		RuntimeTaskID:     execution.RuntimeTaskID,
-		RuntimeType:       automation.RuntimeType,
-		LaunchType:        automation.LaunchType,
-		Target:            redactLaunchTarget(automation.LaunchTarget),
-		Status:            execution.Status,
-		Message:           safety.RedactSecrets(execution.Message),
-		Output:            safety.RedactSecrets(execution.Output),
-		RuntimeRouteTrace: redactRuntimeRouteTrace(execution.RuntimeRouteTrace),
-		ExitCode:          execution.ExitCode,
-		DurationMs:        execution.DurationMs,
-		RequiresApproval:  execution.RequiresApproval,
-		AuditEvents:       redactAuditEvents(execution.AuditEvents),
-		LaunchedAt:        launchedAt,
+		AutomationID:       automation.ID,
+		LaunchEventID:      event.ID,
+		RuntimeTaskID:      execution.RuntimeTaskID,
+		ExecutionReference: execution.ExecutionReference,
+		RuntimeType:        automation.RuntimeType,
+		LaunchType:         automation.LaunchType,
+		Target:             redactLaunchTarget(automation.LaunchTarget),
+		Status:             execution.Status,
+		Message:            safety.RedactSecrets(execution.Message),
+		Output:             safety.RedactSecrets(execution.Output),
+		RuntimeRouteTrace:  redactRuntimeRouteTrace(execution.RuntimeRouteTrace),
+		ExitCode:           execution.ExitCode,
+		DurationMs:         execution.DurationMs,
+		RequiresApproval:   execution.RequiresApproval,
+		AuditEvents:        redactAuditEvents(execution.AuditEvents),
+		LaunchedAt:         launchedAt,
 	}, nil
 }
 
@@ -980,6 +985,16 @@ func automationRuntimeTaskID(automation *models.Automation) string {
 		return ""
 	}
 	return automation.ID.String()
+}
+
+// automationLaunchRuntimeTaskID gives every immutable launch intent its own
+// runtime identity. Host-runtime jobs use a unique task ID so a completed run
+// cannot prevent the next deliberately approved launch of the same automation.
+func automationLaunchRuntimeTaskID(automation *models.Automation, intentID uuid.UUID) string {
+	if automation == nil || automation.ID == uuid.Nil || intentID == uuid.Nil {
+		return ""
+	}
+	return "automation:" + automation.ID.String() + ":intent:" + intentID.String()
 }
 
 func (s *service) Diagnostics(id uuid.UUID) (*DiagnosticResult, error) {
@@ -1338,7 +1353,7 @@ func (s *service) authorizeAgentRuntimeLaunch(
 		return agentruntime.Task{}, nil, fmt.Errorf("verified owner identity is required")
 	}
 	runtimeTask := agentruntime.Task{
-		ID:               automationRuntimeTaskID(automation),
+		ID:               automationLaunchRuntimeTaskID(automation, intentID),
 		Prompt:           strings.TrimSpace(request.Task),
 		ProjectKey:       strings.TrimSpace(request.ProjectKey),
 		OwnerIdentity:    owner,
@@ -1563,15 +1578,16 @@ func (s *service) executeAgentRuntime(
 	}
 	result := s.runtimeRegistry.Execute(executionContext, runtimeID, runtimeTask)
 	return launchExecution{
-		Status:            result.Status,
-		Message:           result.Message,
-		Output:            result.Output,
-		RuntimeRouteTrace: automationRuntimeRouteTrace(result.RouteTrace),
-		ExitCode:          result.ExitCode,
-		DurationMs:        result.DurationMs,
-		RequiresApproval:  result.Status == "blocked",
-		RuntimeTaskID:     runtimeTask.ID,
-		AuditEvents:       append(audit, result.AuditEvents...),
+		Status:             result.Status,
+		Message:            result.Message,
+		Output:             result.Output,
+		RuntimeRouteTrace:  automationRuntimeRouteTrace(result.RouteTrace),
+		ExitCode:           result.ExitCode,
+		DurationMs:         result.DurationMs,
+		RequiresApproval:   result.Status == "blocked",
+		RuntimeTaskID:      runtimeTask.ID,
+		ExecutionReference: result.ExecutionReference,
+		AuditEvents:        append(audit, result.AuditEvents...),
 	}
 }
 
@@ -1734,6 +1750,16 @@ func (s *service) executeScriptLaunch(
 		)
 	}
 	audit = append(audit, authorizationAudit...)
+	// Authorization may involve durable policy and approval checks. Re-pin the
+	// script immediately afterward so a writable development/test directory
+	// cannot swap the reviewed file during that final authorization window.
+	if err := verifyPinnedScript(scriptPath); err != nil {
+		return blockedLaunch(
+			err.Error(),
+			started,
+			append(audit, "script hash pin rejected after execution authorization"),
+		)
+	}
 	if safety.EmergencyStopActive() {
 		return blockedLaunch(safety.EmergencyStopReason(), started, append(audit, "emergency stop rechecked before script process start"))
 	}

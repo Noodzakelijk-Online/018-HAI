@@ -48,6 +48,8 @@ var sharedSourceHTTPTransport struct {
 	transport *http.Transport
 }
 
+var sourceFailureWindowsPath = regexp.MustCompile(`(?i)(^|[\s"'=(])[a-z]:[\\/][^\s"']+`)
+
 type CreateSourceRequest struct {
 	OwnerIdentity     string   `json:"-"`
 	ConnectorKey      string   `json:"connectorKey"`
@@ -1066,10 +1068,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
@@ -1078,10 +1080,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
@@ -1090,10 +1092,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
@@ -1102,10 +1104,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
@@ -1114,10 +1116,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
@@ -1126,10 +1128,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
@@ -1138,10 +1140,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
@@ -1150,10 +1152,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
@@ -1162,10 +1164,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.odoo_json2_read", fmt.Sprintf("read %d bounded Odoo JSON-2 record(s) through the configured model allowlist", len(items)))
@@ -1175,10 +1177,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.sharet_read", fmt.Sprintf("read %d bounded ShareT link record(s) through a read-only connector credential", len(items)))
@@ -1188,10 +1190,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.cloudquery_summary_read", fmt.Sprintf("read %d bounded CloudQuery sync summary record(s) from the configured local summary file", len(items)))
@@ -1201,10 +1203,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.airbyte_inventory_read", fmt.Sprintf("read %d bounded Airbyte source and connection inventory record(s) from approved workspaces", len(items)))
@@ -1214,10 +1216,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.laro_read", fmt.Sprintf("read %d bounded, owner-scoped LARO legal record(s)", len(items)))
@@ -1227,10 +1229,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.worker_control_read", fmt.Sprintf("read %d bounded, owner-scoped Worker Control event(s)", len(items)))
@@ -1240,10 +1242,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.openspec_artifacts_read", fmt.Sprintf("read %d bounded OpenSpec change artifact bundle(s) from the selected local project", len(items)))
@@ -1253,10 +1255,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.project_instructions_read", fmt.Sprintf("read %d untrusted project instruction file(s) from the selected local project", len(items)))
@@ -1266,10 +1268,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.fabric_patterns_read", fmt.Sprintf("read %d bounded untrusted Fabric prompt pattern(s) from the selected local folder", len(items)))
@@ -1279,10 +1281,10 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
@@ -1295,7 +1297,7 @@ func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request I
 		if errExisting != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = "calendar conflict planning could not read cached event records: " + errExisting.Error()
+			job.Message = sourceOperationalFailureMessage(errExisting)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
 			s.audit(sourceID, "source.sync_failed", job.Message)
@@ -2237,7 +2239,7 @@ func (s *service) extractAndStore(source *models.ConnectedSource, raw *models.So
 	existing.SourceLabel = raw.Title
 	existing.ContentHash = raw.ContentHash
 	existing.Sensitive = source.ConnectorKey == "whatsapp-export" || source.ConnectorKey == laroConnectorKey || source.ConnectorKey == workerControlConnectorKey || containsAny(strings.ToLower(clean), "password", "secret", "token", "bank", "invoice", "contract", "legal", "medical", "juridisch", "medisch", "rekening", "factuur")
-	existing.Uncertain = isManualPlanningContextOnlyConnector(source.ConnectorKey) || sourceRawItemRequiresReview(raw) || len(clean) < 40 || containsAny(strings.ToLower(clean), "maybe", "unclear", "unknown")
+	existing.Uncertain = isManualPlanningContextOnlyConnector(source.ConnectorKey) || sourceRawItemRequiresReview(raw) || sourceContentRequiresReview(clean) || len(clean) < 40 || containsAny(strings.ToLower(clean), "maybe", "unclear", "unknown")
 	existing.LastIndexedAt = &now
 	return s.repo.SaveExtraction(existing)
 }
@@ -2590,6 +2592,9 @@ func extractionReviewReason(extraction *models.SourceExtraction) string {
 	if extraction.Sensitive {
 		reasons = append(reasons, "extraction contains sensitive content")
 	}
+	if sourceContentRequiresReview(extraction.Text) {
+		reasons = append(reasons, "source content contains instruction-like or policy-bypass language")
+	}
 	return strings.Join(reasons, "; ")
 }
 
@@ -2707,6 +2712,21 @@ func (s *service) audit(sourceID uuid.UUID, action, message string) {
 	})
 }
 
+// sourceOperationalFailureMessage is used for durable job and audit state.
+// Preserve explicit policy guidance such as allowlist or consent failures, but
+// remove secrets and Windows filesystem locations from connector diagnostics.
+func sourceOperationalFailureMessage(err error) string {
+	if err == nil {
+		return "source synchronization failed"
+	}
+	message := compact(safety.RedactSecrets(err.Error()), 320)
+	message = sourceFailureWindowsPath.ReplaceAllString(message, "${1}[LOCAL_PATH]")
+	if strings.TrimSpace(message) == "" {
+		return "source synchronization failed; review the source connection and configuration"
+	}
+	return message
+}
+
 type redactedSourceError struct {
 	message string
 	cause   error
@@ -2721,7 +2741,7 @@ func redactSourceError(err error) error {
 		return nil
 	}
 	return redactedSourceError{
-		message: compact(safety.RedactSecrets(err.Error()), 320),
+		message: sourceOperationalFailureMessage(err),
 		cause:   err,
 	}
 }

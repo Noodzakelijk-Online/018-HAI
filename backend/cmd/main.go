@@ -76,7 +76,16 @@ func runMigrate(args []string) int {
 	}
 	switch action {
 	case "up":
-		if _, err := infra.GetDefaultDB(); err != nil {
+		// An explicit migration command is deliberately independent of
+		// DB_MIGRATIONS_ENABLED. Production API processes can run with a
+		// DML-only role while an operator supplies the schema-owner account
+		// only for this reviewed, one-shot command.
+		db, err := infra.OpenDefaultDB()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "migrate up requires a database connection:", err)
+			return 1
+		}
+		if err := infra.RunMigrations(db); err != nil {
 			fmt.Fprintln(os.Stderr, "migrate up failed:", err)
 			return 1
 		}

@@ -67,8 +67,13 @@ func TestJWTRoleIsEnforced(t *testing.T) {
 
 func TestJWTDisabledWhenNoSecret(t *testing.T) {
 	prev := config.AppConfig.JWTSecret
+	previousRunMode := config.AppConfig.RunMode
 	config.AppConfig.JWTSecret = "" // identity disabled
-	defer func() { config.AppConfig.JWTSecret = prev }()
+	config.AppConfig.RunMode = "demo"
+	defer func() {
+		config.AppConfig.JWTSecret = prev
+		config.AppConfig.RunMode = previousRunMode
+	}()
 
 	engine := newIdentityEngine()
 	// Even a would-be owner token is ignored (no secret configured) -> falls back
@@ -76,6 +81,26 @@ func TestJWTDisabledWhenNoSecret(t *testing.T) {
 	tok := identity.SignToken(identity.Claims{Role: "owner"}, "whatever")
 	if code := doJWT(engine, tok); code != http.StatusForbidden {
 		t.Fatalf("with no secret, identity is disabled and admin default-denies (403), got %d", code)
+	}
+}
+
+func TestIdentityFailsClosedForMissingOrPlaceholderSecretInProduction(t *testing.T) {
+	for _, secret := range []string{"", "change-this-local-jwt-secret"} {
+		t.Run("secret="+secret, func(t *testing.T) {
+			previousSecret := config.AppConfig.JWTSecret
+			previousRunMode := config.AppConfig.RunMode
+			t.Cleanup(func() {
+				config.AppConfig.JWTSecret = previousSecret
+				config.AppConfig.RunMode = previousRunMode
+			})
+			config.AppConfig.JWTSecret = secret
+			config.AppConfig.RunMode = "production"
+
+			engine := newIdentityEngine()
+			if code := doJWT(engine, ""); code != http.StatusServiceUnavailable {
+				t.Fatalf("missing/placeholder production secret status = %d, want %d", code, http.StatusServiceUnavailable)
+			}
+		})
 	}
 }
 

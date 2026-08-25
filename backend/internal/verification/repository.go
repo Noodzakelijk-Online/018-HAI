@@ -20,6 +20,13 @@ type Repository interface {
 	FindEvidence(runID uuid.UUID) ([]models.VerificationEvidence, error)
 }
 
+// AtomicRepository is implemented by durable stores that can make a
+// verification finalisation all-or-nothing. Small in-memory repositories used
+// by focused tests are intentionally not required to implement it.
+type AtomicRepository interface {
+	WithinTransaction(func(Repository) error) error
+}
+
 // OwnerScopedRunRepository permits direct, database-enforced lookup for
 // authenticated inspection. The base interface remains unchanged for internal
 // services and compact test repositories.
@@ -76,6 +83,15 @@ func (r *GormRepository) CreateAuditLog(log *models.VerificationAuditLog) (*mode
 		return nil, err
 	}
 	return log, nil
+}
+
+func (r *GormRepository) WithinTransaction(action func(Repository) error) error {
+	if action == nil {
+		return nil
+	}
+	return r.DB.Transaction(func(transaction *gorm.DB) error {
+		return action(&GormRepository{DB: transaction})
+	})
 }
 
 func (r *GormRepository) FindRuns() ([]models.VerificationRun, error) {

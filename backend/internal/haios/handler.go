@@ -1,6 +1,7 @@
 package haios
 
 import (
+	"automation-hub-backend/internal/apierror"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/llm"
@@ -162,7 +163,7 @@ func (h *Handler) Overview(c *gin.Context) {
 	}
 	policy, err := llm.NewServiceFromEnv()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "HAI OS policy is unavailable")})
 		return
 	}
 	llmPolicy := policy.Policy()
@@ -251,7 +252,7 @@ func (h *Handler) pursuitOverview(ownerIdentity string) PursuitOverview {
 		return PursuitOverview{
 			Enabled: false,
 			Status:  "degraded",
-			Summary: "Pursuit dashboard could not be loaded: " + err.Error(),
+			Summary: "Pursuit dashboard could not be loaded.",
 			Next:    "Check pursuit repository/database migrations before trusting OS-level pursuit status.",
 		}
 	}

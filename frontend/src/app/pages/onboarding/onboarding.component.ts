@@ -36,7 +36,7 @@ export class OnboardingComponent {
     {
       title: 'Stay safe',
       description:
-        'Emergency stop halts execution instantly, and readiness tells you if the system is healthy.',
+        'Emergency stop blocks new execution immediately and reports whether an in-flight runtime supports cancellation. Readiness tells you if the system is healthy.',
     },
   ];
 

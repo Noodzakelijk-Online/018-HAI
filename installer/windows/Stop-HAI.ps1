@@ -6,6 +6,7 @@ $ErrorActionPreference = "Stop"
 
 Assert-HaiDockerReady
 Assert-HaiSingleInstallation
+Stop-HaiHostRuntimeWorker
 $environmentFile = Get-HaiEnvironmentFile
 if (-not (Test-Path -LiteralPath $environmentFile -PathType Leaf)) {
     Write-Host "HAI has not been started from this installation yet."

@@ -202,7 +202,7 @@ func (s *Service) Status(ctx context.Context) Status {
 	storedMode, modeErr := s.control.ModePersistenceStatus()
 	modeError := ""
 	if modeErr != nil {
-		modeError = modeErr.Error()
+		modeError = "persisted autonomy mode is unavailable"
 	}
 	return Status{
 		Mode:         string(mode),

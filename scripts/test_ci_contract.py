@@ -38,6 +38,17 @@ def compose_service_block(compose: str, service: str) -> str:
 
 
 class CIWorkflowContractTest(unittest.TestCase):
+    def test_compose_validation_runs_the_fail_closed_truthfulness_audit(self) -> None:
+        compose = job_block("compose")
+        audit = (ROOT / "scripts" / "no-fake-claims-audit.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("No-fake claims and tracked-artifact audit", compose)
+        self.assertIn("bash scripts/no-fake-claims-audit.sh", compose)
+        self.assertIn("command -v git", audit)
+        self.assertIn("refusing to report an incomplete audit as passing", audit)
+
     def test_bootstrap_document_matches_the_dark_first_theme_contract(self) -> None:
         index = (ROOT / "frontend" / "src" / "index.html").read_text(
             encoding="utf-8"
@@ -170,8 +181,14 @@ class CIWorkflowContractTest(unittest.TestCase):
 
         self.assertNotIn("/* HAI Control Center design system */", global_styles)
         self.assertNotIn("app-control-center{--bg", global_styles)
-        self.assertIn("app-control-center{--bg", control_center_styles)
-        self.assertIn(".operations-shell", control_center_styles)
+        # The Control Center now consumes the shared app-shell tokens from its
+        # lazy component host. The legacy app-control-center wrapper was
+        # deliberately removed during the shell consolidation.
+        normalized_styles = control_center_styles.replace(" ", "").replace("\n", "")
+        self.assertIn(":host{--hai-primary:var(--hai-blue);", normalized_styles)
+        self.assertNotIn("app-control-center", control_center_styles)
+        self.assertIn(".command-board{display:grid;", normalized_styles)
+        self.assertIn(".page-content", control_center_styles)
         self.assertIn("ViewEncapsulation.Emulated", control_center_component)
         self.assertNotIn("ViewEncapsulation.None", control_center_component)
 
@@ -339,6 +356,34 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("cpus: ${KAFKA_CPU_LIMIT:-0.5}", compose)
         self.assertIn("--overprovisioned=true", compose)
 
+    def test_default_compose_starts_only_the_core_local_stack(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        services_section = compose.split("services:\n", 1)[1].split(
+            "\nnetworks:\n", 1
+        )[0]
+        services = re.findall(r"(?m)^  ([A-Za-z0-9_-]+):\n", services_section)
+        core_services = {
+            "idp",
+            "backend",
+            "backend-migrate",
+            "backend-runtime-role",
+            "frontend",
+            "nginx",
+            "postgres-idp",
+            "postgres-automation",
+            "redis",
+        }
+
+        self.assertEqual(set(services) & core_services, core_services)
+        optional_services = set(services) - core_services
+        self.assertTrue(optional_services)
+        for service in optional_services:
+            with self.subTest(service=service):
+                self.assertIn(
+                    "profiles:", compose_service_block(compose, service),
+                    "optional integrations must never join the default local startup",
+                )
+
     def test_local_compose_bounds_the_always_on_desktop_services(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
         defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
@@ -361,6 +406,49 @@ class CIWorkflowContractTest(unittest.TestCase):
                 self.assertIn(f"{prefix}_MEMORY_LIMIT=", defaults)
                 self.assertIn(f"{prefix}_CPU_LIMIT=", defaults)
                 self.assertIn(f"{prefix}_PIDS_LIMIT=", defaults)
+
+    def test_backend_runtime_is_immutable_and_uses_separate_runtime_db_settings(self) -> None:
+        compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
+        defaults = (ROOT / ".env.example").read_text(encoding="utf-8")
+        backend = compose_service_block(compose, "backend")
+
+        # The API must never regain broad host or kernel privileges merely
+        # because an execution adapter is configured. Its writable locations
+        # are explicit mounts, while the image root remains immutable.
+        self.assertIn("read_only: true", backend)
+        self.assertIn("/tmp:rw,noexec,nosuid,size=64m", backend)
+        self.assertIn("no-new-privileges:true", backend)
+        self.assertIn("cap_drop:\n      - ALL", backend)
+
+        # Existing local environments fall back to DB_USER/DB_PASSWORD, but a
+        # hardened deployment can configure a DML-only API account and disable
+        # startup migrations after the owner has applied them.
+        self.assertIn("DB_USER: ${BACKEND_DB_USER:-hai_runtime}", backend)
+        self.assertIn("DB_PASSWORD: ${BACKEND_DB_PASSWORD:-${DB_PASSWORD}}", backend)
+        self.assertIn("DB_MIGRATIONS_ENABLED: ${DB_MIGRATIONS_ENABLED:-true}", backend)
+        self.assertIn("backend-migrate:\n        condition: service_completed_successfully", backend)
+        self.assertIn("backend-runtime-role:\n        condition: service_completed_successfully", backend)
+        for setting in ("BACKEND_DB_USER=", "BACKEND_DB_PASSWORD=", "DB_MIGRATIONS_ENABLED="):
+            self.assertIn(setting, defaults)
+
+        migration = compose_service_block(compose, "backend-migrate")
+        runtime_role = compose_service_block(compose, "backend-runtime-role")
+        role_script = (ROOT / "services" / "postgres-runtime-role" / "provision-runtime-role.sh").read_text(encoding="utf-8")
+        self.assertIn('command: ["/root/app", "migrate", "up"]', migration)
+        self.assertIn("DB_USER: ${DB_USER}", migration)
+        self.assertIn("DB_MIGRATIONS_ENABLED: \"false\"", migration)
+        self.assertIn("backend-migrate:\n        condition: service_completed_successfully", runtime_role)
+        self.assertIn("HAI_RUNTIME_DB_USER: ${BACKEND_DB_USER:-hai_runtime}", runtime_role)
+        self.assertIn("HAI_RUNTIME_DB_PASSWORD: ${BACKEND_DB_PASSWORD:-${DB_PASSWORD}}", runtime_role)
+        for service, prefix in ((migration, "BACKEND_MIGRATE"), (runtime_role, "BACKEND_RUNTIME_ROLE")):
+            self.assertIn(f"mem_limit: ${{{prefix}_MEMORY_LIMIT:-", service)
+            self.assertIn(f"cpus: ${{{prefix}_CPU_LIMIT:-", service)
+            self.assertIn(f"pids_limit: ${{{prefix}_PIDS_LIMIT:-", service)
+            self.assertIn(f"{prefix}_MEMORY_LIMIT=", defaults)
+            self.assertIn(f"{prefix}_CPU_LIMIT=", defaults)
+            self.assertIn(f"{prefix}_PIDS_LIMIT=", defaults)
+        for required in ("NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "ALTER DEFAULT PRIVILEGES", "GRANT SELECT, INSERT, UPDATE, DELETE"):
+            self.assertIn(required, role_script)
 
     def test_gateway_waits_for_ready_control_plane_dependencies(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")
@@ -842,6 +930,46 @@ class CIWorkflowContractTest(unittest.TestCase):
             smoke,
         )
 
+    def test_browser_acceptance_uses_an_isolated_real_compose_stack(self) -> None:
+        acceptance = job_block("browser-acceptance")
+        for contract in (
+            'name: Browser acceptance (real Compose stack)',
+            'COMPOSE_PROJECT_NAME": "hai-browser-acceptance"',
+            'RUN_MODE": "production"',
+            'LOCAL_LOGIN_BYPASS_ENABLED": "false"',
+            'docker compose --env-file .env.browser-acceptance -f docker-compose.local.yml up -d --build --wait --wait-timeout 240',
+            'http://127.0.0.1:8080/readyz',
+            'if status != "ready"',
+            'E2E_BASE_URL: http://127.0.0.1:8080',
+            'E2E_OPERATOR_EMAIL: e2e-owner@example.test',
+            'E2E_ALLOW_MUTATION: "true"',
+            'npx playwright install --with-deps chromium',
+            'run: npm test',
+            'down -v --remove-orphans',
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, acceptance)
+        self.assertNotIn("LOCAL_LOGIN_BYPASS_ENABLED\": \"true\"", acceptance)
+        self.assertNotIn('status not in {"ready", "degraded"}', acceptance)
+
+    def test_browser_acceptance_environment_file_is_not_trackable(self) -> None:
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn(
+            ".env.browser-acceptance",
+            gitignore,
+            "a local reproduction of browser acceptance must not expose its generated credentials to git status",
+        )
+
+    def test_browser_acceptance_requires_an_explicit_mutation_opt_in(self) -> None:
+        acceptance_test = (
+            ROOT / "frontend" / "e2e" / "tests" / "acceptance.spec.ts"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "process.env.E2E_ALLOW_MUTATION === 'true'", acceptance_test
+        )
+        self.assertIn("!password || !allowMutation", acceptance_test)
+        self.assertIn("only for an isolated acceptance stack", acceptance_test)
+
     def test_postgres_jobs_cannot_silently_skip_or_match_no_tests(self) -> None:
         migrations = job_block("migrations-integration")
         for contract in (
@@ -966,6 +1094,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             "idp",
             "nginx-config-manager",
             "frontend",
+            "browser-acceptance",
             "compose",
             "authenticated-smoke",
             "migrations-integration",

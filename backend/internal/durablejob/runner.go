@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -59,8 +60,28 @@ type Runner struct {
 	// now is injectable so retry scheduling is deterministic in tests.
 	now func() time.Time
 
-	mu       sync.RWMutex
-	handlers map[string]Handler
+	mu        sync.RWMutex
+	handlers  map[string]Handler
+	recurring map[string]recurringSchedule
+	statusMu  sync.RWMutex
+	status    RunnerStatus
+}
+
+type recurringSchedule struct {
+	interval    time.Duration
+	maxAttempts int
+	payload     string
+}
+
+// RunnerStatus provides bounded in-process lifecycle telemetry for a durable
+// queue worker. It deliberately excludes job payloads and handler output.
+type RunnerStatus struct {
+	Running           bool
+	StartedAt         time.Time
+	LastPollAt        time.Time
+	LastSuccessfulAt  time.Time
+	LastError         string
+	ConsecutiveErrors int
 }
 
 // Options configures a Runner. Zero values fall back to sane defaults.
@@ -94,14 +115,15 @@ func NewRunner(repo Repository, opts Options) *Runner {
 		opts.Now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Runner{
-		repo:     repo,
-		policy:   opts.Policy,
-		workerID: opts.WorkerID,
-		queue:    opts.Queue,
-		lease:    opts.Lease,
-		batch:    opts.Batch,
-		now:      opts.Now,
-		handlers: map[string]Handler{},
+		repo:      repo,
+		policy:    opts.Policy,
+		workerID:  opts.WorkerID,
+		queue:     opts.Queue,
+		lease:     opts.Lease,
+		batch:     opts.Batch,
+		now:       opts.Now,
+		handlers:  map[string]Handler{},
+		recurring: map[string]recurringSchedule{},
 	}
 }
 
@@ -117,6 +139,21 @@ func (r *Runner) handlerFor(kind string) (Handler, bool) {
 	defer r.mu.RUnlock()
 	handler, ok := r.handlers[kind]
 	return handler, ok
+}
+
+func (r *Runner) recurringFor(kind string) (recurringSchedule, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	schedule, ok := r.recurring[kind]
+	return schedule, ok
+}
+
+// Status returns a snapshot suitable for diagnostics. It is intentionally
+// separate from persisted job state: jobs remain the audit source of truth.
+func (r *Runner) Status() RunnerStatus {
+	r.statusMu.RLock()
+	defer r.statusMu.RUnlock()
+	return r.status
 }
 
 // Enqueue schedules a job. runAt zero means "run as soon as possible".
@@ -193,16 +230,12 @@ func (r *Runner) RegisterRecurring(kind string, interval time.Duration, maxAttem
 	if maxAttempts <= 0 {
 		maxAttempts = 3
 	}
-	r.Register(kind, func(ctx context.Context, job Job) error {
-		err := work(ctx)
-		finalAttempt := job.Attempts+1 >= job.MaxAttempts
-		if err == nil || finalAttempt {
-			if _, scheduleErr := r.Enqueue(kind, "{}", r.now().Add(interval), maxAttempts); scheduleErr != nil {
-				return fmt.Errorf("reschedule %s: %w", kind, scheduleErr)
-			}
-		}
-		return err
+	r.Register(kind, func(ctx context.Context, _ Job) error {
+		return work(ctx)
 	})
+	r.mu.Lock()
+	r.recurring[kind] = recurringSchedule{interval: interval, maxAttempts: maxAttempts, payload: "{}"}
+	r.mu.Unlock()
 	if _, err := r.EnsureScheduled(kind, "{}", r.now(), maxAttempts); err != nil {
 		return fmt.Errorf("schedule %s: %w", kind, err)
 	}
@@ -252,6 +285,26 @@ func (r *Runner) execute(ctx context.Context, job models.DurableJob) error {
 		// Another worker reclaimed the job. The stale result is intentionally
 		// discarded; handlers remain responsible for idempotent side effects.
 		return nil
+	}
+	if schedule, recurring := r.recurringFor(job.Kind); recurring && (err == nil || attempt >= job.MaxAttempts) {
+		terminalStatus, lastErr := models.DurableJobSucceeded, ""
+		if err != nil {
+			terminalStatus, lastErr = models.DurableJobDead, err.Error()
+		}
+		_, _, markErr := r.repo.CompleteRecurring(
+			job.ID,
+			r.workerID,
+			job.LeaseGeneration,
+			r.now(),
+			terminalStatus,
+			attempt,
+			lastErr,
+			&models.DurableJob{
+				Queue: r.queue, Kind: job.Kind, Payload: schedule.payload,
+				RunAt: r.now().Add(schedule.interval), MaxAttempts: schedule.maxAttempts,
+			},
+		)
+		return markErr
 	}
 	if err == nil {
 		_, markErr := r.repo.MarkSucceeded(job.ID, r.workerID, job.LeaseGeneration, r.now())
@@ -326,10 +379,9 @@ func (r *Runner) Start(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
-	if _, err := r.RunOnce(ctx); err != nil {
-		// A repository error is transient (for example a database restart). The
-		// first scheduled poll retries it without bringing down the API process.
-	}
+	r.markStarted(r.now())
+	defer r.markStopped()
+	r.runAndReport(ctx)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -337,10 +389,52 @@ func (r *Runner) Start(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := r.RunOnce(ctx); err != nil {
-				// A repository error is transient (e.g. DB blip); the next tick retries.
-				continue
-			}
+			r.runAndReport(ctx)
 		}
 	}
+}
+
+func (r *Runner) runAndReport(ctx context.Context) {
+	_, err := r.RunOnce(ctx)
+	now := r.now()
+	becameUnhealthy, recovered := r.recordPollResult(now, err)
+	if becameUnhealthy {
+		log.Printf("durablejob: queue %q worker %q poll failed: %v", r.queue, r.workerID, err)
+	}
+	if recovered {
+		log.Printf("durablejob: queue %q worker %q recovered", r.queue, r.workerID)
+	}
+}
+
+func (r *Runner) markStarted(now time.Time) {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.status.Running = true
+	if r.status.StartedAt.IsZero() {
+		r.status.StartedAt = now.UTC()
+	}
+}
+
+func (r *Runner) markStopped() {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.status.Running = false
+}
+
+func (r *Runner) recordPollResult(now time.Time, err error) (becameUnhealthy, recovered bool) {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.status.LastPollAt = now.UTC()
+	if err == nil {
+		recovered = r.status.LastError != ""
+		r.status.LastSuccessfulAt = now.UTC()
+		r.status.LastError = ""
+		r.status.ConsecutiveErrors = 0
+		return false, recovered
+	}
+	message := err.Error()
+	becameUnhealthy = r.status.LastError != message
+	r.status.LastError = message
+	r.status.ConsecutiveErrors++
+	return becameUnhealthy, false
 }

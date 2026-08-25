@@ -6,13 +6,15 @@
       </button>
       <h1>Account Bridges</h1>
       <p class="ab__subtitle">
-        Read-only account bridges. The generic JSON feed is the production path; Gmail, GitHub, Trello, Drive and
-        Calendar are honest contracts — they show exact setup requirements and never fake OAuth or a connected status.
+        Bounded normalized feed imports. For live provider connections, consent, sync history, and health, use Connected Sources.
       </p>
     </div>
-    <button nz-button nzType="primary" (click)="syncAll()" [nzLoading]="syncingAll" [disabled]="syncingAll">
-      <span nz-icon nzType="sync"></span> Sync all
-    </button>
+    <div class="ab__actions">
+      <button nz-button (click)="openConnectedSources()">Connected Sources</button>
+      <button nz-button nzType="primary" (click)="syncAll()" [nzLoading]="syncingAll" [disabled]="syncingAll">
+        <span nz-icon nzType="sync"></span> Sync all
+      </button>
+    </div>
   </header>
 
   <nz-card nzTitle="Registered feeds" nzSize="small" class="ab__feeds">
@@ -38,7 +40,7 @@
     <ng-template #emptyTpl><nz-empty nzNotFoundContent="No feeds registered yet"></nz-empty></ng-template>
   </nz-card>
 
-  <h2 class="ab__section">Provider bridge contracts</h2>
+  <h2 class="ab__section">Import compatibility</h2>
   <div class="ab__grid">
     <nz-card *ngFor="let b of bridges" class="ab__card" nzSize="small">
       <div class="ab__card-head">

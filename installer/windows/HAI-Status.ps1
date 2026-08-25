@@ -24,3 +24,5 @@ try {
 } catch {
     Write-Host "Gateway readiness: unavailable at $url" -ForegroundColor Yellow
 }
+
+Write-Host "Optional host runtime worker: $(Get-HaiHostRuntimeWorkerStatus)"

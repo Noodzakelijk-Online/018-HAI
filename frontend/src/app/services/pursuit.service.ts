@@ -17,6 +17,7 @@ import {
   IPursuitEvidenceResolution,
   IPursuitIntakeRequest,
   IPursuitLink,
+	IPursuitLifeDomainReconciliationResult,
   IPursuitLinkRequest,
   IPursuitMatchCandidate,
   IPursuitMatchRequest,
@@ -59,6 +60,10 @@ export class PursuitService {
     return this.http.get<IPursuit[]>(`${this.apiUrl}/`, {
       params: new HttpParams().set('includeArchived', includeArchived),
     }).pipe(map((records) => (records || []).map((record) => this.normalizePursuit(record))));
+  }
+
+  reconcileLifeDomains(): Observable<IPursuitLifeDomainReconciliationResult> {
+    return this.http.post<IPursuitLifeDomainReconciliationResult>(`${this.apiUrl}/reconcile-life-domains`, {});
   }
 
   dashboard(includePursuits: boolean = false): Observable<IPursuitDashboard> {

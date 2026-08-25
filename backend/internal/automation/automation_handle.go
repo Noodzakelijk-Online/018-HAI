@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"automation-hub-backend/internal/apierror"
 	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
@@ -63,7 +64,7 @@ func (h *Handler) ImageHandler(c *gin.Context) {
 	imageName := c.Param("imageName")
 	imagePath, err := resolveImagePath(imageName)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": apierror.PublicMessage(err, "automation image name is invalid")})
 		return
 	}
 	if _, err := os.Stat(imagePath); err != nil {
@@ -71,7 +72,7 @@ func (h *Handler) ImageHandler(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Image not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "automation image is unavailable"})
 		return
 	}
 
@@ -139,7 +140,7 @@ func (h *Handler) Create(c *gin.Context) {
 
 	newAutomation, err := h.service.Create(&automation)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation could not be created")})
 		return
 	}
 	c.JSON(http.StatusCreated, newAutomation)
@@ -165,7 +166,7 @@ func maxAutomationCreateBodyBytes() int64 {
 func (h *Handler) GetAll(c *gin.Context) {
 	automations, err := h.service.FindAll()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automations are unavailable")})
 		return
 	}
 
@@ -194,7 +195,7 @@ func (h *Handler) GetByID(c *gin.Context) {
 
 	automation, err := h.service.FindByID(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation is unavailable")})
 		return
 	}
 
@@ -228,7 +229,7 @@ func (h *Handler) DeleteByID(c *gin.Context) {
 
 	err = h.service.Delete(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation could not be deleted")})
 		return
 	}
 
@@ -266,7 +267,7 @@ func (h *Handler) SwapPosition(c *gin.Context) {
 
 	err = h.service.SwapOrder(id1, id2)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation order could not be changed")})
 		return
 	}
 
@@ -301,13 +302,13 @@ func (h *Handler) Update(c *gin.Context) {
 	}
 
 	if err := models.JSON.Unmarshal(body, &automation); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "automation update request is invalid"})
 		return
 	}
 
 	updatedAutomation, err := h.service.Update(&automation)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation could not be updated")})
 		return
 	}
 

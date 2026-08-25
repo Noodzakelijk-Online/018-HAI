@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"automation-hub-backend/internal/apierror"
 	"automation-hub-backend/internal/executionauth"
 
 	"github.com/gin-gonic/gin"
@@ -11,7 +12,7 @@ import (
 func (h *Handler) HealthSummary(c *gin.Context) {
 	summary, err := h.service.HealthSummary()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation health summary is unavailable")})
 		return
 	}
 	c.JSON(http.StatusOK, summary)
@@ -43,7 +44,7 @@ func (h *Handler) Launch(c *gin.Context) {
 	request.ApprovalProof = nil
 	result, err := h.service.LaunchTask(id, request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation launch could not be completed")})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -57,7 +58,7 @@ func (h *Handler) StopRuntimeTask(c *gin.Context) {
 	}
 	result, err := h.service.StopRuntimeTaskForOwner(id, verifiedAutomationActor(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation runtime could not be stopped")})
 		return
 	}
 	status := http.StatusOK
@@ -75,7 +76,7 @@ func (h *Handler) RunHealthCheck(c *gin.Context) {
 	}
 	result, err := h.service.RunHealthCheck(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation health check could not be completed")})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -93,7 +94,7 @@ func (h *Handler) Diagnostics(c *gin.Context) {
 	}
 	result, err := h.service.Diagnostics(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation diagnostics are unavailable")})
 		return
 	}
 	c.JSON(http.StatusOK, result)

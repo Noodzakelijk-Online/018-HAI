@@ -60,6 +60,28 @@ func (f *fakeJobRepo) EnqueueIfNoActiveMatchingPayload(job *models.DurableJob) (
 	return err == nil, err
 }
 
+func (f *fakeJobRepo) CompleteRecurring(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, terminalStatus string, attempts int, lastErr string, next *models.DurableJob) (bool, bool, error) {
+	job := f.jobs[id]
+	if job == nil || job.Status != models.DurableJobRunning || job.LockedBy != workerID || job.LeaseGeneration != leaseGeneration {
+		return false, false, nil
+	}
+	job.Status = terminalStatus
+	job.CompletedAt = &now
+	job.LockedBy = ""
+	job.LockedAt = nil
+	job.LastError = lastErr
+	if terminalStatus == models.DurableJobDead {
+		job.Attempts = attempts
+	}
+	for _, existing := range f.jobs {
+		if existing.ID != id && existing.Queue == next.Queue && existing.Kind == next.Kind && (existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
+			return true, false, nil
+		}
+	}
+	_, err := f.Enqueue(next)
+	return true, err == nil, err
+}
+
 func (f *fakeJobRepo) ClaimDue(workerID, queue string, now time.Time, limit int) ([]models.DurableJob, error) {
 	if queue == "" {
 		queue = "default"

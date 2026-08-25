@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"automation-hub-backend/internal/hostruntime"
 	"automation-hub-backend/internal/safety"
 )
 
@@ -18,39 +19,85 @@ import (
 // DeepSeek still labels the harness a developer preview, so execution remains
 // separately opt-in and stays behind HAI's final-effect proof boundary.
 type deepSeekHarnessAdapter struct {
-	enabled           bool
-	executionEnabled  bool
-	executable        string
-	expectedVersion   string
-	versionProbe      func(context.Context) (string, error)
-	workspace         string
-	workspaceRoot     string
-	stateDir          string
-	timeout           time.Duration
-	outputLimit       int64
-	envAllow          []string
-	executionGate     chan struct{}
-	executionGateOnce sync.Once
+	enabled             bool
+	executionEnabled    bool
+	executable          string
+	expectedVersion     string
+	versionProbe        func(context.Context) (string, error)
+	workspace           string
+	workspaceRoot       string
+	stateDir            string
+	timeout             time.Duration
+	outputLimit         int64
+	envAllow            []string
+	executionGate       chan struct{}
+	executionGateOnce   sync.Once
+	workspaceKey        string
+	dispatcher          hostruntime.Dispatcher
+	hostDispatchEnabled bool
+
+	// allowDirectExecutionForTest is intentionally unset in production. The
+	// container never directly launches DSH; it dispatches a durably approved
+	// job to the configured Windows host bridge instead.
+	allowDirectExecutionForTest bool
 }
 
 func (*deepSeekHarnessAdapter) RuntimeID() string { return "deepseek-harness" }
 
-func newDeepSeekHarnessAdapterFromEnv() *deepSeekHarnessAdapter {
+func newDeepSeekHarnessAdapterFromEnv(dispatchers ...hostruntime.Dispatcher) *deepSeekHarnessAdapter {
+	var dispatcher hostruntime.Dispatcher
+	for _, candidate := range dispatchers {
+		if candidate != nil {
+			dispatcher = candidate
+			break
+		}
+	}
 	return &deepSeekHarnessAdapter{
-		enabled:          envEnabled("DEEPSEEK_HARNESS_ENABLED"),
-		executionEnabled: envEnabled("DEEPSEEK_HARNESS_EXECUTION_ENABLED"),
-		executable:       firstNonEmpty(os.Getenv("DEEPSEEK_HARNESS_EXECUTABLE"), "dsh"),
-		expectedVersion:  strings.TrimSpace(os.Getenv("DEEPSEEK_HARNESS_VERSION")),
-		workspace:        strings.TrimSpace(os.Getenv("DEEPSEEK_HARNESS_WORKSPACE")),
-		workspaceRoot:    strings.TrimSpace(os.Getenv("AGENT_RUNTIME_WORKSPACE_ROOT")),
-		stateDir:         strings.TrimSpace(os.Getenv("DEEPSEEK_HARNESS_STATE_DIR")),
-		timeout:          time.Duration(boundedIntEnv("DEEPSEEK_HARNESS_TIMEOUT_SECONDS", defaultTimeoutSeconds, 1, 900)) * time.Second,
-		outputLimit:      int64(boundedIntEnv("AGENT_RUNTIME_OUTPUT_LIMIT_BYTES", defaultOutputLimit, 4096, maxOutputLimit)),
-		envAllow:         csvValues(os.Getenv("DEEPSEEK_HARNESS_ENV_ALLOWLIST")),
+		enabled:             envEnabled("DEEPSEEK_HARNESS_ENABLED"),
+		executionEnabled:    envEnabled("DEEPSEEK_HARNESS_EXECUTION_ENABLED"),
+		executable:          firstNonEmpty(os.Getenv("DEEPSEEK_HARNESS_EXECUTABLE"), "dsh"),
+		expectedVersion:     strings.TrimSpace(os.Getenv("DEEPSEEK_HARNESS_VERSION")),
+		workspace:           strings.TrimSpace(os.Getenv("DEEPSEEK_HARNESS_WORKSPACE")),
+		workspaceRoot:       strings.TrimSpace(os.Getenv("AGENT_RUNTIME_WORKSPACE_ROOT")),
+		stateDir:            strings.TrimSpace(os.Getenv("DEEPSEEK_HARNESS_STATE_DIR")),
+		timeout:             time.Duration(boundedIntEnv("DEEPSEEK_HARNESS_TIMEOUT_SECONDS", defaultTimeoutSeconds, 1, 900)) * time.Second,
+		outputLimit:         int64(boundedIntEnv("AGENT_RUNTIME_OUTPUT_LIMIT_BYTES", defaultOutputLimit, 4096, maxOutputLimit)),
+		envAllow:            csvValues(os.Getenv("DEEPSEEK_HARNESS_ENV_ALLOWLIST")),
+		workspaceKey:        firstNonEmpty(os.Getenv("DEEPSEEK_HARNESS_WORKSPACE_KEY"), "deepseek-harness"),
+		dispatcher:          dispatcher,
+		hostDispatchEnabled: envEnabled("HAI_HOST_RUNTIME_BRIDGE_ENABLED") && len(strings.TrimSpace(os.Getenv("HAI_HOST_RUNTIME_BRIDGE_TOKEN"))) >= 32,
 	}
 }
 
 func (a *deepSeekHarnessAdapter) Info() Info {
+	if a.dispatcher != nil {
+		missing := []string{}
+		if strings.TrimSpace(a.expectedVersion) == "" {
+			missing = append(missing, "DEEPSEEK_HARNESS_VERSION")
+		}
+		if strings.TrimSpace(a.workspaceKey) == "" {
+			missing = append(missing, "DEEPSEEK_HARNESS_WORKSPACE_KEY")
+		}
+		if !a.hostDispatchEnabled {
+			missing = append(missing, "HAI_HOST_RUNTIME_BRIDGE_ENABLED and HAI_HOST_RUNTIME_BRIDGE_TOKEN")
+		}
+		configured := len(missing) == 0
+		return Info{
+			ID:                   "deepseek-harness",
+			Name:                 "DeepSeek Harness",
+			Type:                 "deepseek_harness",
+			Enabled:              a.enabled,
+			Configured:           configured,
+			ExecutionEnabled:     a.enabled && a.executionEnabled && configured,
+			RequiresApproval:     true,
+			ReadOnlyDefault:      true,
+			Capabilities:         a.capabilities(),
+			Architecture:         a.architecture(),
+			Controls:             a.controls(),
+			MissingConfiguration: missing,
+			Endpoint:             "local Windows host bridge",
+		}
+	}
 	missing := []string{}
 	if strings.TrimSpace(a.executable) == "" {
 		missing = append(missing, "DEEPSEEK_HARNESS_EXECUTABLE")
@@ -90,6 +137,32 @@ func (a *deepSeekHarnessAdapter) HealthCheck(ctx context.Context) Health {
 	health := Health{RuntimeID: "deepseek-harness", Status: "disabled", CheckedAt: time.Now().UTC()}
 	if !a.enabled {
 		health.Reason = "DEEPSEEK_HARNESS_ENABLED is false"
+		return health
+	}
+	if a.dispatcher != nil {
+		if !a.hostDispatchEnabled {
+			health.Status = "blocked"
+			health.Reason = "HAI host runtime bridge is disabled or missing its dedicated token"
+			return health
+		}
+		if strings.TrimSpace(a.expectedVersion) == "" {
+			health.Status = "blocked"
+			health.Reason = "DEEPSEEK_HARNESS_VERSION is required to pin this developer-preview runtime"
+			return health
+		}
+		if strings.TrimSpace(a.workspaceKey) == "" {
+			health.Status = "blocked"
+			health.Reason = "DEEPSEEK_HARNESS_WORKSPACE_KEY is required for the Windows host bridge"
+			return health
+		}
+		if !a.executionEnabled {
+			health.Status = "blocked"
+			health.Reason = "DEEPSEEK_HARNESS_EXECUTION_ENABLED is false; host execution remains opt-in while upstream is a developer preview"
+			return health
+		}
+		health.Status = "ready"
+		health.Reason = "Approved tasks can be queued for the loopback-only Windows host bridge; worker liveness is confirmed separately by its process supervisor"
+		health.LatencyMs = time.Since(started).Milliseconds()
 		return health
 	}
 	if strings.TrimSpace(a.workspace) == "" {
@@ -160,17 +233,76 @@ func (a *deepSeekHarnessAdapter) ExecuteTask(parent context.Context, task Task) 
 	if !a.executionEnabled {
 		return Result{RuntimeID: "deepseek-harness", Status: "blocked", Message: "DEEPSEEK_HARNESS_EXECUTION_ENABLED is false", ExitCode: -1}
 	}
+	if reason := deepSeekHarnessPromptBlockedReason(task.Prompt); reason != "" {
+		return Result{RuntimeID: "deepseek-harness", Status: "blocked", Message: reason, ExitCode: -1,
+			AuditEvents: []string{"DeepSeek Harness prompt rejected before host dispatch"}}
+	}
+	if a.dispatcher != nil {
+		if !a.hostDispatchEnabled {
+			return Result{
+				RuntimeID: "deepseek-harness",
+				Status:    "blocked",
+				Message:   "DeepSeek Harness host bridge is disabled or missing its dedicated token; no host task was queued",
+				ExitCode:  -1,
+				AuditEvents: []string{
+					"DeepSeek Harness host dispatch blocked because the dedicated bridge is not enabled",
+				},
+			}
+		}
+		if strings.TrimSpace(a.expectedVersion) == "" {
+			return Result{RuntimeID: "deepseek-harness", Status: "blocked", Message: "DEEPSEEK_HARNESS_VERSION is required to pin this developer-preview runtime", ExitCode: -1}
+		}
+		job, err := a.dispatcher.Enqueue(hostruntime.ApprovedTask{
+			OwnerIdentity: task.OwnerIdentity,
+			RuntimeID:     a.RuntimeID(),
+			TaskID:        task.ID,
+			Prompt:        task.Prompt,
+			WorkspaceKey:  firstNonEmpty(a.workspaceKey, "deepseek-harness"),
+			Approved:      true,
+		})
+		if err != nil {
+			return Result{
+				RuntimeID: "deepseek-harness",
+				Status:    "failed",
+				Message:   "DeepSeek Harness host bridge could not queue the approved task",
+				ExitCode:  -1,
+				AuditEvents: []string{
+					"DeepSeek Harness host dispatch failed before any container or host process was invoked",
+				},
+			}
+		}
+		return Result{
+			RuntimeID:          "deepseek-harness",
+			ExecutionReference: job.ID.String(),
+			Status:             "queued",
+			Message:            "DeepSeek Harness task is queued for the local Windows host bridge; no container process was invoked",
+			ExitCode:           0,
+			DurationMs:         time.Since(started).Milliseconds(),
+			AuditEvents: []string{
+				"server-side approval and final-effect proof verified by HAI before host dispatch",
+				"approved task persisted for the loopback-only Windows host bridge",
+				"no DeepSeek Harness process was started inside the backend container",
+				"host runtime job queued: " + job.ID.String(),
+			},
+		}
+	}
+	if !a.allowDirectExecutionForTest {
+		return Result{
+			RuntimeID: "deepseek-harness",
+			Status:    "blocked",
+			Message:   "DeepSeek Harness host bridge is unavailable; no container process was invoked",
+			ExitCode:  -1,
+			AuditEvents: []string{
+				"DeepSeek Harness execution failed closed because no host dispatcher is configured",
+			},
+		}
+	}
 	if reason := a.workspaceBlockedReason(); reason != "" {
 		return Result{RuntimeID: "deepseek-harness", Status: "blocked", Message: reason, ExitCode: -1}
 	}
 	if reason := a.stateDirBlockedReason(); reason != "" {
 		return Result{RuntimeID: "deepseek-harness", Status: "blocked", Message: reason, ExitCode: -1}
 	}
-	if reason := deepSeekHarnessPromptBlockedReason(task.Prompt); reason != "" {
-		return Result{RuntimeID: "deepseek-harness", Status: "blocked", Message: reason, ExitCode: -1,
-			AuditEvents: []string{"DeepSeek Harness prompt rejected before CLI invocation"}}
-	}
-
 	ctx, cancel := context.WithTimeout(parent, a.timeout)
 	defer cancel()
 	if !a.acquireExecutionGate(ctx) {

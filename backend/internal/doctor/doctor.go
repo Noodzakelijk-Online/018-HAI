@@ -134,7 +134,11 @@ func Diagnose(cfg config.Configuration) Report {
 	secretCheck := func(name, envVar, value, emptyDetail string) {
 		switch {
 		case strings.TrimSpace(value) == "":
-			add(name, SeverityWarn, emptyDetail)
+			severity := SeverityWarn
+			if production {
+				severity = SeverityFail
+			}
+			add(name, severity, emptyDetail)
 		case IsPlaceholderSecret(value):
 			severity := SeverityWarn
 			if production {
@@ -148,7 +152,7 @@ func Diagnose(cfg config.Configuration) Report {
 	secretCheck("security.backendApiKey", "BACKEND_API_SHARED_KEY", cfg.BackendAPIKey,
 		"BACKEND_API_SHARED_KEY is empty; the API is unauthenticated and must stay on a trusted local network only")
 	secretCheck("security.memoryEncryptionKey", "HAI_MEMORY_ENCRYPTION_KEY", cfg.MemoryEngineKey,
-		"HAI_MEMORY_ENCRYPTION_KEY is empty; memory-engine falls back to the backend API key")
+		"HAI_MEMORY_ENCRYPTION_KEY is empty; private memory import is unavailable in production")
 	secretCheck("security.jwtSecret", "JWT_SECRET", cfg.JWTSecret,
 		"JWT_SECRET is empty; issued tokens cannot be verified")
 	approvalProofKey := strings.TrimSpace(cfg.ApprovalProofSigningKey)

@@ -619,6 +619,58 @@ func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	}
 }
 
+func TestLaunchBlocksScriptChangedDuringFinalAuthorization(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "launch.sh")
+	marker := filepath.Join(dir, "changed-script-ran.txt")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'reviewed-script'\n"), 0755); err != nil {
+		t.Fatalf("WriteFile reviewed script: %v", err)
+	}
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
+	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, script))
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Pinned Script Automation",
+		URLPath:      "pinned-script-automation",
+		LaunchType:   "script",
+		LaunchTarget: filepath.Base(script),
+	})
+	authorizer := &recordingExecutionAuthorizer{
+		onCall: func() {
+			if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch "+filepath.Base(marker)+"\n"), 0755); err != nil {
+				t.Fatalf("replace script during authorization: %v", err)
+			}
+		},
+	}
+	service := NewServiceWithRuntimeRegistryApprovalProofsAndExecutionAuthorization(
+		repo,
+		events.Publisher{},
+		agentruntime.DefaultRegistry(),
+		newUnitTestApprovalProofService(),
+		authorizer,
+	)
+
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if result.Status != "blocked" || !strings.Contains(result.Message, "SHA-256 does not match") {
+		t.Fatalf("result = %#v, want changed script blocked by the final pin check", result)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("replacement script executed or stat returned unexpected error: %v", err)
+	}
+	if authorizer.calls.Load() != 1 {
+		t.Fatalf("authorization calls = %d, want one", authorizer.calls.Load())
+	}
+	if len(repo.launchEvents) != 1 || !containsString(repo.launchEvents[0].AuditEvents, "script hash pin rejected after execution authorization") {
+		t.Fatalf("launch audit = %#v, want final pin rejection", repo.launchEvents)
+	}
+}
+
 func TestLaunchBlocksScriptWithoutApprovalBeforeProcessExecution(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "launch.sh")
@@ -776,6 +828,8 @@ func writeExecutableScriptFixture(t *testing.T, dir, mode string) string {
 		body = "#!/bin/sh\nif [ -n \"$SECRET_TOKEN\" ]; then echo leaked; else echo clean; fi\n"
 	case "redact":
 		body = "#!/bin/sh\necho 'token=super-secret-token'\n"
+	case "fail-with-secret":
+		body = "#!/bin/sh\necho 'token=super-secret-token' >&2\nexit 1\n"
 	default:
 		t.Fatalf("unsupported script fixture mode %q", mode)
 	}
@@ -1044,20 +1098,20 @@ func TestAgentRuntimeLaunchRequiresApprovalAndReceivesTask(t *testing.T) {
 	if completed.Status != "completed" || !adapter.called {
 		t.Fatalf("approved task did not run: %#v", completed)
 	}
-	if completed.RuntimeTaskID != id.String() {
-		t.Fatalf("runtime task id = %q, want automation id %s", completed.RuntimeTaskID, id)
+	if !strings.HasPrefix(completed.RuntimeTaskID, "automation:"+id.String()+":intent:") {
+		t.Fatalf("runtime task id = %q, want launch-scoped id for automation %s", completed.RuntimeTaskID, id)
 	}
 	if adapter.task.Prompt != "Inspect the project and report verified completion." || adapter.task.ProjectKey != "018-hai" {
 		t.Fatalf("task context was not propagated: %#v", adapter.task)
 	}
-	if adapter.task.ID != id.String() {
-		t.Fatalf("adapter task id = %q, want %s", adapter.task.ID, id)
+	if adapter.task.ID != completed.RuntimeTaskID {
+		t.Fatalf("adapter task id = %q, want launch result id %s", adapter.task.ID, completed.RuntimeTaskID)
 	}
 	if len(repo.launchEvents) != 2 || !containsString(repo.launchEvents[1].AuditEvents, "fake runtime executed under approval") {
 		t.Fatalf("completed runtime audit was not persisted: %#v", repo.launchEvents)
 	}
-	if repo.launchEvents[1].RuntimeTaskID != id.String() {
-		t.Fatalf("launch event runtime task id = %q, want %s", repo.launchEvents[1].RuntimeTaskID, id)
+	if repo.launchEvents[1].RuntimeTaskID != completed.RuntimeTaskID {
+		t.Fatalf("launch event runtime task id = %q, want %s", repo.launchEvents[1].RuntimeTaskID, completed.RuntimeTaskID)
 	}
 }
 
@@ -1649,6 +1703,16 @@ func (r *fakeAutomationRepo) SaveLaunchIntent(event *models.AutomationLaunchEven
 
 func (r *fakeAutomationRepo) FindLaunchEvents(automationID uuid.UUID, limit int) ([]models.AutomationLaunchEvent, error) {
 	return r.launchEvents, nil
+}
+
+func (r *fakeAutomationRepo) FindLaunchEventByExecutionReference(reference string) (*models.AutomationLaunchEvent, error) {
+	for index := len(r.launchEvents) - 1; index >= 0; index-- {
+		event := r.launchEvents[index]
+		if event.ExecutionReference == reference {
+			return &event, nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *fakeAutomationRepo) SaveApprovalDecision(record *ApprovalDecisionRecord) error {

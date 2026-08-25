@@ -80,11 +80,10 @@ func PostgresProbe(cfg config.Configuration) doctor.Probe {
 // RedisProbe checks the Redis declared in the compose stack.
 //
 // Redis backs the optional shared rate limiter. When it is absent or
-// unavailable at startup, the limiter deliberately falls back to in-process
-// counters, so Redis is a degradation rather than a hard availability
-// requirement. The probe still reports it honestly, because an operator needs
-// to distinguish durable shared limits from per-process limits that reset on
-// restart.
+// unavailable, the limiter uses bounded in-process counters. Redis is therefore
+// a degradation rather than a hard availability requirement. The probe still
+// reports it honestly, because an operator needs to distinguish durable shared
+// limits from per-process limits that reset on restart.
 func RedisProbe(cfg config.Configuration) doctor.Probe {
 	addr := strings.TrimSpace(cfg.RedisAddr)
 	return doctor.Probe{

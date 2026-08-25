@@ -75,6 +75,28 @@ http {
             proxy_set_header X-HAI-Backend-Key ${BACKEND_API_SHARED_KEY};
         }
 
+        # The Windows host-runtime bridge has its own loopback-only proxy and
+        # dedicated bearer credential. It must never be reachable via this
+        # dashboard gateway, including when the operator opts into ngrok.
+        location ^~ /api/v1/host-runtime/ {
+            return 404;
+        }
+
+        # Agent bridge protocols have their own dedicated local-only entry
+        # points. They must not inherit the dashboard API catch-all: browser
+        # authentication is neither their authority nor their network boundary.
+        location = /api/v1/a2a {
+            return 404;
+        }
+
+        location ^~ /api/v1/a2a/ {
+            return 404;
+        }
+
+        location ^~ /api/v1/mcp-agent/ {
+            return 404;
+        }
+
         # All non-IDP APIs are backend APIs. Authentication is checked by the
         # IDP subrequest and only its verified token is forwarded as identity.
         # The backend still enforces its own owner and RBAC checks.

@@ -172,6 +172,41 @@ func TestGoogleOAuthStartRejectsForeignSourceBeforeConfigurationLookup(t *testin
 	}
 }
 
+func TestGoogleOAuthCallbackRequiresMatchingBrowserStateCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(NewService(newFakeSourceRepo(), nil))
+	router := gin.New()
+	router.GET("/sources/oauth/google/callback", handler.GoogleOAuthCallback)
+
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/sources/oauth/google/callback?code=code&state=state-a", nil),
+		func() *http.Request {
+			req := httptest.NewRequest(http.MethodGet, "/sources/oauth/google/callback?code=code&state=state-a", nil)
+			req.AddCookie(&http.Cookie{Name: googleOAuthStateCookieName, Value: "state-b"})
+			return req
+		}(),
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusFound || response.Header().Get("Location") != "/connected-sources?oauth=error" {
+			t.Fatalf("callback status=%d location=%q, want rejected state", response.Code, response.Header().Get("Location"))
+		}
+		if !strings.Contains(response.Header().Get("Set-Cookie"), googleOAuthStateCookieName+"=") {
+			t.Fatal("callback did not clear the browser-bound OAuth state cookie")
+		}
+	}
+}
+
+func TestGoogleOAuthStateFromAuthorizeURLRequiresState(t *testing.T) {
+	state, err := googleOAuthStateFromAuthorizeURL("https://accounts.example.test/authorize?state=signed-state")
+	if err != nil || state != "signed-state" {
+		t.Fatalf("state = %q, err=%v", state, err)
+	}
+	if _, err := googleOAuthStateFromAuthorizeURL("https://accounts.example.test/authorize"); err == nil {
+		t.Fatal("expected authorize URL without state to fail closed")
+	}
+}
+
 func TestHandlerRunsDueSyncsOnlyForAuthenticatedOwner(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service := NewService(newFakeSourceRepo(), nil)

@@ -15,6 +15,11 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${ROOT}"
 
+if ! command -v git >/dev/null 2>&1; then
+  echo "ERROR: git is required for the tracked-file and history checks; refusing to report an incomplete audit as passing." >&2
+  exit 2
+fi
+
 pass=0
 fail=0
 ok()   { echo "  PASS: $1"; pass=$((pass + 1)); }

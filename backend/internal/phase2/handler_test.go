@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,25 @@ func TestBackgroundRunHTTPStatusIsActionable(t *testing.T) {
 	}
 	if got := backgroundRunHTTPStatus(errors.New("storage unavailable")); got != http.StatusInternalServerError {
 		t.Fatalf("unexpected failure status = %d, want %d", got, http.StatusInternalServerError)
+	}
+}
+
+func TestOperationLookupErrorDoesNotExposeUnexpectedStorageFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	writeOperationLookupError(context, errors.New(`database password=not-for-http at C:\\private`))
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	for _, forbidden := range []string{"password", "not-for-http", "C:\\\\private"} {
+		if strings.Contains(strings.ToLower(recorder.Body.String()), strings.ToLower(forbidden)) {
+			t.Fatalf("response leaked %q: %s", forbidden, recorder.Body.String())
+		}
+	}
+	if !strings.Contains(recorder.Body.String(), "operation details are unavailable") {
+		t.Fatalf("response = %s", recorder.Body.String())
 	}
 }
 

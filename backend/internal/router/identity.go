@@ -6,6 +6,8 @@ import (
 
 	"automation-hub-backend/internal/apierror"
 	"automation-hub-backend/internal/config"
+	"automation-hub-backend/internal/demomode"
+	"automation-hub-backend/internal/doctor"
 	"automation-hub-backend/internal/identity"
 
 	"github.com/gin-gonic/gin"
@@ -20,12 +22,19 @@ const (
 // API clients may use Authorization: Bearer <token>; browser requests use
 // HAI's HttpOnly access_token cookie. Claims are verified against the shared
 // JWT secret before their role and principal are used for RBAC or auditing.
-// The middleware is a no-op when no JWT secret is configured or no token is
-// presented, so the shared-API-key single-operator model keeps working. A
-// present but invalid token is rejected with 401 rather than silently ignored.
+// Demo/test mode may deliberately omit the JWT secret for the local
+// single-operator workflow. Production treats a missing or example secret as
+// a configuration failure and rejects the request before role claims can be
+// interpreted. A present but invalid token is rejected with 401 rather than
+// silently ignored.
 func identityMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		secret := strings.TrimSpace(config.AppConfig.JWTSecret)
+		if demomode.Parse(config.AppConfig.RunMode).IsProduction() && (secret == "" || doctor.IsPlaceholderSecret(secret)) {
+			e := apierror.New(apierror.CodeUnavailable, "identity signing secret is not securely configured")
+			c.AbortWithStatusJSON(e.HTTPStatus(), e.Envelope())
+			return
+		}
 		token := identityToken(c)
 		if secret == "" || token == "" {
 			c.Next()

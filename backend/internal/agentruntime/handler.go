@@ -2,6 +2,7 @@ package agentruntime
 
 import (
 	"archive/zip"
+	"automation-hub-backend/internal/apierror"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/safety"
 	"context"
@@ -80,7 +81,7 @@ func (h *Handler) Skills(c *gin.Context) {
 	defer cancel()
 	skills, err := h.registry.Skills(ctx, runtimeID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent runtime is not registered"})
 		return
 	}
 	c.JSON(http.StatusOK, skills)
@@ -141,7 +142,7 @@ func (h *Handler) SetOpenClawEcosystem(c *gin.Context) {
 	}
 	prepared, err := openClaw.prepareEcosystemPath(path, false)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "OpenClaw ecosystem path is unavailable or does not meet configured safety requirements"})
 		return
 	}
 	authorization := mergeEcosystemAuthorization(c, request.EcosystemMutationAuthorization)
@@ -248,7 +249,7 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 	}
 	defer source.Close()
 	if err := validateOpenClawZipReader(source, file.Size); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "openclaw ecosystem zip is invalid or does not meet safety requirements"})
 		return
 	}
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
@@ -326,7 +327,7 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 	prepared, err := openClaw.prepareEcosystemPath(dest, true)
 	if err != nil {
 		_ = os.Remove(dest)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "uploaded OpenClaw ecosystem is invalid or does not meet safety requirements"})
 		return
 	}
 	if prepared.previousPath != currentPath ||
@@ -411,11 +412,11 @@ func recheckEcosystemEmergencyStop(c *gin.Context) bool {
 }
 
 func writeEcosystemMutationError(c *gin.Context, err error) {
-	status := http.StatusBadRequest
 	if errors.Is(err, ErrEcosystemMutationConflict) {
-		status = http.StatusConflict
+		c.JSON(http.StatusConflict, gin.H{"error": ErrEcosystemMutationConflict.Error()})
+		return
 	}
-	c.JSON(status, gin.H{"error": err.Error()})
+	c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "runtime ecosystem mutation could not be completed")})
 }
 
 func runtimeOwner(c *gin.Context) (string, bool) {

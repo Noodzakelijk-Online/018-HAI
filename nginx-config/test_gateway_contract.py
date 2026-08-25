@@ -53,6 +53,54 @@ class GatewayAuthContractTest(unittest.TestCase):
         self.assertIn("proxy_pass http://$backend_upstream;", backend)
         self.assertNotIn("location ~", backend)
 
+    def test_host_runtime_bridge_is_not_exposed_by_dashboard_gateway(self) -> None:
+        bridge = location_block("location ^~ /api/v1/host-runtime/")
+        self.assertIn("return 404;", bridge)
+        self.assertNotIn("proxy_pass", bridge)
+
+        host_gateway = (ROOT / "nginx-config" / "host-runtime.conf.template").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('listen 80;', host_gateway)
+        self.assertIn('location = /api/v1/host-runtime/leases', host_gateway)
+        self.assertIn('location ^~ /api/v1/host-runtime/leases/', host_gateway)
+        self.assertIn('proxy_set_header Authorization $http_authorization;', host_gateway)
+        self.assertIn('proxy_set_header Cookie "";', host_gateway)
+        self.assertIn('proxy_set_header X-HAI-Auth-Subrequest "";', host_gateway)
+        self.assertIn('proxy_set_header X-HAI-Verified-Access-Token "";', host_gateway)
+        self.assertNotIn("auth_request", host_gateway)
+
+    def test_local_agent_bridge_protocols_are_not_exposed_by_dashboard_gateway(self) -> None:
+        for config_name, config in (("template", NGINX_TEMPLATE), ("direct", NGINX_CONFIG)):
+            for marker in (
+                "location = /api/v1/a2a",
+                "location ^~ /api/v1/a2a/",
+                "location ^~ /api/v1/mcp-agent/",
+            ):
+                with self.subTest(config=config_name, marker=marker):
+                    bridge = location_block(marker, config)
+                    self.assertIn("return 404;", bridge)
+                    self.assertNotIn("proxy_pass", bridge)
+
+    def test_optional_agent_bridges_remain_loopback_only_and_narrow(self) -> None:
+        a2a_gateway = (ROOT / "nginx-config" / "a2a-local.conf.template").read_text(
+            encoding="utf-8"
+        )
+        agent_card = location_block(
+            "location = /.well-known/agent-card.json", a2a_gateway
+        )
+        send_message = location_block("location = /api/v1/a2a", a2a_gateway)
+        fallback = location_block("location / {", a2a_gateway)
+        self.assertIn("proxy_pass http://$backend_upstream;", agent_card)
+        self.assertIn("proxy_pass http://$backend_upstream;", send_message)
+        self.assertIn("proxy_set_header Authorization $http_authorization;", send_message)
+        self.assertIn("return 404;", fallback)
+
+        self.assertIn('profiles: ["local-a2a"]', COMPOSE)
+        self.assertIn('"127.0.0.1:${HAI_A2A_LOCAL_PORT:-8091}:80"', COMPOSE)
+        self.assertIn('profiles: ["mcp-bridge"]', COMPOSE)
+        self.assertIn('"127.0.0.1:${HAI_FASTMCP_PORT:-8090}:8080"', COMPOSE)
+
     def test_protected_backend_routes_forward_verified_refreshed_identity(self) -> None:
         markers = (
             "location = /api/v1/agent-runtimes/openclaw/ecosystem/upload",

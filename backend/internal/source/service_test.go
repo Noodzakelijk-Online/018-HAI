@@ -415,6 +415,26 @@ func TestSyncLocalFolderBlocksTraversalOutsideAllowlistedRoot(t *testing.T) {
 	if !repo.hasAudit("source.sync_failed") {
 		t.Fatalf("expected failed sync audit record")
 	}
+	if strings.Contains(repo.jobs[0].Message, root) {
+		t.Fatalf("job message leaked local root: %q", repo.jobs[0].Message)
+	}
+	for _, audit := range repo.auditLogs {
+		if audit.Action == "source.sync_failed" && (audit.Message != repo.jobs[0].Message || strings.Contains(audit.Message, root)) {
+			t.Fatalf("audit message = %q, want redacted job message", audit.Message)
+		}
+	}
+}
+
+func TestRedactSourceErrorDoesNotRetainSecretsOrFilesystemDetails(t *testing.T) {
+	err := redactSourceError(errors.New(`fetch failed https://provider.example/token?access_token=secret at C:\\private\\records`))
+	if err == nil {
+		t.Fatal("expected redacted error")
+	}
+	for _, forbidden := range []string{"access_token=secret", "C:\\\\private", "records"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("redacted error leaked %q: %s", forbidden, err)
+		}
+	}
 }
 
 func TestSyncLocalFolderSkipsSymlinkEscape(t *testing.T) {

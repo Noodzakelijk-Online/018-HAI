@@ -321,6 +321,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 	pursuits := r.Group("/api/v1").Group("/pursuits")
 	pursuits.GET("/", mark("pursuitList"))
 	pursuits.POST("/", mark("pursuitCreate"))
+	pursuits.POST("/reconcile-life-domains", mark("pursuitReconcileLifeDomains"))
 	pursuits.GET("/dashboard", mark("pursuitDashboard"))
 	pursuits.GET("/brief", mark("pursuitBrief"))
 	pursuits.GET("/decisions", mark("pursuitDecisions"))
@@ -483,6 +484,7 @@ func TestAutomationRoutesNoConflict(t *testing.T) {
 		{"PATCH", "/api/v1/workflow/abc/checklist/def", "workflowChecklist"},
 		{"GET", "/api/v1/pursuits/", "pursuitList"},
 		{"POST", "/api/v1/pursuits/", "pursuitCreate"},
+		{"POST", "/api/v1/pursuits/reconcile-life-domains", "pursuitReconcileLifeDomains"},
 		{"GET", "/api/v1/pursuits/dashboard", "pursuitDashboard"},
 		{"GET", "/api/v1/pursuits/brief", "pursuitBrief"},
 		{"POST", "/api/v1/pursuits/match", "pursuitMatch"},
@@ -662,8 +664,13 @@ func TestPlanningOptimizerRoutesRequireOwnerAndWritePermission(t *testing.T) {
 func TestBackendAPIKeyMiddlewareDisabledWithoutKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	previous := config.AppConfig.BackendAPIKey
-	t.Cleanup(func() { config.AppConfig.BackendAPIKey = previous })
+	previousRunMode := config.AppConfig.RunMode
+	t.Cleanup(func() {
+		config.AppConfig.BackendAPIKey = previous
+		config.AppConfig.RunMode = previousRunMode
+	})
 	config.AppConfig.BackendAPIKey = ""
+	config.AppConfig.RunMode = "demo"
 
 	r := gin.New()
 	r.Use(backendAPIKeyMiddleware())
@@ -677,6 +684,77 @@ func TestBackendAPIKeyMiddlewareDisabledWithoutKey(t *testing.T) {
 
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+}
+
+func TestBackendAPIKeyMiddlewareFailsClosedWithoutKeyInProduction(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previous := config.AppConfig.BackendAPIKey
+	previousRunMode := config.AppConfig.RunMode
+	t.Cleanup(func() {
+		config.AppConfig.BackendAPIKey = previous
+		config.AppConfig.RunMode = previousRunMode
+	})
+	config.AppConfig.BackendAPIKey = ""
+	config.AppConfig.RunMode = "production"
+
+	r := gin.New()
+	r.Use(backendAPIKeyMiddleware())
+	r.GET("/protected", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/protected", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(w.Body.String(), "backend API key is not securely configured") {
+		t.Fatalf("response did not explain fail-closed configuration: %s", w.Body.String())
+	}
+}
+
+func TestBackendAPIKeyMiddlewareFailsClosedForPlaceholderKeyInProduction(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previous := config.AppConfig.BackendAPIKey
+	previousRunMode := config.AppConfig.RunMode
+	t.Cleanup(func() {
+		config.AppConfig.BackendAPIKey = previous
+		config.AppConfig.RunMode = previousRunMode
+	})
+	config.AppConfig.BackendAPIKey = "change-this-local-backend-key"
+	config.AppConfig.RunMode = "production"
+
+	r := gin.New()
+	r.Use(backendAPIKeyMiddleware())
+	r.GET("/protected", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set(backendAPIKeyHeader, config.AppConfig.BackendAPIKey)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestMemoryEngineEncryptionSecretRequiresDedicatedKeyInProduction(t *testing.T) {
+	if got := memoryEngineEncryptionSecret(config.Configuration{
+		RunMode:       "production",
+		BackendAPIKey: "strong-backend-key",
+	}); got != "" {
+		t.Fatalf("production memory secret = %q, want no shared-key fallback", got)
+	}
+	if got := memoryEngineEncryptionSecret(config.Configuration{
+		RunMode:         "production",
+		BackendAPIKey:   "strong-backend-key",
+		MemoryEngineKey: "separate-memory-key",
+	}); got != "separate-memory-key" {
+		t.Fatalf("production dedicated memory secret = %q", got)
+	}
+	if got := memoryEngineEncryptionSecret(config.Configuration{
+		RunMode:       "demo",
+		BackendAPIKey: "demo-backend-key",
+	}); got != "demo-backend-key" {
+		t.Fatalf("demo memory fallback = %q", got)
 	}
 }
 

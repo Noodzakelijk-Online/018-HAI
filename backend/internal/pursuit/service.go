@@ -776,6 +776,7 @@ type workflowOwnerScopedRecordReader interface {
 type service struct {
 	repo                        Repository
 	workflowService             workflowIntakeService
+	lifeDomainLinker            LifeDomainLinker
 	portfolioCapacity           PortfolioCapacityReader
 	portfolioCapacityNow        func() time.Time
 	portfolioWorkflowAuthorizer portfolioWorkflowEffectAuthorizer
@@ -816,6 +817,10 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 		return nil, err
 	}
 	contextText := title + " " + request.Description + " " + request.WhyItMatters + " " + request.DesiredOutcome
+	domain, err := canonicalPursuitDomain(request.Domain, contextText)
+	if err != nil {
+		return nil, err
+	}
 	riskLevel := conservativeRisk(request.RiskLevel, classifyRisk(contextText))
 	autonomyLevel := conservativeAutonomy(request.AutonomyLevel, riskLevel)
 	now := time.Now().UTC()
@@ -831,7 +836,7 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 		WhyItMatters:          strings.TrimSpace(request.WhyItMatters),
 		ProjectKey:            strings.TrimSpace(request.ProjectKey),
 		MandateID:             mandateID,
-		Domain:                firstNonEmpty(request.Domain, classifyDomain(contextText)),
+		Domain:                domain,
 		DesiredOutcome:        strings.TrimSpace(request.DesiredOutcome),
 		CurrentStateSummary:   strings.TrimSpace(request.CurrentStateSummary),
 		Status:                firstNonEmpty(request.Status, StatusActive),
@@ -864,6 +869,7 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 		return nil, err
 	}
 	_, _ = s.recordActivity(created.ID, "pursuit.created", "Pursuit created: "+created.Title, firstNonEmpty(request.Actor, "operator"), "", "", "")
+	_, _ = s.projectLifeDomain(created, firstNonEmpty(request.Actor, "operator"))
 	if policyWasNormalized(request.RiskLevel, request.AutonomyLevel, riskLevel, autonomyLevel) {
 		_, _ = s.recordActivity(created.ID, "pursuit.safety_normalized", "Pursuit safety policy normalized from the goal context: "+riskLevel+" risk / "+autonomyLevel+" autonomy", firstNonEmpty(request.Actor, "operator"), "", "", "")
 	}
@@ -905,13 +911,20 @@ func (s *service) UpdateForOwner(ownerIdentity string, id uuid.UUID, request Upd
 	}
 	priorRiskLevel := pursuit.RiskLevel
 	priorAutonomyLevel := pursuit.AutonomyLevel
+	priorDomain := pursuit.Domain
 	if strings.TrimSpace(request.Title) != "" {
 		pursuit.Title = strings.TrimSpace(request.Title)
 	}
 	assignString(request.Description, &pursuit.Description)
 	assignString(request.WhyItMatters, &pursuit.WhyItMatters)
 	assignString(request.ProjectKey, &pursuit.ProjectKey)
-	assignString(request.Domain, &pursuit.Domain)
+	if request.Domain != nil {
+		domain, err := canonicalPursuitDomain(*request.Domain, pursuit.Title+" "+pursuit.Description+" "+pursuit.WhyItMatters+" "+pursuit.DesiredOutcome)
+		if err != nil {
+			return nil, err
+		}
+		pursuit.Domain = domain
+	}
 	assignString(request.DesiredOutcome, &pursuit.DesiredOutcome)
 	assignString(request.CurrentStateSummary, &pursuit.CurrentStateSummary)
 	assignString(request.NeedCategory, &pursuit.NeedCategory)
@@ -998,6 +1011,9 @@ func (s *service) UpdateForOwner(ownerIdentity string, id uuid.UUID, request Upd
 		return nil, err
 	}
 	_, _ = s.recordActivity(id, "pursuit.updated", "Pursuit details updated", firstNonEmpty(request.Actor, "operator"), "", "", "")
+	if !strings.EqualFold(strings.TrimSpace(priorDomain), strings.TrimSpace(updated.Domain)) {
+		_, _ = s.projectLifeDomain(updated, firstNonEmpty(request.Actor, "operator"))
+	}
 	if !strings.EqualFold(priorRiskLevel, updated.RiskLevel) || !strings.EqualFold(priorAutonomyLevel, updated.AutonomyLevel) {
 		_, _ = s.recordActivity(id, "pursuit.safety_normalized", "Pursuit safety policy recalculated from the current goal context: "+updated.RiskLevel+" risk / "+updated.AutonomyLevel+" autonomy", firstNonEmpty(request.Actor, "operator"), "", "", "")
 	}

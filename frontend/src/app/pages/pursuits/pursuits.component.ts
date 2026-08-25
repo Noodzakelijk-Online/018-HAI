@@ -20,6 +20,7 @@ import {
   IPursuitDetail,
   IPursuitEvidenceResolution,
   IPursuitLink,
+	IPursuitLifeDomainReconciliationResult,
   IPursuitListItem,
   IPursuitDependency,
   IPursuitPortfolioPlanningRequest,
@@ -95,6 +96,8 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   loading = false;
   detailLoading = false;
   creating = false;
+	lifeDomainReconciliationRunning = false;
+	lifeDomainReconciliation?: IPursuitLifeDomainReconciliationResult;
   intakeRunning = false;
   routedIntakeRunning = false;
   reviewing = false;
@@ -409,6 +412,31 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       error: (error) => {
         this.loading = false;
         this.notification.error('Pursuits unavailable', error?.error?.error || 'Failed to load pursuits.');
+      },
+    });
+  }
+
+  reconcileLifeDomains(): void {
+    if (this.lifeDomainReconciliationRunning) {
+      return;
+    }
+    this.lifeDomainReconciliationRunning = true;
+    this.pursuitsService.reconcileLifeDomains().subscribe({
+      next: (result) => {
+        this.lifeDomainReconciliationRunning = false;
+        this.lifeDomainReconciliation = result;
+        const detail = result.failed
+          ? `${result.projected} indexed, ${result.failed} need review.`
+          : `${result.projected} indexed; ${result.skipped} unchanged.`;
+        this.notification.success('Life domains updated', detail);
+        this.load();
+      },
+      error: (error) => {
+        this.lifeDomainReconciliationRunning = false;
+        this.notification.error(
+          'Life-domain update unavailable',
+          error?.error?.error || 'HAI could not update the life-domain index.',
+        );
       },
     });
   }

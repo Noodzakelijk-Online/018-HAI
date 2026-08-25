@@ -2,6 +2,7 @@ package accountfeed
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -12,27 +13,30 @@ import (
 type Handler struct {
 	reg   *Registry
 	perms *PermissionRegistry
-	owner string
 	space string
 }
 
 // NewHandler builds a handler over a registry.
-func NewHandler(reg *Registry, ownerUserID, workspaceID string) *Handler {
-	return &Handler{reg: reg, perms: NewPermissionRegistry(), owner: ownerUserID, space: workspaceID}
+func NewHandler(reg *Registry, _ string, workspaceID string) *Handler {
+	return &Handler{reg: reg, perms: NewPermissionRegistry(), space: workspaceID}
 }
 
 func (h *Handler) ownerID(c *gin.Context) string {
 	if sub, ok := c.Get("subject"); ok {
-		if s, ok := sub.(string); ok && s != "" {
-			return s
+		if s, ok := sub.(string); ok && strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s)
 		}
 	}
-	return h.owner
+	return ""
 }
 
 // List returns feed health for all registered feeds.
 func (h *Handler) List(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"feeds": h.reg.Health()})
+	owner, ok := h.requireOwner(c)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"feeds": h.reg.HealthForOwner(owner)})
 }
 
 // Bridges returns the provider bridge contracts with truthful connection status.
@@ -68,6 +72,10 @@ type registerRequest struct {
 
 // Create registers a new feed.
 func (h *Handler) Create(c *gin.Context) {
+	owner, ok := h.requireOwner(c)
+	if !ok {
+		return
+	}
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -82,7 +90,7 @@ func (h *Handler) Create(c *gin.Context) {
 		URL:           req.URL,
 		ProjectKey:    req.ProjectKey,
 		OperationType: req.OperationType,
-		OwnerUserID:   h.ownerID(c),
+		OwnerUserID:   owner,
 		WorkspaceID:   h.space,
 		Enabled:       req.Enabled,
 	}
@@ -96,12 +104,16 @@ func (h *Handler) Create(c *gin.Context) {
 
 // Get returns a single feed.
 func (h *Handler) Get(c *gin.Context) {
+	owner, ok := h.requireOwner(c)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
-	feed, ok := h.reg.Get(id)
+	feed, ok := h.reg.GetForOwner(id, owner)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "feed not found"})
 		return
@@ -117,6 +129,10 @@ type patchRequest struct {
 
 // Patch updates mutable feed fields.
 func (h *Handler) Patch(c *gin.Context) {
+	owner, ok := h.requireOwner(c)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
@@ -127,7 +143,7 @@ func (h *Handler) Patch(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	feed, ok := h.reg.Patch(id, req.Enabled, req.Name, req.OperationType)
+	feed, ok := h.reg.PatchForOwner(id, owner, req.Enabled, req.Name, req.OperationType)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "feed not found"})
 		return
@@ -137,12 +153,16 @@ func (h *Handler) Patch(c *gin.Context) {
 
 // Sync syncs a single feed.
 func (h *Handler) Sync(c *gin.Context) {
+	owner, ok := h.requireOwner(c)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
-	rep, ok := h.reg.Sync(c.Request.Context(), id)
+	rep, ok := h.reg.SyncForOwner(c.Request.Context(), id, owner)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "feed not found"})
 		return
@@ -152,19 +172,41 @@ func (h *Handler) Sync(c *gin.Context) {
 
 // SyncDue syncs all enabled feeds.
 func (h *Handler) SyncDue(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"reports": h.reg.SyncDue(c.Request.Context())})
+	owner, ok := h.requireOwner(c)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"reports": h.reg.SyncDueForOwner(c.Request.Context(), owner)})
 }
 
 // Audit returns a feed's audit trail.
 func (h *Handler) Audit(c *gin.Context) {
+	owner, ok := h.requireOwner(c)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
-	if _, ok := h.reg.Get(id); !ok {
+	if _, ok := h.reg.GetForOwner(id, owner); !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "feed not found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"audit": h.reg.Audit(id)})
+	audit, ok := h.reg.AuditForOwner(id, owner)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "feed not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"audit": audit})
+}
+
+func (h *Handler) requireOwner(c *gin.Context) (string, bool) {
+	owner := h.ownerID(c)
+	if owner == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authenticated owner identity is required"})
+		return "", false
+	}
+	return owner, true
 }
