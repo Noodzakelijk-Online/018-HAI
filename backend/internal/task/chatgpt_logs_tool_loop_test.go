@@ -201,3 +201,26 @@ func TestARetryKeepsTheToolCallsTheFirstAttemptMade(t *testing.T) {
 		t.Fatalf("carrying the trace forward mutated the earlier attempt: %#v", first.MCPToolCalls)
 	}
 }
+
+func TestTheDecisionContractNamesTheEnvelopeRatherThanImplyingIt(t *testing.T) {
+	prompt := chatgptLogsToolLoopSystemPrompt([]chatgptlogs.ToolDescriptor{
+		{Name: "search", Description: "search messages", Arguments: `{"query":"required"}`},
+	})
+
+	// Every model tried collapsed the envelope into {"action":"search",...} when
+	// the shape was only shown once, so the contract has to say outright that
+	// action is a fixed word.
+	if !strings.Contains(prompt, `"action" is the literal string "tool" or the literal string "answer". It is never a tool name.`) {
+		t.Fatalf("the prompt does not rule out a tool name in action:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, `{"action":"tool","tool":"search","arguments":{"query":"..."}}`) ||
+		!strings.Contains(prompt, `{"action":"answer","answer":"..."}`) {
+		t.Fatalf("the prompt does not show both decision shapes:\n%s", prompt)
+	}
+
+	// It has to come after the tool list: the reviewed tools are the last thing
+	// read otherwise, and the format drifts with them.
+	if strings.Index(prompt, "Reviewed tools:") > strings.Index(prompt, "Reply with one JSON object") {
+		t.Fatalf("the envelope contract is stated before the tool list:\n%s", prompt)
+	}
+}
