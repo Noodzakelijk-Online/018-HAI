@@ -797,10 +797,10 @@ func (s *service) runOperation(request IntakeRequest) (*CompletionPlan, error) {
 				if persistErr := s.persistFrameworkEvidencePreflight(plan); persistErr != nil {
 					plan.ExecutionResult = frameworkEvidencePersistenceBlockedExecution(plan, persistErr)
 				} else {
-					plan.ExecutionResult = s.executeWithPursuitReservation(plan, request, 1)
+					plan.ExecutionResult = carryMCPToolCallsForward(nil, s.executeWithPursuitReservation(plan, request, 1), 1)
 				}
 			} else {
-				plan.ExecutionResult = s.executeWithPursuitReservation(plan, request, 1)
+				plan.ExecutionResult = carryMCPToolCallsForward(nil, s.executeWithPursuitReservation(plan, request, 1), 1)
 			}
 		} else {
 			plan.ExecutionResult = frameworkEvidenceBlockedExecution(plan, preflight)
@@ -856,7 +856,8 @@ func (s *service) runOperation(request IntakeRequest) (*CompletionPlan, error) {
 			plan.ModelDecision = retryDecision
 			plan.Events = append(plan.Events, event("routing", "fallback model route evaluated after validation failure"))
 		}
-		plan.ExecutionResult = s.executeWithPursuitReservation(plan, request, 2)
+		firstAttempt := plan.ExecutionResult
+		plan.ExecutionResult = carryMCPToolCallsForward(firstAttempt, s.executeWithPursuitReservation(plan, request, 2), 2)
 		setExecutionStepStatus(plan)
 		plan.RetryPolicy.CurrentAttempt = 2
 		plan.ValidationResult = validatePlan(plan, 2)
@@ -1738,6 +1739,26 @@ func (s *service) storeLessons(plan *CompletionPlan) []string {
 	return stored
 }
 
+// carryMCPToolCallsForward keeps the read-only MCP calls an earlier attempt
+// already made. A retry replaces the execution result outright, and those calls
+// did happen: dropping them leaves the audit claiming the conversation corpus
+// was never read on a run where it was. Each call is stamped with the attempt
+// it belongs to so a carried trace is not mistaken for part of the retry.
+func carryMCPToolCallsForward(previous, result *ExecutionResult, attempt int) *ExecutionResult {
+	if result == nil {
+		return result
+	}
+	for index := range result.MCPToolCalls {
+		result.MCPToolCalls[index].Attempt = attempt
+	}
+	if previous == nil || len(previous.MCPToolCalls) == 0 {
+		return result
+	}
+	carried := append([]MCPToolCallTrace(nil), previous.MCPToolCalls...)
+	result.MCPToolCalls = append(carried, result.MCPToolCalls...)
+	return result
+}
+
 func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeRequest) *ExecutionResult {
 	started := time.Now().UTC()
 	result := &ExecutionResult{
@@ -1939,7 +1960,7 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 		if loop.Status != "skipped" {
 			plan.Events = append(plan.Events, event("mcp-tool-loop", loop.Status+": "+loop.Detail))
 		}
-		if loop.Status == "completed" && strings.TrimSpace(loop.Answer) != "" {
+		if (loop.Status == "completed" || loop.Status == "degraded") && strings.TrimSpace(loop.Answer) != "" {
 			draft = loop.Answer
 			if loop.Generation != nil {
 				generation := *loop.Generation
@@ -1947,7 +1968,7 @@ func (s *service) executeAllowedSteps(plan *CompletionPlan, request IntakeReques
 				result.LLMGeneration = &generation
 			}
 			result.Actions = append(result.Actions, executedAction("llm.generate", "completed", plan.ModelDecision.SelectedModelID, loop.Detail, generateStarted))
-			plan.Events = append(plan.Events, event("llm", "model-directed MCP loop completed generation: "+loop.Detail))
+			plan.Events = append(plan.Events, event("llm", "model-directed MCP loop produced generation: "+loop.Detail))
 		} else {
 			generationRequest.Context = generationContext(plan)
 			if result.ToolExecution != nil {

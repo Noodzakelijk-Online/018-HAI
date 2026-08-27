@@ -731,6 +731,13 @@ export class TaskBlueprintComponent implements OnInit {
     return tool?.launchEventId ? `automation-launch://${tool.launchEventId}` : '';
   }
 
+  mcpToolCallLabel(call: IMcpToolCallTrace): string {
+    if (!call.attempt || call.attempt <= 1) {
+      return `${call.round}. ${call.tool}`;
+    }
+    return `attempt ${call.attempt}, ${call.round}. ${call.tool}`;
+  }
+
   mcpToolCallArguments(call: IMcpToolCallTrace): string {
     if (call.arguments === undefined || call.arguments === null) {
       return 'no arguments';

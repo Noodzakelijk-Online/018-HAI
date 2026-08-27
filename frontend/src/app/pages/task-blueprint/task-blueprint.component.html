@@ -1066,7 +1066,7 @@
               [title]="mcpToolCallTitle(call)"
             >
               <span class="mcp-trace-detail">
-                <strong>{{ call.round }}. {{ call.tool }}</strong>
+                <strong>{{ mcpToolCallLabel(call) }}</strong>
                 <code>{{ mcpToolCallArguments(call) }}</code>
               </span>
               <span class="mcp-trace-status" [class.mcp-trace-status--failed]="call.status !== 'completed'">

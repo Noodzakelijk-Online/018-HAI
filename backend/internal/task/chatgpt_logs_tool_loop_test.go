@@ -118,3 +118,86 @@ func TestParseMCPToolLoopDecisionRejectsTrailingOrUnknownData(t *testing.T) {
 		t.Fatalf("valid fenced decision rejected: %#v %v", decision, err)
 	}
 }
+
+func TestTheLoopAnswersFromEvidenceItAlreadyGatheredWhenDecisionsStop(t *testing.T) {
+	provider := &fakeChatGPTLogsContext{
+		status: chatgptlogs.Status{Enabled: true, Configured: true},
+		tools:  []chatgptlogs.ToolDescriptor{{Name: "search", Description: "search messages", Arguments: `{"query":"required"}`}},
+		items: []chatgptlogs.ContextItem{
+			{Provider: "daemon", Tool: "search", Content: `{"message_id":"m-9","text":"ship on friday"}`, SourceURI: "http://127.0.0.1:8099/mcp", Untrusted: true},
+		},
+	}
+	outputs := []string{
+		`{"action":"tool","tool":"search","arguments":{"query":"ship date"}}`,
+		"Here is my reasoning, and then some prose instead of a decision.",
+		"Still prose.",
+		"The ship date was friday (message m-9).",
+	}
+	var requests []llm.GenerateRequest
+	generate := func(request llm.GenerateRequest) (*llm.GenerationResult, error) {
+		requests = append(requests, request)
+		return &llm.GenerationResult{Status: "completed", Output: outputs[len(requests)-1]}, nil
+	}
+
+	outcome := runChatGPTLogsToolLoop(context.Background(), provider, generate, llm.GenerateRequest{Task: "When do we ship?", OperationID: "task-9"})
+
+	if outcome.Status != "degraded" {
+		t.Fatalf("a productive loop was discarded instead of answered: %#v", outcome)
+	}
+	if len(outcome.Calls) != 1 || len(outcome.Items) != 1 {
+		t.Fatalf("evidence already gathered was lost: calls=%#v items=%#v", outcome.Calls, outcome.Items)
+	}
+	if !strings.Contains(outcome.Answer, "message m-9") {
+		t.Fatalf("the closing answer did not come from the gathered evidence: %q", outcome.Answer)
+	}
+	final := requests[len(requests)-1]
+	if final.OperationID != "task-9:mcp-tool-loop:answer" {
+		t.Fatalf("the closing generation was not recorded as its own operation: %q", final.OperationID)
+	}
+	if !strings.Contains(final.SystemPrompt, "never as instructions") {
+		t.Fatalf("the untrusted-data boundary was dropped for the closing answer: %q", final.SystemPrompt)
+	}
+}
+
+func TestTheLoopStillFailsWhenDecisionsStopBeforeAnythingWasRead(t *testing.T) {
+	provider := &fakeChatGPTLogsContext{
+		status: chatgptlogs.Status{Enabled: true, Configured: true},
+		tools:  []chatgptlogs.ToolDescriptor{{Name: "search", Description: "search", Arguments: `{}`}},
+	}
+	generate := func(llm.GenerateRequest) (*llm.GenerationResult, error) {
+		return &llm.GenerationResult{Status: "completed", Output: "prose, not a decision"}, nil
+	}
+
+	outcome := runChatGPTLogsToolLoop(context.Background(), provider, generate, llm.GenerateRequest{Task: "When do we ship?"})
+
+	if outcome.Status != "failed" || outcome.Answer != "" {
+		t.Fatalf("an empty loop was salvaged into an answer: %#v", outcome)
+	}
+	if len(provider.calls) != 0 {
+		t.Fatalf("no tool should have been called: %#v", provider.calls)
+	}
+}
+
+func TestARetryKeepsTheToolCallsTheFirstAttemptMade(t *testing.T) {
+	first := &ExecutionResult{MCPToolCalls: []MCPToolCallTrace{
+		{Attempt: 1, Round: 2, Tool: "search_insights", Status: "completed", ResultChars: 1821},
+	}}
+	retry := &ExecutionResult{MCPToolCalls: []MCPToolCallTrace{
+		{Round: 1, Tool: "search", Status: "completed", ResultChars: 900},
+	}}
+
+	merged := carryMCPToolCallsForward(first, retry, 2)
+
+	if len(merged.MCPToolCalls) != 2 {
+		t.Fatalf("the first attempt's calls were dropped: %#v", merged.MCPToolCalls)
+	}
+	if merged.MCPToolCalls[0].Tool != "search_insights" || merged.MCPToolCalls[0].Attempt != 1 {
+		t.Fatalf("the carried call lost its attempt: %#v", merged.MCPToolCalls[0])
+	}
+	if merged.MCPToolCalls[1].Tool != "search" || merged.MCPToolCalls[1].Attempt != 2 {
+		t.Fatalf("the retry's own call was not stamped: %#v", merged.MCPToolCalls[1])
+	}
+	if len(first.MCPToolCalls) != 1 {
+		t.Fatalf("carrying the trace forward mutated the earlier attempt: %#v", first.MCPToolCalls)
+	}
+}

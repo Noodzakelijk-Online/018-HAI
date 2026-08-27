@@ -162,6 +162,7 @@ export interface IExecutedAction {
 
 /** One read-only MCP call the model asked for during the bounded tool loop. */
 export interface IMcpToolCallTrace {
+  attempt?: number;
   round: number;
   tool: string;
   arguments?: unknown;
