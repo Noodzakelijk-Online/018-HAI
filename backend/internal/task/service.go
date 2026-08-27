@@ -839,7 +839,7 @@ func (s *service) runOperation(request IntakeRequest) (*CompletionPlan, error) {
 		plan.Events = append(plan.Events, event("validation", "execution result verified against success criteria"))
 		plan.StoredMemoryIDs = s.storeLessons(plan)
 		setMemoryStepStatus(plan)
-	} else if plan.RetryPolicy.RetryAvailable {
+	} else if plan.RetryPolicy.RetryAvailable && retryCouldChangeTheOutcome(plan.ExecutionResult) {
 		plan.Events = append(plan.Events, event("retry", "validation failed; retrying with fallback model route"))
 		failed := false
 		routeRequest := llm.RouteRequest{
@@ -881,7 +881,12 @@ func (s *service) runOperation(request IntakeRequest) (*CompletionPlan, error) {
 		}
 	} else {
 		plan.CompletionStatus = "review_required"
-		if err := s.attachReviewItem(plan, "validation failed after available attempts", "medium", request); err != nil {
+		reason := "validation failed after available attempts"
+		if plan.RetryPolicy.RetryAvailable && !retryCouldChangeTheOutcome(plan.ExecutionResult) {
+			reason = "every claim rests on a source HAI does not vouch for; a retry would reach the same review"
+			plan.Events = append(plan.Events, event("retry", reason))
+		}
+		if err := s.attachReviewItem(plan, reason, "medium", request); err != nil {
 			return nil, err
 		}
 	}
@@ -1633,6 +1638,26 @@ func firstApprovalBindingDigest(
 		return ""
 	}
 	return strings.TrimSpace(decision.ApprovalBindingDigest)
+}
+
+// retryCouldChangeTheOutcome asks whether a second attempt has anything new to
+// offer.
+//
+// A retry swaps the model. That helps when the answer was wrong, thin, or
+// unparseable. It cannot help when every claim was covered by a source HAI
+// declines to vouch for: the verdict is a property of the evidence, not of the
+// model that read it. Retrying there burns a second run to arrive at the same
+// review, so the plan goes to review directly instead.
+func retryCouldChangeTheOutcome(result *ExecutionResult) bool {
+	if result == nil || len(result.Claims) == 0 {
+		return true
+	}
+	for _, claim := range result.Claims {
+		if claim.SupportExplanation != verification.ExplanationUntrustedProvenance {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *service) addLog(plan CompletionPlan) error {
