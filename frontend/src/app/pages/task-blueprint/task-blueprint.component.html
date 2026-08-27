@@ -1073,6 +1073,11 @@
                 {{ call.status }}
                 <small>{{ mcpToolCallResultLabel(call) }}</small>
               </span>
+              <details class="mcp-trace-result" *ngIf="mcpToolCallResult(call) as result">
+                <summary>Show what {{ call.tool }} returned — untrusted data</summary>
+                <small>{{ result.sourceUri }}</small>
+                <pre>{{ mcpToolCallResultText(call) }}</pre>
+              </details>
             </li>
           </ol>
         </article>

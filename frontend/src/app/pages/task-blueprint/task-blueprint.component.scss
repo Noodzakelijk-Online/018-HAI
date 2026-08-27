@@ -1008,8 +1008,13 @@ textarea {
 
 .mcp-trace-note {
   margin: 0 0 8px;
-  color: var(--muted);
   font-size: 12px;
+}
+
+.mcp-trace-note,
+.mcp-trace-result summary,
+.mcp-trace-result summary {
+  cursor: pointer;
 }
 
 .mcp-trace-list {
@@ -1018,6 +1023,19 @@ textarea {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.mcp-trace-result {
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+
+.mcp-trace-result pre {
+  max-height: 260px;
+  margin: 6px 0 0;
+  padding: 8px;
+  overflow: auto;
+  white-space: pre-wrap;
 }
 
 .mcp-trace-row {
@@ -1037,7 +1055,8 @@ textarea {
   min-width: 0;
 }
 
-.mcp-trace-detail code {
+.mcp-trace-detail code,
+.mcp-trace-result pre {
   padding: 3px 6px;
   overflow-wrap: anywhere;
   color: var(--text);
@@ -1052,10 +1071,6 @@ textarea {
   justify-items: end;
   color: var(--green);
   font-size: 12px;
-}
-
-.mcp-trace-status small {
-  color: var(--muted);
 }
 
 .mcp-trace-status--failed {
@@ -1116,13 +1131,6 @@ textarea {
   padding-left: 18px;
   color: var(--muted);
   font-size: 12px;
-}
-
-.criteria-list {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding-left: 18px;
 }
 
 .review-row {

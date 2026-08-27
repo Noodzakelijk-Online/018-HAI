@@ -35,10 +35,22 @@ export interface IIntakeAnalysis {
   reason: string;
 }
 
+/** One bounded read-only result the model pulled from conversation history. */
+export interface IChatGPTLogsContextItem {
+  provider: string;
+  tool: string;
+  query: string;
+  projectKey?: string;
+  content: string;
+  sourceUri: string;
+  untrusted: boolean;
+}
+
 export interface IContextPlan {
   strategy: string[];
   usedContext: IRankedMemory[];
   sourceContext: IRankedExtraction[];
+  chatgptLogsContext?: IChatGPTLogsContextItem[];
   ragflowCandidates?: IRAGFlowCandidateContext[];
   ragflowExplanation?: string;
   sourceRefresh?: IScheduledSyncRun;
