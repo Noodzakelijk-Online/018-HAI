@@ -341,4 +341,39 @@ describe('TaskBlueprintComponent pursuit context', () => {
 
     expect(component.inspectorMode).toBe('plan');
   });
+
+  it('describes an MCP tool call by what it asked for and what came back', () => {
+    const { component } = createComponent();
+    const call = {
+      round: 1,
+      tool: 'search_insights',
+      arguments: { query: '018-HAI', limit: 20 },
+      status: 'completed',
+      resultChars: 1821,
+      sourceUri: 'mcp://chatgpt-logs/search_insights',
+      detail: 'bounded read-only MCP result returned as untrusted data',
+      startedAt: '2026-08-26T17:21:00Z',
+      completedAt: '2026-08-26T17:21:02Z',
+    };
+
+    expect(component.mcpToolCallArguments(call)).toBe('{"query":"018-HAI","limit":20}');
+    expect(component.mcpToolCallResultLabel(call)).toBe('1821 chars returned');
+    expect(component.mcpToolCallTitle(call)).toContain('mcp://chatgpt-logs/search_insights');
+  });
+
+  it('shows why a failed MCP tool call failed instead of a result size', () => {
+    const { component } = createComponent();
+    const call = {
+      round: 2,
+      tool: 'search_passages',
+      status: 'rejected',
+      resultChars: 0,
+      detail: 'query is required',
+      startedAt: '2026-08-26T17:21:03Z',
+      completedAt: '2026-08-26T17:21:03Z',
+    };
+
+    expect(component.mcpToolCallArguments(call)).toBe('no arguments');
+    expect(component.mcpToolCallResultLabel(call)).toBe('query is required');
+  });
 });

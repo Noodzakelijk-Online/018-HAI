@@ -7,6 +7,7 @@ import { timeout } from 'rxjs/operators';
 import {
   ICompletionPlan,
 	IApprovedReviewReconciliationResult,
+  IMcpToolCallTrace,
   IReviewQueueItem,
   IToolExecutionResult,
   IValidationCriterionResult,
@@ -728,6 +729,32 @@ export class TaskBlueprintComponent implements OnInit {
 
   toolRuntimeEvidenceUri(tool?: IToolExecutionResult): string {
     return tool?.launchEventId ? `automation-launch://${tool.launchEventId}` : '';
+  }
+
+  mcpToolCallArguments(call: IMcpToolCallTrace): string {
+    if (call.arguments === undefined || call.arguments === null) {
+      return 'no arguments';
+    }
+    try {
+      return JSON.stringify(call.arguments);
+    } catch {
+      return 'arguments could not be displayed';
+    }
+  }
+
+  mcpToolCallResultLabel(call: IMcpToolCallTrace): string {
+    if (call.status !== 'completed') {
+      return call.detail || call.status;
+    }
+    return `${call.resultChars} chars returned`;
+  }
+
+  mcpToolCallTitle(call: IMcpToolCallTrace): string {
+    const parts = [call.detail || call.status];
+    if (call.sourceUri) {
+      parts.push(call.sourceUri);
+    }
+    return parts.join(' · ');
   }
 
   toolRuntimeEvidenceLabel(tool?: IToolExecutionResult): string {
