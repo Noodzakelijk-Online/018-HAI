@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -133,7 +134,7 @@ func (s *service) Status() Status {
 			"per-call argument, result, model-round, tool-call, and aggregate context limits",
 			"retrieved text is untrusted context and never grants execution authority",
 		},
-		Scope: "Opt-in local chatgpt-codex-mcp-daemon retrieval. The model may choose among nine statically reviewed read-only tools; HAI validates every call and supplies bounded results as untrusted task context.",
+		Scope: "Opt-in local chatgpt-codex-mcp-daemon retrieval. The model may choose among eleven statically reviewed read-only tools; HAI validates every call and supplies bounded results as untrusted task context.",
 	}
 	if s.baseURL != nil {
 		status.Endpoint = s.baseURL.String()
@@ -391,6 +392,8 @@ func truncateRunes(value string, limit int) string {
 var reviewedTools = []ToolDescriptor{
 	{Name: "list_sources", Description: "Inspect corpus sources, coverage, freshness, and available filter dimensions.", Arguments: `{}`},
 	{Name: "list_conversations", Description: "List matching conversations or Codex sessions, newest first, without message text.", Arguments: `{"platform?":"codex|chatgpt|chatgpt_work","project?":"substring","repository?":"substring","machine?":"substring","title_contains?":"substring","updated_since?":"ISO date","updated_before?":"ISO date","status?":"synced|stale|never|syncing|failed","scope?":"managed|history","with_messages_only?":true,"limit?":1-20,"offset?":0+}`},
+	{Name: "search_insights", Description: "Recall which past conversation covered something, using generated summaries, decisions, goals and open questions. Try this before full-text search when the question is which conversation rather than what was said.", Arguments: `{"query":"required","platform?":"codex|chatgpt|chatgpt_work","project?":"substring","repository?":"substring","machine?":"substring","conversation_id?":"id","updated_since?":"ISO date","updated_before?":"ISO date","freshness?":"any|fresh|stale","mode?":"hybrid|semantic|keyword","min_similarity?":0.0-1.0,"limit?":1-20,"offset?":0+}`},
+	{Name: "search_passages", Description: "Recall the wording of what was actually said, as passages of a conversation with the message range they cover. Follow up with get_context or get_conversation to read around a passage.", Arguments: `{"query":"required","platform?":"codex|chatgpt|chatgpt_work","project?":"substring","repository?":"substring","machine?":"substring","conversation_id?":"id","updated_since?":"ISO date","updated_before?":"ISO date","mode?":"hybrid|semantic|keyword","min_similarity?":0.0-1.0,"per_conversation?":1-20,"text_chars?":200-4000,"limit?":1-20,"offset?":0+}`},
 	{Name: "search", Description: "Search message text. Use filters and recent ordering when asking for the latest instruction.", Arguments: `{"query":"required","platform?":"codex|chatgpt|chatgpt_work","project?":"substring","repository?":"substring","machine?":"substring","conversation_id?":"id","roles?":["user","assistant"],"since?":"ISO date","until?":"ISO date","order?":"rank|recent","limit?":1-20,"offset?":0+}`},
 	{Name: "get_conversation", Description: "Read a bounded page of one conversation after discovering its conversation_id.", Arguments: `{"conversation_id":"required id","roles?":["user","assistant"],"branches?":false,"include_boilerplate?":false,"limit?":1-20,"offset?":0}`},
 	{Name: "get_context", Description: "Read messages around one search hit using its message_id.", Arguments: `{"message_id":"required id","before?":0-20,"after?":0-20,"roles?":["user","assistant"]}`},
@@ -410,6 +413,12 @@ var reviewedToolRules = map[string]argumentRule{
 	"list_conversations": {allowed: map[string]string{
 		"limit": "int", "offset": "int", "source": "string", "platform": "platform", "project": "string", "repository": "string", "machine": "string", "title_contains": "string", "updated_since": "string", "updated_before": "string", "status": "status", "scope": "scope", "with_messages_only": "bool", "max_chars": "int",
 	}},
+	"search_insights": {allowed: map[string]string{
+		"query": "query", "limit": "int", "offset": "int", "source": "string", "platform": "platform", "project": "string", "repository": "string", "machine": "string", "conversation_id": "id", "updated_since": "string", "updated_before": "string", "freshness": "freshness", "mode": "mode", "min_similarity": "ratio", "max_chars": "int",
+	}, required: []string{"query"}},
+	"search_passages": {allowed: map[string]string{
+		"query": "query", "limit": "int", "offset": "int", "source": "string", "platform": "platform", "project": "string", "repository": "string", "machine": "string", "conversation_id": "id", "updated_since": "string", "updated_before": "string", "mode": "mode", "min_similarity": "ratio", "per_conversation": "int", "text_chars": "int", "max_chars": "int",
+	}, required: []string{"query"}},
 	"search": {allowed: map[string]string{
 		"query": "query", "limit": "int", "offset": "int", "source": "string", "platform": "platform", "project": "string", "repository": "string", "machine": "string", "conversation_id": "id", "roles": "roles", "since": "string", "until": "string", "include_boilerplate": "bool", "order": "order", "rank_pool": "int", "max_chars": "int",
 	}, required: []string{"query"}},
@@ -473,7 +482,7 @@ func normalizeArguments(tool string, raw json.RawMessage) (map[string]any, error
 
 func normalizeArgumentValue(key, kind string, value any) (any, error) {
 	switch kind {
-	case "query", "string", "platform", "status", "scope", "order":
+	case "query", "string", "platform", "status", "scope", "order", "freshness", "mode":
 		text, ok := value.(string)
 		text = strings.TrimSpace(text)
 		limit := 500
@@ -484,10 +493,12 @@ func normalizeArgumentValue(key, kind string, value any) (any, error) {
 			return nil, ErrInvalidRequest
 		}
 		allowed := map[string][]string{
-			"platform": {"codex", "chatgpt", "chatgpt_work"},
-			"status":   {"synced", "stale", "never", "syncing", "failed"},
-			"scope":    {"managed", "history"},
-			"order":    {"rank", "recent"},
+			"platform":  {"codex", "chatgpt", "chatgpt_work"},
+			"status":    {"synced", "stale", "never", "syncing", "failed"},
+			"scope":     {"managed", "history"},
+			"order":     {"rank", "recent"},
+			"freshness": {"any", "fresh", "stale"},
+			"mode":      {"hybrid", "semantic", "keyword"},
 		}
 		if choices := allowed[kind]; len(choices) > 0 && !containsString(choices, text) {
 			return nil, ErrInvalidRequest
@@ -510,6 +521,16 @@ func normalizeArgumentValue(key, kind string, value any) (any, error) {
 		default:
 			return nil, ErrInvalidRequest
 		}
+	case "ratio":
+		number, ok := value.(json.Number)
+		if !ok {
+			return nil, ErrInvalidRequest
+		}
+		parsed, err := number.Float64()
+		if err != nil || math.IsNaN(parsed) || parsed < 0 || parsed > 1 {
+			return nil, ErrInvalidRequest
+		}
+		return parsed, nil
 	case "int":
 		number, ok := value.(json.Number)
 		if !ok {
@@ -528,6 +549,16 @@ func normalizeArgumentValue(key, kind string, value any) (any, error) {
 			}
 		case "before", "after", "runs", "pending", "failures", "artifacts", "top_projects":
 			maximum = 20
+		case "per_conversation":
+			maximum = 20
+			if parsed < 1 {
+				parsed = 1
+			}
+		case "text_chars":
+			maximum = 4000
+			if parsed < 200 {
+				parsed = 200
+			}
 		case "rank_pool":
 			maximum = 500
 		case "max_text_chars":

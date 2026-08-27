@@ -119,6 +119,8 @@ func TestNormalizeArgumentsAllowsReviewedToolsAndClampsBudgets(t *testing.T) {
 		{"list_sources", `{}`},
 		{"list_conversations", `{"platform":"codex","project":"018-HAI","limit":200}`},
 		{"search", `{"query":"unfinished commitment","roles":["user","assistant"],"order":"recent"}`},
+		{"search_insights", `{"query":"where did we leave off","platform":"codex","freshness":"stale","mode":"semantic","min_similarity":0.4,"limit":200,"max_chars":900000}`},
+		{"search_passages", `{"query":"what did we say about the tunnel","mode":"keyword","min_similarity":0,"per_conversation":200,"text_chars":100000,"limit":200,"offset":5}`},
 		{"get_conversation", `{"conversation_id":42,"limit":100}`},
 		{"get_context", `{"message_id":"message-1","before":50,"after":50}`},
 		{"get_message", `{"message_id":99}`},
@@ -135,7 +137,7 @@ func TestNormalizeArgumentsAllowsReviewedToolsAndClampsBudgets(t *testing.T) {
 			if arguments["max_chars"] != maxToolTextRunes {
 				t.Fatalf("max_chars = %#v", arguments["max_chars"])
 			}
-			for _, key := range []string{"limit", "before", "after", "artifacts", "runs", "pending", "failures", "top_projects"} {
+			for _, key := range []string{"limit", "before", "after", "artifacts", "runs", "pending", "failures", "top_projects", "per_conversation"} {
 				if value, exists := arguments[key]; exists && value.(int64) > 20 {
 					t.Fatalf("%s escaped clamp: %#v", key, value)
 				}
@@ -155,6 +157,51 @@ func TestNormalizeArgumentsRejectsUnknownToolsFieldsAndMissingIdentifiers(t *tes
 		if _, err := normalizeArguments(test.Tool, test.Arguments); !errors.Is(err, ErrInvalidRequest) {
 			t.Fatalf("normalizeArguments(%#v) error = %v", test, err)
 		}
+	}
+}
+
+func TestRecallToolsStayBoundedAndReadOnly(t *testing.T) {
+	insights, err := normalizeArguments("search_insights", json.RawMessage(`{"query":"018-HAI","min_similarity":0.4,"limit":200}`))
+	if err != nil {
+		t.Fatalf("search_insights error = %v", err)
+	}
+	if insights["min_similarity"] != 0.4 || insights["limit"].(int64) != 20 || insights["max_chars"] != maxToolTextRunes {
+		t.Fatalf("search_insights arguments = %#v", insights)
+	}
+
+	passages, err := normalizeArguments("search_passages", json.RawMessage(`{"query":"018-HAI","per_conversation":0,"text_chars":10,"offset":3}`))
+	if err != nil {
+		t.Fatalf("search_passages error = %v", err)
+	}
+	if passages["per_conversation"].(int64) != 1 || passages["text_chars"].(int64) != 200 || passages["offset"].(int64) != 3 || passages["max_chars"] != maxToolTextRunes {
+		t.Fatalf("search_passages arguments = %#v", passages)
+	}
+
+	for _, test := range []CallRequest{
+		{Tool: "search_insights", Arguments: json.RawMessage(`{}`)},
+		{Tool: "search_passages", Arguments: json.RawMessage(`{}`)},
+		{Tool: "search_insights", Arguments: json.RawMessage(`{"query":"ok","command":"rm -rf /"}`)},
+		{Tool: "search_passages", Arguments: json.RawMessage(`{"query":"ok","path":"/etc/passwd"}`)},
+		{Tool: "search_insights", Arguments: json.RawMessage(`{"query":"ok","freshness":"whatever"}`)},
+		{Tool: "search_insights", Arguments: json.RawMessage(`{"query":"ok","mode":"sql"}`)},
+		{Tool: "search_passages", Arguments: json.RawMessage(`{"query":"ok","min_similarity":1.5}`)},
+		{Tool: "search_passages", Arguments: json.RawMessage(`{"query":"ok","min_similarity":"0.5"}`)},
+		{Tool: "search_insights", Arguments: json.RawMessage(`{"query":""}`)},
+	} {
+		if _, err := normalizeArguments(test.Tool, test.Arguments); !errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("normalizeArguments(%s, %s) error = %v", test.Tool, test.Arguments, err)
+		}
+	}
+
+	names := map[string]bool{}
+	for _, descriptor := range (&service{}).Tools() {
+		names[descriptor.Name] = true
+		if _, reviewed := reviewedToolRules[descriptor.Name]; !reviewed {
+			t.Fatalf("descriptor %q has no argument rule", descriptor.Name)
+		}
+	}
+	if !names["search_insights"] || !names["search_passages"] || len(names) != len(reviewedToolRules) {
+		t.Fatalf("reviewed descriptors and rules are out of sync: %#v", names)
 	}
 }
 

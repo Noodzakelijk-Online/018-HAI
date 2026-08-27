@@ -470,7 +470,8 @@ var playwrightReadOnlyContextTools = map[string]struct{}{
 
 var chatgptLogsReadOnlyContextTools = map[string]struct{}{
 	"get_context": {}, "get_conversation": {}, "get_message": {}, "get_raw": {},
-	"list_conversations": {}, "list_sources": {}, "search": {}, "stats": {}, "sync_status": {},
+	"list_conversations": {}, "list_sources": {}, "search": {}, "search_insights": {},
+	"search_passages": {}, "stats": {}, "sync_status": {},
 }
 
 func readOnlyToolContract(catalogID string) (map[string]struct{}, string, bool) {

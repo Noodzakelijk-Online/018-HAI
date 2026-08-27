@@ -259,3 +259,18 @@ func TestToolAllowlistChecksNamesBeyondDisplayLimit(t *testing.T) {
 		t.Fatalf("tail violation = %#v", violations)
 	}
 }
+
+func TestChatGPTLogsAllowlistCoversRecallToolsAndStillBlocksUnreviewedNames(t *testing.T) {
+	declared := []string{
+		"get_context", "get_conversation", "get_message", "get_raw", "list_conversations",
+		"list_sources", "search", "search_insights", "search_passages", "stats", "sync_status",
+	}
+	if violations := readOnlyToolNameViolations(declared, chatgptLogsReadOnlyContextTools); len(violations) != 0 {
+		t.Fatalf("current MemoryLayerMCP inventory must pass the reviewed allowlist: %#v", violations)
+	}
+	for _, unreviewed := range []string{"delete_conversation", "write_note", "run_command", "search_insight"} {
+		if violations := readOnlyToolNameViolations([]string{unreviewed}, chatgptLogsReadOnlyContextTools); len(violations) != 1 {
+			t.Fatalf("%q must stay blocked, violations = %#v", unreviewed, violations)
+		}
+	}
+}
