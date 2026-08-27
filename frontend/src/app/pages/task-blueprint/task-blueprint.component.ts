@@ -78,7 +78,12 @@ export class TaskBlueprintComponent implements OnInit {
   crewProposalLoading = false;
   themeMode: ThemeMode = 'light';
   private readonly loadTimeoutMs = 6000;
+  // Enough for a call that only reads or drafts.
   private readonly operationTimeoutMs = 20000;
+  // A run drives a model through a bounded MCP tool loop, which takes minutes.
+  // Giving up after twenty seconds reported failure for work the backend went
+  // on to finish, so this matches the gateway's own ceiling instead.
+  private readonly executionTimeoutMs = 900000;
 
   chatMessages: ChatMessage[] = [
     {
@@ -336,7 +341,7 @@ export class TaskBlueprintComponent implements OnInit {
       runCycle: intent === 'cycle',
     };
 
-    this.assistantCommandService.command(request).pipe(timeout(this.operationTimeoutMs)).subscribe({
+    this.assistantCommandService.command(request).pipe(timeout(this.executionTimeoutMs)).subscribe({
       next: (command) => {
         this.lastCommand = command;
         if (command.plan) {
@@ -428,7 +433,7 @@ export class TaskBlueprintComponent implements OnInit {
 			note,
 			confirmation,
       })
-      .pipe(timeout(this.operationTimeoutMs))
+      .pipe(timeout(this.executionTimeoutMs))
       .subscribe({
         next: (result) => {
           this.resolvingReviewId = '';
