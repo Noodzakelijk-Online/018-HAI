@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPreflightUsesHandshakeAndNeverCallsTool(t *testing.T) {
@@ -272,5 +273,61 @@ func TestChatGPTLogsAllowlistCoversRecallToolsAndStillBlocksUnreviewedNames(t *t
 		if violations := readOnlyToolNameViolations([]string{unreviewed}, chatgptLogsReadOnlyContextTools); len(violations) != 1 {
 			t.Fatalf("%q must stay blocked, violations = %#v", unreviewed, violations)
 		}
+	}
+}
+
+func TestPreflightPresentsTheTokenItsListenerAsksFor(t *testing.T) {
+	var seen []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Get("Authorization"))
+		w.Header().Set("Mcp-Session-Id", "s-1")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","tools":[{"name":"stats"}]}}`))
+	}))
+	defer server.Close()
+
+	servers := withBearerTokens(
+		[]Server{{ID: "chatgpt-logs", CatalogID: "chatgpt-codex-mcp-daemon", URL: server.URL}},
+		"chatgpt-logs=t0ken-abc",
+	)
+	service := NewService(Config{Enabled: true, Servers: servers, Timeout: 5 * time.Second})
+	if _, ok := service.Preflight(context.Background(), "chatgpt-logs"); !ok {
+		t.Fatal("preflight did not run")
+	}
+
+	if len(seen) == 0 {
+		t.Fatal("the listener was never reached")
+	}
+	for index, header := range seen {
+		if header != "Bearer t0ken-abc" {
+			t.Fatalf("request %d presented %q", index, header)
+		}
+	}
+}
+
+func TestPreflightNeverPutsATokenInWhatItReports(t *testing.T) {
+	servers := withBearerTokens(
+		[]Server{{ID: "chatgpt-logs", URL: "http://127.0.0.1:8101/mcp"}},
+		"chatgpt-logs=t0ken-abc",
+	)
+	service := NewService(Config{Enabled: true, Servers: servers, Timeout: time.Second})
+
+	encoded, err := json.Marshal(service.Overview())
+	if err != nil {
+		t.Fatalf("encode overview: %v", err)
+	}
+	if strings.Contains(string(encoded), "t0ken-abc") {
+		t.Fatalf("the overview leaked the bearer token: %s", encoded)
+	}
+}
+
+func TestAnUnusableTokenIsNotSentAsAHeader(t *testing.T) {
+	for _, token := range []string{"", "has space", "line\r\nX-Injected: 1"} {
+		if safeBearerToken(token) {
+			t.Fatalf("token %q would have been sent", token)
+		}
+	}
+	if !safeBearerToken("t0ken-abc") {
+		t.Fatal("a plain token was refused")
 	}
 }

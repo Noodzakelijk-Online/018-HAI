@@ -30,6 +30,7 @@ import (
 
 const (
 	serversEnv       = "HAI_MCP_PREFLIGHT_SERVERS"
+	tokensEnv        = "HAI_MCP_PREFLIGHT_TOKENS"
 	enabledEnv       = "HAI_MCP_PREFLIGHT_ENABLED"
 	timeoutEnv       = "HAI_MCP_PREFLIGHT_TIMEOUT_SECONDS"
 	protocolVersion  = "2025-06-18"
@@ -54,6 +55,9 @@ type Server struct {
 	ID        string `json:"id"`
 	CatalogID string `json:"catalogId"`
 	URL       string `json:"url"`
+	// BearerToken is never serialized. A preflight result is shown in the UI and
+	// written to the audit trail, and the secret belongs in neither.
+	BearerToken string `json:"-"`
 }
 
 // Config controls the optional local-only preflight service.
@@ -161,7 +165,7 @@ func NewServiceFromEnv() *Service {
 	}
 	return NewService(Config{
 		Enabled: strings.EqualFold(strings.TrimSpace(os.Getenv(enabledEnv)), "true"),
-		Servers: parseServers(os.Getenv(serversEnv)),
+		Servers: withBearerTokens(parseServers(os.Getenv(serversEnv)), os.Getenv(tokensEnv)),
 		Timeout: timeout,
 	})
 }
@@ -316,6 +320,9 @@ func (s *Service) rpc(ctx context.Context, server Server, method string, id int,
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("MCP-Protocol-Version", protocolVersion)
 	req.Header.Set("User-Agent", "HAI-MCP-Preflight/1.0")
+	if safeBearerToken(server.BearerToken) {
+		req.Header.Set("Authorization", "Bearer "+server.BearerToken)
+	}
 	if sessionID != "" {
 		req.Header.Set("MCP-Session-Id", sessionID)
 	}
@@ -357,6 +364,9 @@ func (s *Service) notifyInitialized(ctx context.Context, server Server, sessionI
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("MCP-Protocol-Version", version)
 	req.Header.Set("User-Agent", "HAI-MCP-Preflight/1.0")
+	if safeBearerToken(server.BearerToken) {
+		req.Header.Set("Authorization", "Bearer "+server.BearerToken)
+	}
 	if sessionID != "" {
 		req.Header.Set("MCP-Session-Id", sessionID)
 	}
@@ -545,6 +555,44 @@ func parseServers(raw string) []Server {
 		servers = append(servers, server)
 	}
 	return servers
+}
+
+// withBearerTokens attaches the token each listener asks for, keyed by server
+// id. The tokens live in their own variable rather than inside the server list
+// so the endpoint list stays printable in logs and support output.
+//
+// Format: HAI_MCP_PREFLIGHT_TOKENS=chatgpt-logs=abc123;other-server=def456
+func withBearerTokens(servers []Server, raw string) []Server {
+	tokens := map[string]string{}
+	for _, part := range strings.Split(raw, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, token, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		tokens[strings.TrimSpace(id)] = strings.TrimSpace(token)
+	}
+	for index := range servers {
+		servers[index].BearerToken = tokens[servers[index].ID]
+	}
+	return servers
+}
+
+// safeBearerToken refuses a secret that could become header syntax rather than
+// a header value.
+func safeBearerToken(token string) bool {
+	if token == "" || len([]rune(token)) > 512 {
+		return false
+	}
+	for _, r := range token {
+		if r < 0x21 || r > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func validateConfig(config Config) string {

@@ -26,6 +26,7 @@ const (
 	enabledEnv             = "HAI_CHATGPT_LOGS_MCP_ENABLED"
 	baseURLEnv             = "HAI_CHATGPT_LOGS_MCP_URL"
 	timeoutEnv             = "HAI_CHATGPT_LOGS_MCP_TIMEOUT_SECONDS"
+	tokenEnv               = "HAI_CHATGPT_LOGS_MCP_TOKEN"
 	protocolVersion        = "2025-06-18"
 	searchTool             = "search"
 	maxQueryRunes          = 1000
@@ -83,10 +84,11 @@ type Service interface {
 }
 
 type service struct {
-	enabled   bool
-	baseURL   *url.URL
-	configErr string
-	client    *http.Client
+	enabled     bool
+	baseURL     *url.URL
+	bearerToken string
+	configErr   string
+	client      *http.Client
 }
 
 func DefaultService() Service {
@@ -101,10 +103,24 @@ func DefaultService() Service {
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 		Transport:     &http.Transport{Proxy: nil},
 	}
-	return NewService(strings.EqualFold(strings.TrimSpace(os.Getenv(enabledEnv)), "true"), os.Getenv(baseURLEnv), client)
+	return NewAuthenticatedService(
+		strings.EqualFold(strings.TrimSpace(os.Getenv(enabledEnv)), "true"),
+		os.Getenv(baseURLEnv),
+		os.Getenv(tokenEnv),
+		client,
+	)
 }
 
 func NewService(enabled bool, rawBaseURL string, client *http.Client) Service {
+	return NewAuthenticatedService(enabled, rawBaseURL, "", client)
+}
+
+// NewAuthenticatedService is NewService for a listener that asks callers to
+// identify themselves. The daemon can be started with a bearer token, and then
+// an unauthenticated HAI simply gets 401 on every call. The endpoint is still
+// required to be loopback: a token widens who may speak to the adapter, never
+// where the adapter may reach.
+func NewAuthenticatedService(enabled bool, rawBaseURL, bearerToken string, client *http.Client) Service {
 	s := &service{enabled: enabled}
 	if client == nil {
 		client = &http.Client{
@@ -116,8 +132,29 @@ func NewService(enabled bool, rawBaseURL string, client *http.Client) Service {
 	s.client = client
 	if enabled {
 		s.baseURL, s.configErr = parseLocalBaseURL(rawBaseURL)
+		if s.configErr == "" {
+			s.bearerToken, s.configErr = parseBearerToken(bearerToken)
+		}
 	}
 	return s
+}
+
+// parseBearerToken keeps a malformed secret out of the request rather than
+// letting it become part of the header syntax.
+func parseBearerToken(raw string) (string, string) {
+	token := strings.TrimSpace(raw)
+	if token == "" {
+		return "", ""
+	}
+	if len([]rune(token)) > 512 {
+		return "", "ChatGPT logs MCP bearer token is too long"
+	}
+	for _, r := range token {
+		if r < 0x21 || r > 0x7e {
+			return "", "ChatGPT logs MCP bearer token must be printable ASCII without spaces"
+		}
+	}
+	return token, ""
 }
 
 func (s *service) Status() Status {
@@ -266,6 +303,9 @@ func (s *service) rpc(ctx context.Context, session string, id int, method string
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("MCP-Protocol-Version", protocolVersion)
 	request.Header.Set("User-Agent", "HAI-ChatGPT-Logs-ReadOnly/1.0")
+	if s.bearerToken != "" {
+		request.Header.Set("Authorization", "Bearer "+s.bearerToken)
+	}
 	if session != "" {
 		request.Header.Set("MCP-Session-Id", session)
 	}

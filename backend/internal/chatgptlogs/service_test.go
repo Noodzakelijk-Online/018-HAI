@@ -208,3 +208,59 @@ func TestRecallToolsStayBoundedAndReadOnly(t *testing.T) {
 type roundTripper func(*http.Request) (*http.Response, error)
 
 func (f roundTripper) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+func TestAListenerThatAsksForATokenGetsOne(t *testing.T) {
+	var seen string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if seen == "" {
+			seen = r.Header.Get("Authorization")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{}"}]}}`))
+	}))
+	defer server.Close()
+
+	service := NewAuthenticatedService(true, server.URL+"/mcp", "t0ken-abc", server.Client())
+	if !service.Status().Configured {
+		t.Fatalf("a tokened service was not configured: %#v", service.Status())
+	}
+	_, _ = service.Call(context.Background(), CallRequest{Tool: "stats", Arguments: []byte(`{}`)})
+
+	if seen != "Bearer t0ken-abc" {
+		t.Fatalf("bearer token was not presented: %q", seen)
+	}
+}
+
+func TestNoTokenMeansNoAuthorizationHeaderAtAll(t *testing.T) {
+	requests := 0
+	present := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if _, ok := r.Header["Authorization"]; ok {
+			present = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{}"}]}}`))
+	}))
+	defer server.Close()
+
+	service := NewService(true, server.URL+"/mcp", server.Client())
+	_, _ = service.Call(context.Background(), CallRequest{Tool: "stats", Arguments: []byte(`{}`)})
+
+	if requests == 0 {
+		t.Fatal("the adapter never reached the listener")
+	}
+	if present {
+		t.Fatal("an empty token still sent an Authorization header")
+	}
+}
+
+func TestATokenThatCouldForgeHeadersIsRefusedBeforeAnyCall(t *testing.T) {
+	for _, token := range []string{"good\r\nX-Injected: 1", "has space", "wide token"} {
+		service := NewAuthenticatedService(true, "http://127.0.0.1:8099/mcp", token, nil)
+		status := service.Status()
+		if status.Configured || status.ConfigError == "" {
+			t.Fatalf("token %q was accepted: %#v", token, status)
+		}
+	}
+}
