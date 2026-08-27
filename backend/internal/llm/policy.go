@@ -1026,7 +1026,11 @@ func probeProvider(provider Provider, policy Policy) ProviderProbeResult {
 		return result
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	// A provider catalogue is still bounded, but 256 KiB is smaller than a real
+	// aggregator's model list: truncating it makes the JSON unparseable and
+	// blocks a model that the provider does in fact report. The exact-identifier
+	// requirement below is unchanged; this only lets the check see the answer.
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, providerProbeResponseLimitBytes))
 	result.HTTPStatus = resp.StatusCode
 	if resp.StatusCode >= 300 {
 		result.Status = "failed"
@@ -1108,6 +1112,10 @@ func probeOdysseusProvider(provider Provider, result ProviderProbeResult, starte
 func countProbeModels(provider Provider, raw []byte) int {
 	return len(probeModelIDs(provider, raw))
 }
+
+// providerProbeResponseLimitBytes bounds how much of a provider catalogue HAI
+// will read during a probe.
+const providerProbeResponseLimitBytes = 4 * 1024 * 1024
 
 func probeModelIDs(provider Provider, raw []byte) []string {
 	ids := []string{}
