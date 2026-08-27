@@ -27,6 +27,7 @@ const (
 	baseURLEnv             = "HAI_CHATGPT_LOGS_MCP_URL"
 	timeoutEnv             = "HAI_CHATGPT_LOGS_MCP_TIMEOUT_SECONDS"
 	tokenEnv               = "HAI_CHATGPT_LOGS_MCP_TOKEN"
+	allowRemoteEnv         = "HAI_CHATGPT_LOGS_MCP_ALLOW_REMOTE"
 	protocolVersion        = "2025-06-18"
 	searchTool             = "search"
 	maxQueryRunes          = 1000
@@ -103,24 +104,41 @@ func DefaultService() Service {
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 		Transport:     &http.Transport{Proxy: nil},
 	}
-	return NewAuthenticatedService(
-		strings.EqualFold(strings.TrimSpace(os.Getenv(enabledEnv)), "true"),
-		os.Getenv(baseURLEnv),
-		os.Getenv(tokenEnv),
-		client,
-	)
+	return NewServiceWithOptions(Options{
+		Enabled:             strings.EqualFold(strings.TrimSpace(os.Getenv(enabledEnv)), "true"),
+		BaseURL:             os.Getenv(baseURLEnv),
+		BearerToken:         os.Getenv(tokenEnv),
+		AllowRemoteEndpoint: strings.EqualFold(strings.TrimSpace(os.Getenv(allowRemoteEnv)), "true"),
+		Client:              client,
+	})
+}
+
+// Options configures the adapter. A listener may ask callers to identify
+// themselves, and it may live somewhere other than this machine; both are
+// stated here rather than inferred from the URL.
+type Options struct {
+	Enabled     bool
+	BaseURL     string
+	BearerToken string
+	// AllowRemoteEndpoint lifts the local-network restriction on BaseURL.
+	//
+	// By default the adapter may only reach this machine or its own network,
+	// which is what keeps a misconfigured URL from turning HAI into a client
+	// for an arbitrary host on the internet. Some deployments genuinely keep
+	// the corpus elsewhere, so the restriction can be lifted — but only by
+	// saying so outright, never as a side effect of writing a public URL, and
+	// only over TLS with a bearer token, because otherwise the token and every
+	// retrieved conversation cross the internet in the clear.
+	AllowRemoteEndpoint bool
+	Client              *http.Client
 }
 
 func NewService(enabled bool, rawBaseURL string, client *http.Client) Service {
-	return NewAuthenticatedService(enabled, rawBaseURL, "", client)
+	return NewServiceWithOptions(Options{Enabled: enabled, BaseURL: rawBaseURL, Client: client})
 }
 
-// NewAuthenticatedService is NewService for a listener that asks callers to
-// identify themselves. The daemon can be started with a bearer token, and then
-// an unauthenticated HAI simply gets 401 on every call. The endpoint is still
-// required to be loopback: a token widens who may speak to the adapter, never
-// where the adapter may reach.
-func NewAuthenticatedService(enabled bool, rawBaseURL, bearerToken string, client *http.Client) Service {
+func NewServiceWithOptions(options Options) Service {
+	enabled, rawBaseURL, bearerToken, client := options.Enabled, options.BaseURL, options.BearerToken, options.Client
 	s := &service{enabled: enabled}
 	if client == nil {
 		client = &http.Client{
@@ -131,12 +149,31 @@ func NewAuthenticatedService(enabled bool, rawBaseURL, bearerToken string, clien
 	}
 	s.client = client
 	if enabled {
-		s.baseURL, s.configErr = parseLocalBaseURL(rawBaseURL)
+		s.baseURL, s.configErr = parseBaseURL(rawBaseURL, options.AllowRemoteEndpoint)
 		if s.configErr == "" {
 			s.bearerToken, s.configErr = parseBearerToken(bearerToken)
 		}
+		if s.configErr == "" {
+			s.configErr = checkRemoteEndpointTerms(s.baseURL, s.bearerToken, options.AllowRemoteEndpoint)
+		}
 	}
 	return s
+}
+
+// checkRemoteEndpointTerms holds a lifted restriction to the terms that make
+// lifting it defensible: encrypted transport and a caller the listener can
+// recognise. A local listener needs neither, and is left alone.
+func checkRemoteEndpointTerms(endpoint *url.URL, bearerToken string, allowRemote bool) string {
+	if !allowRemote || endpoint == nil || isLocalEndpointHost(endpoint.Hostname()) {
+		return ""
+	}
+	if endpoint.Scheme != "https" {
+		return baseURLEnv + " must use https when " + allowRemoteEnv + " is true"
+	}
+	if bearerToken == "" {
+		return tokenEnv + " is required when " + allowRemoteEnv + " is true"
+	}
+	return ""
 }
 
 // parseBearerToken keeps a malformed secret out of the request rather than
@@ -374,17 +411,22 @@ func toolText(raw json.RawMessage) (string, error) {
 	return "", ErrInvalidRequest
 }
 
-func parseLocalBaseURL(raw string) (*url.URL, string) {
+func isLocalEndpointHost(hostname string) bool {
+	host := strings.ToLower(strings.TrimSuffix(hostname, "."))
+	if host == "localhost" || host == "host.docker.internal" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate())
+}
+
+func parseBaseURL(raw string, allowRemote bool) (*url.URL, string) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, baseURLEnv + " must be a plain local HTTP(S) MCP URL without credentials, query data, or fragments"
 	}
-	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
-	if host != "localhost" && host != "host.docker.internal" {
-		ip := net.ParseIP(host)
-		if ip == nil || (!ip.IsLoopback() && !ip.IsPrivate()) {
-			return nil, baseURLEnv + " must use localhost, host.docker.internal, or a literal local/private IP"
-		}
+	if !allowRemote && !isLocalEndpointHost(parsed.Hostname()) {
+		return nil, baseURLEnv + " must use localhost, host.docker.internal, or a literal local/private IP unless " + allowRemoteEnv + " is true"
 	}
 	if strings.TrimRight(parsed.Path, "/") == "" {
 		return nil, baseURLEnv + " must include the configured MCP path"

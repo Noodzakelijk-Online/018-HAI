@@ -147,12 +147,12 @@ func TestValidateLocalURLRejectsCredentialsAndNonLocalHosts(t *testing.T) {
 		"http://example.com/mcp",
 		"http://localhost/mcp?access_token=secret",
 	} {
-		if err := validateLocalURL(raw); err == nil {
+		if err := validateEndpointURL(Server{URL: raw}, false); err == nil {
 			t.Fatalf("%q must be rejected", raw)
 		}
 	}
 	for _, raw := range []string{"http://localhost:8080/mcp", "http://127.0.0.1:8080/mcp", "http://host.docker.internal:8080/mcp"} {
-		if err := validateLocalURL(raw); err != nil {
+		if err := validateEndpointURL(Server{URL: raw}, false); err != nil {
 			t.Fatalf("%q should be allowed: %v", raw, err)
 		}
 	}
@@ -329,5 +329,47 @@ func TestAnUnusableTokenIsNotSentAsAHeader(t *testing.T) {
 	}
 	if !safeBearerToken("t0ken-abc") {
 		t.Fatal("a plain token was refused")
+	}
+}
+
+func TestPreflightRefusesARemoteServerUntilItIsExplicitlyAllowed(t *testing.T) {
+	servers := withBearerTokens(
+		[]Server{{ID: "remote-logs", CatalogID: "chatgpt-codex-mcp-daemon", URL: "https://logs.example.com/mcp"}},
+		"remote-logs=t0ken-abc",
+	)
+
+	blocked := NewService(Config{Enabled: true, Servers: servers, Timeout: time.Second})
+	if blocked.Overview().ConfigError == "" {
+		t.Fatal("a remote server was accepted by default")
+	}
+
+	allowed := NewService(Config{Enabled: true, Servers: servers, Timeout: time.Second, AllowRemoteEndpoints: true})
+	if allowed.Overview().ConfigError != "" {
+		t.Fatalf("an explicitly allowed remote server was still refused: %q", allowed.Overview().ConfigError)
+	}
+}
+
+func TestAnAllowedRemoteServerStillNeedsTLSAndAToken(t *testing.T) {
+	plaintext := NewService(Config{
+		Enabled:              true,
+		Timeout:              time.Second,
+		AllowRemoteEndpoints: true,
+		Servers: withBearerTokens(
+			[]Server{{ID: "remote-logs", CatalogID: "chatgpt-codex-mcp-daemon", URL: "http://logs.example.com/mcp"}},
+			"remote-logs=t0ken-abc",
+		),
+	})
+	if plaintext.Overview().ConfigError == "" {
+		t.Fatal("a remote server was accepted over plaintext")
+	}
+
+	anonymous := NewService(Config{
+		Enabled:              true,
+		Timeout:              time.Second,
+		AllowRemoteEndpoints: true,
+		Servers:              []Server{{ID: "remote-logs", CatalogID: "chatgpt-codex-mcp-daemon", URL: "https://logs.example.com/mcp"}},
+	})
+	if anonymous.Overview().ConfigError == "" {
+		t.Fatal("a remote server was accepted without a token")
 	}
 }

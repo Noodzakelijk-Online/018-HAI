@@ -220,7 +220,7 @@ func TestAListenerThatAsksForATokenGetsOne(t *testing.T) {
 	}))
 	defer server.Close()
 
-	service := NewAuthenticatedService(true, server.URL+"/mcp", "t0ken-abc", server.Client())
+	service := NewServiceWithOptions(Options{Enabled: true, BaseURL: server.URL + "/mcp", BearerToken: "t0ken-abc", Client: server.Client()})
 	if !service.Status().Configured {
 		t.Fatalf("a tokened service was not configured: %#v", service.Status())
 	}
@@ -257,10 +257,59 @@ func TestNoTokenMeansNoAuthorizationHeaderAtAll(t *testing.T) {
 
 func TestATokenThatCouldForgeHeadersIsRefusedBeforeAnyCall(t *testing.T) {
 	for _, token := range []string{"good\r\nX-Injected: 1", "has space", "wide token"} {
-		service := NewAuthenticatedService(true, "http://127.0.0.1:8099/mcp", token, nil)
+		service := NewServiceWithOptions(Options{Enabled: true, BaseURL: "http://127.0.0.1:8099/mcp", BearerToken: token})
 		status := service.Status()
 		if status.Configured || status.ConfigError == "" {
 			t.Fatalf("token %q was accepted: %#v", token, status)
 		}
+	}
+}
+
+func TestAPublicEndpointIsRefusedUntilItIsExplicitlyAllowed(t *testing.T) {
+	blocked := NewService(true, "https://logs.example.com/mcp", nil)
+	if blocked.Status().Configured || !strings.Contains(blocked.Status().ConfigError, allowRemoteEnv) {
+		t.Fatalf("a public endpoint was accepted by default: %#v", blocked.Status())
+	}
+
+	allowed := NewServiceWithOptions(Options{
+		Enabled:             true,
+		BaseURL:             "https://logs.example.com/mcp",
+		BearerToken:         "t0ken-abc",
+		AllowRemoteEndpoint: true,
+	})
+	if !allowed.Status().Configured {
+		t.Fatalf("an explicitly allowed endpoint was still refused: %#v", allowed.Status())
+	}
+}
+
+func TestAllowingARemoteEndpointStillRequiresTLSAndAToken(t *testing.T) {
+	plaintext := NewServiceWithOptions(Options{
+		Enabled:             true,
+		BaseURL:             "http://logs.example.com/mcp",
+		BearerToken:         "t0ken-abc",
+		AllowRemoteEndpoint: true,
+	})
+	if plaintext.Status().Configured {
+		t.Fatalf("a remote endpoint was accepted over plaintext: %#v", plaintext.Status())
+	}
+
+	anonymous := NewServiceWithOptions(Options{
+		Enabled:             true,
+		BaseURL:             "https://logs.example.com/mcp",
+		AllowRemoteEndpoint: true,
+	})
+	if anonymous.Status().Configured {
+		t.Fatalf("a remote endpoint was accepted without a token: %#v", anonymous.Status())
+	}
+}
+
+func TestAllowingRemoteDoesNotBurdenALocalListener(t *testing.T) {
+	local := NewServiceWithOptions(Options{
+		Enabled:             true,
+		BaseURL:             "http://host.docker.internal:8101/mcp",
+		AllowRemoteEndpoint: true,
+	})
+	if !local.Status().Configured {
+		t.Fatalf("a local listener was refused for lack of TLS or a token: %#v", local.Status())
 	}
 }

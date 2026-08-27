@@ -31,6 +31,7 @@ import (
 const (
 	serversEnv       = "HAI_MCP_PREFLIGHT_SERVERS"
 	tokensEnv        = "HAI_MCP_PREFLIGHT_TOKENS"
+	allowRemoteEnv   = "HAI_MCP_PREFLIGHT_ALLOW_REMOTE"
 	enabledEnv       = "HAI_MCP_PREFLIGHT_ENABLED"
 	timeoutEnv       = "HAI_MCP_PREFLIGHT_TIMEOUT_SECONDS"
 	protocolVersion  = "2025-06-18"
@@ -65,6 +66,11 @@ type Config struct {
 	Enabled bool
 	Servers []Server
 	Timeout time.Duration
+	// AllowRemoteEndpoints lifts the local-only restriction on server URLs. It
+	// has to be said outright, and a server it admits must then be reached over
+	// TLS with a bearer token, so lifting the restriction cannot happen by
+	// accident and cannot happen in the clear.
+	AllowRemoteEndpoints bool
 }
 
 // Tool is the bounded, non-secret portion of a tools/list result. HAI does not
@@ -167,6 +173,9 @@ func NewServiceFromEnv() *Service {
 		Enabled: strings.EqualFold(strings.TrimSpace(os.Getenv(enabledEnv)), "true"),
 		Servers: withBearerTokens(parseServers(os.Getenv(serversEnv)), os.Getenv(tokensEnv)),
 		Timeout: timeout,
+		AllowRemoteEndpoints: strings.EqualFold(
+			strings.TrimSpace(os.Getenv(allowRemoteEnv)), "true",
+		),
 	})
 }
 
@@ -611,7 +620,7 @@ func validateConfig(config Config) string {
 		if err := validateCatalogProfile(server.CatalogID); err != nil {
 			return "server " + server.ID + ": " + err.Error()
 		}
-		if err := validateLocalURL(server.URL); err != nil {
+		if err := validateEndpointURL(server, config.AllowRemoteEndpoints); err != nil {
 			return "server " + server.ID + ": " + err.Error()
 		}
 	}
@@ -644,7 +653,8 @@ func catalogName(id string) string {
 	return entry.Name
 }
 
-func validateLocalURL(raw string) error {
+func validateEndpointURL(server Server, allowRemote bool) error {
+	raw := server.URL
 	u, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("invalid URL")
@@ -665,9 +675,20 @@ func validateLocalURL(raw string) error {
 	if host == "localhost" || host == "host.docker.internal" {
 		return nil
 	}
-	ip := net.ParseIP(host)
-	if ip != nil && ip.IsLoopback() {
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
 		return nil
 	}
-	return fmt.Errorf("only localhost, loopback IPs, or host.docker.internal are allowed")
+	if !allowRemote {
+		return fmt.Errorf(
+			"only localhost, loopback IPs, or host.docker.internal are allowed unless %s is true",
+			allowRemoteEnv,
+		)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("a remote server must use https when %s is true", allowRemoteEnv)
+	}
+	if !safeBearerToken(server.BearerToken) {
+		return fmt.Errorf("a remote server needs a bearer token in %s when %s is true", tokensEnv, allowRemoteEnv)
+	}
+	return nil
 }
