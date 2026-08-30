@@ -169,7 +169,7 @@ func (s *Service) authorizeSafetyChange(
 	)
 	if err != nil {
 		return controlAuthorizationFailureFor(
-			"control.authorization.execution_denied",
+			controlExecutionAuthorizationCode(receipt, err),
 			fmt.Errorf("%w: %v", ErrAuthorizationDenied, err),
 		)
 	}
@@ -177,6 +177,49 @@ func (s *Service) authorizeSafetyChange(
 		return controlAuthorizationFailureFor("control.authorization.receipt_invalid", err)
 	}
 	return nil
+}
+
+// controlExecutionAuthorizationCode permits only the execution boundary's
+// bounded reason codes to cross into the owner-facing control response. It
+// does not expose the wrapped error, approval source, or any request data.
+func controlExecutionAuthorizationCode(receipt executionauth.Receipt, err error) string {
+	if errors.Is(err, executionauth.ErrNotAuthorized) {
+		for _, code := range receipt.Evidence.ReasonCodes {
+			if isPublicExecutionAuthorizationReasonCode(code) {
+				return "control.execution." + code
+			}
+		}
+		return "control.execution.not_authorized"
+	}
+	if errors.Is(err, executionauth.ErrAuthorizationChanged) {
+		return "control.execution.policy_changed"
+	}
+	if errors.Is(err, executionauth.ErrAlreadyConsumed) {
+		return "control.execution.already_consumed"
+	}
+	return "control.execution.unavailable"
+}
+
+func isPublicExecutionAuthorizationReasonCode(code string) bool {
+	switch code {
+	case "emergency_stop.active",
+		"constitution.unavailable",
+		"constitution.denied",
+		"constitution.authority_ceiling",
+		"approval.invalid",
+		"approval.case_required",
+		"approval.required",
+		"framework.approval_required",
+		"framework.selection_unverified",
+		"framework.selection_legacy_execution_denied",
+		"framework.evidence_preflight_unverified",
+		"source.evidence_unverified",
+		"mandate.required",
+		"mandate.denied":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) validateSafetyReceipt(

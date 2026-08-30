@@ -560,6 +560,27 @@ func TestSafetyWeakeningRejectsMissingOwnerIdentity(t *testing.T) {
 	}
 }
 
+func TestControlExecutionAuthorizationCodeIsBoundedAndActionable(t *testing.T) {
+	denied := executionauth.Receipt{
+		Outcome: executionauth.OutcomeDenied,
+		Evidence: executionauth.DecisionEvidence{
+			ReasonCodes: []string{"approval.invalid"},
+		},
+	}
+	if got := controlExecutionAuthorizationCode(denied, executionauth.ErrNotAuthorized); got != "control.execution.approval.invalid" {
+		t.Fatalf("approval failure code = %q", got)
+	}
+
+	unknown := denied
+	unknown.Evidence.ReasonCodes = []string{"provider.response.secret-leaked"}
+	if got := controlExecutionAuthorizationCode(unknown, executionauth.ErrNotAuthorized); got != "control.execution.not_authorized" {
+		t.Fatalf("unknown failure code = %q", got)
+	}
+	if got := controlExecutionAuthorizationCode(executionauth.Receipt{}, executionauth.ErrAuthorizationChanged); got != "control.execution.policy_changed" {
+		t.Fatalf("changed policy code = %q", got)
+	}
+}
+
 func newTestServiceAtStateDir(t *testing.T, stateDir string) *Service {
 	t.Helper()
 	return newTestServiceAtStateDirAndOwner(t, stateDir, "local-operator")
