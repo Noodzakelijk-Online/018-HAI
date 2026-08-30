@@ -81,7 +81,7 @@ test.describe('HAI operator acceptance flow', () => {
       expect(createdSource.name).toBe(sourceName);
       const listedSources = await (await sourceListResponse).json();
       expect(listedSources.map((source: { name: string }) => source.name)).toContain(sourceName);
-      const componentSourceNames = await page.locator('app-connected-sources').evaluate((element) => {
+      await expect.poll(async () => page.locator('app-connected-sources').evaluate((element) => {
         const context = Array.from(
           (element as HTMLElement & { __ngContext__?: ArrayLike<unknown> }).__ngContext__ || []
         );
@@ -93,8 +93,7 @@ test.describe('HAI operator acceptance flow', () => {
           && typeof (candidate as { connectSource?: unknown }).connectSource === 'function'
           && Array.isArray((candidate as { sources?: unknown }).sources));
         return component?.sources?.map((source) => source.name) || [];
-      });
-      expect(componentSourceNames).toContain(sourceName);
+      }), { timeout: 5_000 }).toContain(sourceName);
       await expect(page.getByTestId('source-list')).toHaveAttribute('data-source-count', '1');
 
       const sourceRow = page.getByTestId('source-row').filter({ hasText: sourceName });
