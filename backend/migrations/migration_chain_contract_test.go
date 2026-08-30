@@ -143,6 +143,7 @@ func TestGovernanceMigrationTailPreservesSemanticUpgradeOrder(t *testing.T) {
 		"0065_host_runtime_jobs",
 		"0066_automation_launch_execution_reference",
 		"0067_automation_launch_event_idempotency",
+		"0068_execution_authorization_owner_control_approval",
 	}
 	entries, err := fs.ReadDir(Files, "pre")
 	if err != nil {
