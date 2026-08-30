@@ -269,7 +269,7 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 		expect(component.connecting).toBeFalse();
 	});
 
-  it('shows a server-confirmed source before the follow-up refresh completes', () => {
+  it('keeps a server-confirmed source visible while preserving existing sources', () => {
     const { component, sourceService } = createComponent();
     const created = {
       id: 'created-source',
@@ -280,11 +280,6 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only', category: 'local_folder' } as any];
     component.sourceForm.patchValue({ connectorKey: 'local-folder', syncTarget: 'projects/018-hai' });
     sourceService.createSource.and.returnValue(of(created));
-    sourceService.connectors.and.returnValue(of([]));
-    sourceService.sources.and.returnValue(of([{ id: 'existing-source', name: 'Existing source' } as IConnectedSource]));
-    sourceService.extractions.and.returnValue(of({ items: [], totalCount: 0, limit: 100 }));
-    sourceService.auditLogs.and.returnValue(of([]));
-    sourceService.syncJobs.and.returnValue(of([]));
     sourceService.connectionHealths.and.returnValue(of([]));
 
     component.connectSource();

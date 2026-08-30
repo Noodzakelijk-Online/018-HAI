@@ -106,7 +106,6 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   private readonly extractionPageLimit = 100;
   private refreshSubscription?: Subscription;
   private connectionHealthSubscription?: Subscription;
-  private createdSourcesAwaitingList: IConnectedSource[] = [];
 
   sourceForm: FormGroup = this.fb.group({
     connectorKey: ['local-folder', [Validators.required]],
@@ -232,7 +231,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       .pipe(finalize(() => (this.loading = false)))
       .subscribe(({ connectors, sources, extractions, auditLogs, syncJobs }) => {
         this.connectors = connectors;
-        this.sources = this.reconcileCreatedSources(sources);
+        this.sources = sources;
         this.setExtractionPage(extractions);
         this.auditLogs = auditLogs;
         this.syncJobs = syncJobs || [];
@@ -309,17 +308,15 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       )
       .subscribe({
         next: (created) => {
-          this.createdSourcesAwaitingList = [
-            created,
-            ...this.createdSourcesAwaitingList.filter((source) => source.id !== created.id),
-          ];
-          this.sources = this.reconcileCreatedSources(this.sources);
+          // The create response is authoritative. Cancel an initial broad refresh so a
+          // slower pre-create response cannot overwrite the newly connected source.
+          this.refreshSubscription?.unsubscribe();
+          this.sources = [created, ...this.sources.filter((source) => source.id !== created.id)];
           this.selectedSourceId = created.id;
           this.rebuildSourceIndexes();
           this.applySourceDefaults(this.sources);
           this.updateSourceActions();
           this.notification.success('Source connected', 'The source is ready for controlled sync.');
-          this.refresh();
         },
         error: (error) => this.notification.error('Error', this.operationErrorMessage(error, 'Failed to connect source.')),
       });
@@ -1512,14 +1509,6 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       }
       return jobs;
     }, {});
-  }
-
-  private reconcileCreatedSources(serverSources: IConnectedSource[]): IConnectedSource[] {
-    const serverSourceIDs = new Set(serverSources.map((source) => source.id));
-    this.createdSourcesAwaitingList = this.createdSourcesAwaitingList.filter(
-      (source) => !serverSourceIDs.has(source.id)
-    );
-    return [...this.createdSourcesAwaitingList, ...serverSources];
   }
 
   private loadConnectionHealth(sources: IConnectedSource[]): void {
