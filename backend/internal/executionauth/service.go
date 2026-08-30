@@ -166,7 +166,7 @@ func (s *Service) Authorize(ctx context.Context, input Request) (Receipt, error)
 	stop := s.stop()
 	stop.Reason = safety.RedactSecrets(stop.Reason)
 	receipt.Evidence.EmergencyStop = stop
-	if stop.Active {
+	if stop.Active && !isExactEmergencyStopReleaseRequest(request) {
 		return s.persistDecision(
 			ctx,
 			receipt,
@@ -638,7 +638,7 @@ func trustedMandateFacts(request Request) map[string]string {
 }
 
 func (s *Service) recheck(ctx context.Context, request Request, receipt Receipt) error {
-	if stop := s.stop(); stop.Active {
+	if stop := s.stop(); stop.Active && !isExactEmergencyStopReleaseRequest(request) {
 		return fmt.Errorf("%w: emergency stop became active", ErrAuthorizationChanged)
 	}
 	if request.ActorKind == ActorSystem {
@@ -731,6 +731,25 @@ func (s *Service) recheck(ctx context.Context, request Request, receipt Receipt)
 		)
 	}
 	return nil
+}
+
+// isExactEmergencyStopReleaseRequest identifies the one operation which must
+// remain possible while an emergency stop is active: clearing that persisted
+// stop. It is intentionally structural rather than a broad domain bypass.
+// The caller must still present a separately verified, exact-bound approval
+// before Authorize can return an authorized receipt.
+func isExactEmergencyStopReleaseRequest(request Request) bool {
+	return request.Action == "opscontrol.emergency-stop.clear" &&
+		request.Stage == StagePrivilegeEscalation &&
+		request.Domain == "safety-control" &&
+		request.ResourceType == "opscontrol-emergency-stop" &&
+		request.RequiredAuthority == 10 &&
+		request.RequestedAutonomy == 6 &&
+		request.Risk == RiskCritical &&
+		!request.Reversible &&
+		request.ApprovalSourceID != "" &&
+		request.ApprovalBindingDigest != "" &&
+		request.EffectDigest == request.ApprovalBindingDigest
 }
 
 func (s *Service) persist(

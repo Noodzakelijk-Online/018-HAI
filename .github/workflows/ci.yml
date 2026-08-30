@@ -484,6 +484,7 @@ jobs:
         env:
           HAI_BASE_URL: http://localhost:8080
           HAI_JWT_SECRET: devsecret
+          HAI_BACKEND_API_SHARED_KEY: ci-backend-api-shared-key-0123456789
         run: bash scripts/two-account-isolation-test.sh
       - name: Backend log (on failure)
         if: failure()

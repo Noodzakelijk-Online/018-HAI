@@ -467,6 +467,65 @@ func TestAuthorizePersistsEmergencyStopDenial(t *testing.T) {
 	}
 }
 
+func TestEmergencyStopPermitsOnlyExactApprovedClearance(t *testing.T) {
+	binding := strings.Repeat("a", 64)
+	approval := ResolvedApproval{
+		SourceID:       "opscontrol-owner:test-approval",
+		DecisionID:     "owner-confirmed-clearance",
+		DecisionDigest: strings.Repeat("b", 64),
+		BindingDigest:  binding,
+		ApprovedBy:     "alice",
+		ApproverRoles:  []string{"owner"},
+		ApprovedAt:     fixedNow().Add(-time.Minute),
+		ExpiresAt:      fixedNow().Add(time.Minute),
+	}
+	service := newTestService(
+		t,
+		NewMemoryRepository(),
+		permissiveConstitution(),
+		fakeApprovalResolver{values: map[string]ResolvedApproval{
+			"alice\x00" + approval.SourceID: approval,
+		}},
+		nil,
+	)
+	service.WithEmergencyStopEvaluator(func() EmergencyStopEvidence {
+		return EmergencyStopEvidence{Active: true, Source: "persisted-emergency-stop", Reason: "operator stop"}
+	})
+
+	clearance := baseRequest("emergency-stop-clear")
+	clearance.Action = "opscontrol.emergency-stop.clear"
+	clearance.Stage = StagePrivilegeEscalation
+	clearance.Domain = "safety-control"
+	clearance.ResourceType = "opscontrol-emergency-stop"
+	clearance.ResourceID = "emergency-stop:revision-1"
+	clearance.RequiredAuthority = 10
+	clearance.RequestedAutonomy = 6
+	clearance.Risk = RiskCritical
+	clearance.Reversible = false
+	clearance.ApprovalSourceID = approval.SourceID
+	clearance.ApprovalBindingDigest = binding
+	clearance.EffectDigest = binding
+
+	receipt, err := service.AuthorizeAndConsume(context.Background(), clearance, "opscontrol", clearance.Action+":"+clearance.ResourceID)
+	if err != nil {
+		t.Fatalf("AuthorizeAndConsume exact emergency-stop clearance: %v", err)
+	}
+	if receipt.Outcome != OutcomeAuthorized || !receipt.Evidence.EmergencyStop.Active || receipt.Evidence.Approval.SourceID != approval.SourceID {
+		t.Fatalf("clearance receipt = %#v", receipt)
+	}
+
+	denied := clearance
+	denied.IdempotencyKey = "emergency-stop-clear-not-exact"
+	denied.ResourceType = "workspace-file"
+	deniedReceipt, err := service.Authorize(context.Background(), denied)
+	if err != nil {
+		t.Fatalf("Authorize non-clearance request: %v", err)
+	}
+	if deniedReceipt.Outcome != OutcomeDenied || !containsFold(deniedReceipt.Evidence.ReasonCodes, "emergency_stop.active") {
+		t.Fatalf("non-clearance receipt = %#v", deniedReceipt)
+	}
+}
+
 func TestAuthorizeAndConsumeIsSingleUseUnderConcurrency(t *testing.T) {
 	repository := NewMemoryRepository()
 	service := newTestService(

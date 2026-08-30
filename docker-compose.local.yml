@@ -630,6 +630,10 @@ services:
       DB_PORT: ${DB_PORT}
       DB_AUTOMIGRATE: ${DB_AUTOMIGRATE:-false}
       DB_MIGRATIONS_ENABLED: "false"
+      # Application configuration validates the image directory before the
+      # migrate command dispatches. The one-shot service has a read-only root,
+      # so keep that harmless bootstrap directory on its private tmpfs.
+      IMAGE_SAVE_DIR: /tmp/images
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
