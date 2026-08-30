@@ -971,6 +971,9 @@ export class WorkflowEngineComponent implements OnInit, OnDestroy {
 
   applyWorkflowRecord(record: IWorkflowRecord): void {
     this.selected = record;
+    // Selected workflow controls are a primary Basic-view action surface.
+    // Render this record before optional provenance lookups begin.
+    this.changeDetector.detectChanges();
     this.frameworkSelectionDecision = undefined;
     this.frameworkSelectionLoading = false;
     this.frameworkSelectionUnavailable = false;
