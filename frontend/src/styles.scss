@@ -47,3 +47,14 @@ body {
   margin: 0;
   padding: 0;
 }
+
+/* Notifications are passive status feedback. They must not cover a workflow
+   approval or other action in the shared overlay layer. */
+.cdk-overlay-container nz-notification-container,
+.cdk-overlay-container .ant-notification-notice {
+  pointer-events: none;
+}
+
+.cdk-overlay-container .ant-notification-notice-close {
+  pointer-events: auto;
+}
