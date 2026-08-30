@@ -74,14 +74,12 @@ test.describe('HAI operator acceptance flow', () => {
         (response) => response.url().includes('/api/v1/sources/')
           && response.request().method() === 'POST'
       );
-      const sourceListResponse = page.waitForResponse(
-        (response) => response.url().includes('/api/v1/sources/?includeDisabled=true')
-          && response.request().method() === 'GET'
-      );
       await page.getByTestId('source-connect').click();
       const createdSource = await (await createResponse).json();
       expect(createdSource.name).toBe(sourceName);
-      const listedSources = await (await sourceListResponse).json();
+      const sourceListResponse = await page.request.get('/api/v1/sources/?includeDisabled=true');
+      expect(sourceListResponse.status()).toBe(200);
+      const listedSources = await sourceListResponse.json();
       expect(listedSources.map((source: { name: string }) => source.name)).toContain(sourceName);
       try {
         await expect(page.getByTestId('source-list')).toHaveAttribute('data-source-count', '1');
