@@ -99,6 +99,28 @@ key_hdr=(-H "X-HAI-Backend-Key: ${API_KEY}" -H "Content-Type: application/json")
 jwt_hdr=(-H "Content-Type: application/json" -H "Authorization: Bearer ${owner_jwt}")
 hdr=("${key_hdr[@]}" -H "Authorization: Bearer ${owner_jwt}")
 
+echo "==> Owner activates the bounded smoke execution policy"
+hai_smoke_activate_execution_policy "${BASE}" "${hdr[@]}"
+kill "${BACKEND_PID}" 2>/dev/null; wait "${BACKEND_PID}" 2>/dev/null || true
+BACKEND_PID=""
+DB_HOST=127.0.0.1 DB_PORT="${PG_PORT}" DB_USER="$(whoami)" DB_PASSWORD=postgres \
+  DB_NAME=automation SERVER_PORT="${API_PORT}" BASE_URL=/api \
+  BACKEND_API_SHARED_KEY="${API_KEY}" IMAGE_SAVE_DIR="${IMAGES}" \
+  RUN_MODE=production KAFKA_BROKERS="" JWT_SECRET="${JWT_SECRET}" \
+  HAI_PHASE2_FEEDS_DIR="${FEEDS}" HAI_PHASE2_WORKSPACE_DIR="${WORKSPACE}" \
+  HAI_PHASE2_FEED_FILES="inbox.json" HAI_PHASE2_MODE="autonomous_safe" \
+  "${BIN}" > "${WORKDIR}/backend.log" 2>&1 &
+BACKEND_PID=$!
+ready=""
+for i in $(seq 1 60); do
+  if curl -fsS "http://127.0.0.1:${API_PORT}/healthz" >/dev/null 2>&1; then ready=1; break; fi
+  if ! kill -0 "${BACKEND_PID}" 2>/dev/null; then
+    echo "backend exited after execution policy activation; log:"; tail -20 "${WORKDIR}/backend.log"; exit 1
+  fi
+  sleep 1
+done
+[ -n "${ready}" ] || { echo "backend did not restart after execution policy activation"; exit 1; }
+
 echo "==> Authentication boundary"
 check "API key alone is rejected" '401' \
   "$(curl -sS -o /dev/null -w '%{http_code}' "${key_hdr[@]}" "${BASE}/operations")"

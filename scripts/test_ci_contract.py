@@ -685,7 +685,12 @@ class CIWorkflowContractTest(unittest.TestCase):
         smoke_text = smoke.read_text(encoding="utf-8")
         self.assertIn("bash scripts/smoke-provider-fixture.sh", fixture_job)
         self.assertIn("--target provider-fixture", smoke_text)
-        self.assertIn("docker network create --internal", smoke_text)
+        self.assertIn("--read-only", smoke_text)
+        self.assertIn("--cap-drop ALL", smoke_text)
+        self.assertIn("no-new-privileges", smoke_text)
+        self.assertIn("-p 127.0.0.1:0:11434", smoke_text)
+        self.assertIn("MSYS_NO_PATHCONV=1 docker exec", smoke_text)
+        self.assertNotIn("docker network create --internal", smoke_text)
 
     def test_phase2_control_state_and_safe_worker_paths_are_durable(self) -> None:
         compose = (ROOT / "docker-compose.local.yml").read_text(encoding="utf-8")

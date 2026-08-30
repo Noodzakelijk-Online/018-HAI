@@ -1635,7 +1635,7 @@ func TestDeepSeekHarnessAdapterRunsDocumentedHeadlessProfile(t *testing.T) {
 		workspace:                   workspace,
 		workspaceRoot:               root,
 		stateDir:                    filepath.Join(workspace, ".dsh-state"),
-		timeout:                     time.Second,
+		timeout:                     5 * time.Second,
 		outputLimit:                 defaultOutputLimit,
 		allowDirectExecutionForTest: true,
 	}

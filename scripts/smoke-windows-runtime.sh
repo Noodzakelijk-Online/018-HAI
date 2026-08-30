@@ -102,6 +102,13 @@ owner_jwt="$(hai_smoke_mint_jwt owner "${JWT_SECRET}")"
 key_hdr=(-H "X-HAI-Backend-Key: ${API_KEY}" -H "Content-Type: application/json")
 hdr=("${key_hdr[@]}" -H "Authorization: Bearer ${owner_jwt}")
 
+echo "==> Owner activates the bounded smoke execution policy"
+hai_smoke_activate_execution_policy "${BASE}" "${hdr[@]}"
+kill "${BACKEND_PID}" 2>/dev/null; wait "${BACKEND_PID}" 2>/dev/null || true
+BACKEND_PID=""
+start_backend
+wait_live
+
 echo "==> Authentication boundary"
 check "API key alone is rejected" '401' \
   "$(curl -sS -o /dev/null -w '%{http_code}' "${key_hdr[@]}" "${BASE}/windows-runtime/readiness")"

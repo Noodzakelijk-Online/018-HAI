@@ -256,29 +256,24 @@ func TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability(t *testi
 
 	testPostgresTaskStateConcurrentTransitions(t, db, repo, owner)
 
-	if err := infra.RollbackMigration(
-		db,
-		migrations.Files,
-		"pre",
-		"pre/0006_durable_job_fencing",
-	); err != nil {
-		t.Fatalf("rollback durable-job fencing migration before task state: %v", err)
+	var appliedVersions []string
+	if err := db.Raw(`
+		SELECT version
+		FROM schema_migrations
+		WHERE version LIKE 'pre/%'
+		ORDER BY version DESC
+	`).Scan(&appliedVersions).Error; err != nil {
+		t.Fatalf("list applied pre migrations: %v", err)
 	}
-	if err := infra.RollbackMigration(
-		db,
-		migrations.Files,
-		"pre",
-		"pre/0005_framework_operating_contract",
-	); err != nil {
-		t.Fatalf("rollback operating-contract migration before task state: %v", err)
-	}
-	if err := infra.RollbackMigration(
-		db,
-		migrations.Files,
-		"pre",
-		"pre/0004_task_state_storage",
-	); err != nil {
-		t.Fatalf("rollback task-state migration: %v", err)
+	rolledBack := 0
+	for _, version := range appliedVersions {
+		if err := infra.RollbackMigration(db, migrations.Files, "pre", version); err != nil {
+			t.Fatalf("rollback %s before task state: %v", version, err)
+		}
+		rolledBack++
+		if version == "pre/0004_task_state_storage" {
+			break
+		}
 	}
 	for _, relation := range []string{
 		"task_completion_plan_logs",
@@ -310,7 +305,7 @@ func TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability(t *testi
 	if err != nil {
 		t.Fatalf("reapply task-state migration: %v", err)
 	}
-	if reapplied != 3 || !taskStateRelationExists(t, db, "task_review_items") {
+	if reapplied != rolledBack || !taskStateRelationExists(t, db, "task_review_items") {
 		t.Fatalf("task-state migration reapply = %d, relation=%t", reapplied, taskStateRelationExists(t, db, "task_review_items"))
 	}
 }

@@ -5,7 +5,7 @@
 # Boots a throwaway PostgreSQL + the real backend and proves the account-bridge
 # layer is truthful: the generic JSON feed is a real production path (register ->
 # sync -> operations in the ledger, dedupe-idempotent), while Gmail/GitHub/Trello/
-# Drive/Calendar are read-only bridge contracts that are credentials_required and
+# Drive/Calendar are read-only bridge contracts that are contract_only and
 # NEVER report a fake connected status or fake OAuth. The permission registry is
 # read-only and grants nothing without a real credential.
 #
@@ -106,7 +106,7 @@ echo "==> Bridge contracts are truthful (no fake OAuth / no fake connected)"
 bridges="$(curl -sS "${hdr[@]}" "${BASE}/account-feeds/bridges")"
 check "gmail is a read-only bridge" 'true' \
   "$(echo "${bridges}" | jq -r '[.bridges[]|select(.provider=="gmail")][0].readOnly')"
-check "gmail is credentials_required (never connected from config)" 'credentials_required' \
+check "gmail is contract_only (never connected from config)" 'contract_only' \
   "$(echo "${bridges}" | jq -r '[.bridges[]|select(.provider=="gmail")][0].connectionStatus')"
 check "no bridge reports a connected status" 'true' \
   "$(echo "${bridges}" | jq -r '[.bridges[]|select(.connectionStatus=="connected")]|length==0')"
@@ -151,7 +151,7 @@ created="$(curl -sS "${hdr[@]}" -X POST "${BASE}/account-feeds" \
   -d '{"name":"gh","provider":"github","sourceType":"local_json_file","path":"inbox.json","accountLabel":"repo","enabled":true}')"
 gh_id="$(echo "${created}" | jq -r '.id')"
 check "github feed registers" 'true' "$([ -n "${gh_id}" ] && echo true)"
-check "github feed is credentials_required (no fake connect)" 'credentials_required' \
+check "github feed is contract_only (no fake connect)" 'contract_only' \
   "$(curl -sS "${hdr[@]}" "${BASE}/account-feeds" | jq -r '[.feeds[]|select(.feed.id=="'"${gh_id}"'")][0].connectionStatus')"
 
 echo ""

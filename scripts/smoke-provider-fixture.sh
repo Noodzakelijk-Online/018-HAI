@@ -6,19 +6,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${HAI_PROVIDER_FIXTURE_IMAGE:-hai-provider-fixture-smoke}"
 NAME="hai-provider-fixture-smoke-$$"
-NETWORK="hai-provider-fixture-smoke-net-$$"
 
 cleanup() {
   docker rm -f "$NAME" >/dev/null 2>&1 || true
-  docker network rm "$NETWORK" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 docker build --target provider-fixture -t "$IMAGE" "$ROOT/backend"
-docker network create --internal "$NETWORK" >/dev/null
+# Docker does not publish container ports from an internal network on hosted
+# runners. The fixture is a scratch image with no client tooling; its existing
+# read-only filesystem, dropped capabilities, no-new-privileges, and resource
+# limits remain the isolation boundary while the loopback-only port is tested.
 docker run -d \
   --name "$NAME" \
-  --network "$NETWORK" \
   --read-only \
   --cap-drop ALL \
   --security-opt no-new-privileges \
@@ -28,13 +28,29 @@ docker run -d \
   -p 127.0.0.1:0:11434 \
   "$IMAGE" >/dev/null
 
+# Git Bash otherwise rewrites the absolute in-container executable path into a
+# Windows host path before Docker receives it. The environment flag is inert
+# on Linux runners.
+fixture_exec() {
+  MSYS_NO_PATHCONV=1 docker exec "$NAME" "$@"
+}
+
+if python3 -c 'import sys' >/dev/null 2>&1; then
+  python_bin=python3
+elif python -c 'import sys' >/dev/null 2>&1; then
+  python_bin=python
+else
+  echo "A working Python interpreter is required to validate fixture responses." >&2
+  exit 1
+fi
+
 for _ in $(seq 1 20); do
-  if docker exec "$NAME" /provider-fixture --healthcheck >/dev/null 2>&1; then
+  if fixture_exec /provider-fixture --healthcheck >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-docker exec "$NAME" /provider-fixture --healthcheck >/dev/null
+fixture_exec /provider-fixture --healthcheck >/dev/null
 
 binding="$(docker port "$NAME" 11434/tcp | head -n 1)"
 port="${binding##*:}"
@@ -45,7 +61,7 @@ trap 'rm -rf "$tmp_dir"; cleanup' EXIT
 curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "$base/api/tags" >"$tmp_dir/ollama.json"
 curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "$base/v1/models" >"$tmp_dir/openai.json"
 
-python3 - "$tmp_dir" <<'PY'
+"$python_bin" - "$tmp_dir" <<'PY'
 import json
 import pathlib
 import sys

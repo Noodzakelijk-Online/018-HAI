@@ -157,7 +157,10 @@ func RunMigrations(db *gorm.DB) error {
 			&models.WorkflowSourceLink{},
 			&models.WorkflowDecision{},
 			&models.WorkflowEvent{},
-			&models.WorkflowCompletionAttestation{},
+			// WorkflowCompletionAttestation is fully owned by versioned migration
+			// 0044. Do not hand its legacy UNIQUE constraint to AutoMigrate: GORM
+			// derives a different constraint name and attempts an unsafe drop on a
+			// schema that was already migrated correctly.
 			&models.WorkflowReminderActivationRequest{},
 			&models.WorkflowReminderActivationDecision{},
 			&models.Pursuit{},
