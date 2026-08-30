@@ -280,13 +280,17 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only', category: 'local_folder' } as any];
     component.sourceForm.patchValue({ connectorKey: 'local-folder', syncTarget: 'projects/018-hai' });
     sourceService.createSource.and.returnValue(of(created));
-    spyOn(component, 'refresh');
+    sourceService.connectors.and.returnValue(of([]));
+    sourceService.sources.and.returnValue(of([{ id: 'existing-source', name: 'Existing source' } as IConnectedSource]));
+    sourceService.extractions.and.returnValue(of({ items: [], totalCount: 0, limit: 100 }));
+    sourceService.auditLogs.and.returnValue(of([]));
+    sourceService.syncJobs.and.returnValue(of([]));
+    sourceService.connectionHealths.and.returnValue(of([]));
 
     component.connectSource();
 
     expect(component.sources.map((source) => source.id)).toEqual(['created-source', 'existing-source']);
     expect(component.selectedSourceId).toBe('created-source');
-    expect(component.refresh).toHaveBeenCalled();
   });
 
   it('does not start duplicate source work while another sync is running', () => {

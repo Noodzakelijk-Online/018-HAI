@@ -106,6 +106,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   private readonly extractionPageLimit = 100;
   private refreshSubscription?: Subscription;
   private connectionHealthSubscription?: Subscription;
+  private createdSourcesAwaitingList: IConnectedSource[] = [];
 
   sourceForm: FormGroup = this.fb.group({
     connectorKey: ['local-folder', [Validators.required]],
@@ -231,13 +232,13 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       .pipe(finalize(() => (this.loading = false)))
       .subscribe(({ connectors, sources, extractions, auditLogs, syncJobs }) => {
         this.connectors = connectors;
-        this.sources = sources;
+        this.sources = this.reconcileCreatedSources(sources);
         this.setExtractionPage(extractions);
         this.auditLogs = auditLogs;
         this.syncJobs = syncJobs || [];
         this.rebuildSourceIndexes();
-        this.applySourceDefaults(sources);
-        this.loadConnectionHealth(sources);
+        this.applySourceDefaults(this.sources);
+        this.loadConnectionHealth(this.sources);
         this.updateSourceActions();
       });
   }
@@ -305,10 +306,14 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
 		.pipe(
 		  timeout(this.operationTimeoutMs),
 		  finalize(() => (this.connecting = false))
-		)
+      )
       .subscribe({
         next: (created) => {
-          this.sources = [created, ...this.sources.filter((source) => source.id !== created.id)];
+          this.createdSourcesAwaitingList = [
+            created,
+            ...this.createdSourcesAwaitingList.filter((source) => source.id !== created.id),
+          ];
+          this.sources = this.reconcileCreatedSources(this.sources);
           this.selectedSourceId = created.id;
           this.rebuildSourceIndexes();
           this.applySourceDefaults(this.sources);
@@ -1507,6 +1512,14 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       }
       return jobs;
     }, {});
+  }
+
+  private reconcileCreatedSources(serverSources: IConnectedSource[]): IConnectedSource[] {
+    const serverSourceIDs = new Set(serverSources.map((source) => source.id));
+    this.createdSourcesAwaitingList = this.createdSourcesAwaitingList.filter(
+      (source) => !serverSourceIDs.has(source.id)
+    );
+    return [...this.createdSourcesAwaitingList, ...serverSources];
   }
 
   private loadConnectionHealth(sources: IConnectedSource[]): void {
