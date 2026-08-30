@@ -194,7 +194,9 @@ export class PursuitService {
   }
 
   create(request: IPursuitCreateRequest): Observable<IPursuit> {
-    return this.http.post<IPursuit>(`${this.apiUrl}/`, request);
+    return this.http.post<IPursuit>(`${this.apiUrl}/`, request).pipe(
+      map((pursuit) => this.normalizePursuit(pursuit)),
+    );
   }
 
   get(id: string): Observable<IPursuitDetail> {

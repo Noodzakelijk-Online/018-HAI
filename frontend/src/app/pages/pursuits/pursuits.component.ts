@@ -2811,11 +2811,16 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       sourceOfCreation: 'dashboard',
     }).subscribe({
       next: (pursuit) => {
+        // The create response is authoritative. Do not let an earlier dashboard
+        // request overwrite it before the new pursuit is rendered.
+        this.dashboardSub?.unsubscribe();
+        this.pursuitsSub?.unsubscribe();
+        this.pursuits = [pursuit, ...this.pursuits.filter((item) => item.id !== pursuit.id)];
+        this.loading = false;
         this.creating = false;
         this.showCreate = false;
         this.createForm.reset({ domain: 'personal_productivity', reviewCadenceDays: 7, maxEffortHours: 0, maxSpendEur: 0, maxParallelWorkflows: 0 });
         this.notification.success('Pursuit created', 'HAI can now link workflows, memory, sources, and approvals to it.');
-        this.load();
         this.selectPursuit(pursuit);
       },
       error: (error) => {

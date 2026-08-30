@@ -210,7 +210,6 @@ describe('PursuitsComponent action lanes', () => {
     const pursuitService = (component as any).pursuitsService;
     const created = { id: 'pursuit-1', title: 'Operational outcome' } as any;
     pursuitService.create = jasmine.createSpy('create').and.returnValue(of(created));
-    spyOn(component, 'load');
     spyOn(component, 'selectPursuit');
     component.createForm.patchValue({
       title: 'Operational outcome',
@@ -233,6 +232,9 @@ describe('PursuitsComponent action lanes', () => {
     expect(request.dependencies[0].status).toBe('pending');
     expect(request.targetAt).toBe('2026-09-01T00:00:00Z');
     expect(request.resourceLimits).toEqual(jasmine.objectContaining({ maxEffortHours: 12, maxSpendEur: 0, maxParallelWorkflows: 2 }));
+    expect(component.pursuits.map((pursuit) => pursuit.id)).toEqual(['pursuit-1']);
+    expect(component.loading).toBeFalse();
+    expect(component.selectPursuit).toHaveBeenCalledWith(created);
   });
 
   it('does not advertise or call planning when the governed action queue blocks new work', () => {
