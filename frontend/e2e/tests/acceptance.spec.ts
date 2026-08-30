@@ -104,10 +104,16 @@ test.describe('HAI operator acceptance flow', () => {
     await test.step('create an explicitly approval-gated workflow', async () => {
       await page.goto('/workflow-engine');
       await page.locator('#workflow-intake-input').fill(
-        `Email from lawyer: run the HAI backend readiness ${capabilityMarker}, attach the source-grounded result, and prepare it for Robert's approval.`
+        `Email from lawyer about ${pursuitName} (${projectKey}): run the HAI backend readiness ${capabilityMarker}, attach the source-grounded result, and prepare it for Robert's approval.`
       );
       await page.getByTestId('workflow-project-key').fill(projectKey);
+      const matchResponse = page.waitForResponse(
+        (response) => response.url().includes('/api/v1/pursuits/match')
+          && response.request().method() === 'POST'
+      );
       await page.getByTestId('workflow-match-pursuit').click();
+      const matches = await (await matchResponse).json() as Array<{ pursuit?: { title?: string } }>;
+      expect(matches.some((match) => match.pursuit?.title === pursuitName)).toBeTruthy();
       const pursuitMatch = page.locator('.pursuit-match-card').filter({ hasText: pursuitName });
       await expect(pursuitMatch).toBeVisible();
       await pursuitMatch.click();
