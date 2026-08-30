@@ -81,6 +81,7 @@ test.describe('HAI operator acceptance flow', () => {
       expect(createdSource.name).toBe(sourceName);
       const listedSources = await (await sourceListResponse).json();
       expect(listedSources.map((source: { name: string }) => source.name)).toContain(sourceName);
+      await expect(page.getByTestId('source-list')).toHaveAttribute('data-source-count', '1');
 
       const sourceRow = page.getByTestId('source-row').filter({ hasText: sourceName });
       await expect(sourceRow).toBeVisible();

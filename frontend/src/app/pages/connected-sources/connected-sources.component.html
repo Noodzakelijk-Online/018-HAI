@@ -89,7 +89,7 @@
 
         <nz-empty *ngIf="!sources.length && !loading" nzNotFoundContent="No connected sources yet."></nz-empty>
 
-        <div class="source-list">
+        <div class="source-list" data-testid="source-list" [attr.data-source-count]="sources.length">
           <article
             *ngFor="let source of sources"
             class="source-row"
