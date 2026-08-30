@@ -347,6 +347,7 @@ jobs:
           registry_log="$RUNNER_TEMP/framework-registry-postgres.log"
           task_log="$RUNNER_TEMP/task-state-postgres.log"
           agent_registry_log="$RUNNER_TEMP/agent-registry-postgres.log"
+          execution_auth_log="$RUNNER_TEMP/execution-authorization-postgres.log"
           migration_dsn="host=localhost user=postgres password=postgres dbname=hai_migration_runner_test port=5432 sslmode=disable TimeZone=UTC"
           registry_dsn="host=localhost user=postgres password=postgres dbname=hai_framework_registry_test port=5432 sslmode=disable TimeZone=UTC"
           task_dsn="host=localhost user=postgres password=postgres dbname=hai_task_state_test port=5432 sslmode=disable TimeZone=UTC"
@@ -367,6 +368,10 @@ jobs:
             -run '^TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability$' \
             ./internal/task/ -v | tee "$task_log"
           grep -q -- '^--- PASS: TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability' "$task_log"
+          HAI_TEST_DATABASE_DSN="$migration_dsn" go test -count=1 \
+            -run '^TestPostgresReceiptPersistsOwnerSafePolymorphicApprovals$' \
+            ./internal/executionauth/ -v | tee "$execution_auth_log"
+          grep -q -- '^--- PASS: TestPostgresReceiptPersistsOwnerSafePolymorphicApprovals' "$execution_auth_log"
           HAI_TEST_DATABASE_DSN="$agent_registry_dsn" go test -count=1 \
             -run '^(TestPostgresRepositoryRoundTripOwnerIsolationCASAndImmutableLedgers|TestPostgresAgentRegistryMigrationCanReplayAgainstExistingSchema)$' \
             ./internal/agentregistry/ -v | tee "$agent_registry_log"

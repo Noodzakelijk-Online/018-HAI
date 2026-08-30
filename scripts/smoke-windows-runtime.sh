@@ -164,8 +164,9 @@ if [ "${resume_status}" != "200" ]; then
   curl -sS "${hdr[@]}" "${BASE}/execution-authorizations?limit=3" \
     | jq -c '{receipts: [.receipts[] | select(.action == "opscontrol.emergency-stop.clear") | {outcome, reason, evidence: {reasonCodes: .evidence.reasonCodes, constitution: {requestedCapabilities: .evidence.constitution.requestedCapabilities, deniedCapabilities: .evidence.constitution.deniedCapabilities, authorityCeiling: .evidence.constitution.authorityCeiling}}}]}' >&2 \
     || true
-  echo "redacted backend diagnostic:" >&2
-  tail -20 "${WORKDIR}/backend.log" >&2 || true
+  # Do not emit the raw process log here. ORM driver errors can include signed
+  # approval provenance, while the receipt inspection above is intentionally
+  # limited to safe, owner-scoped diagnostic fields.
   exit 1
 fi
 check "processing active after resume" 'true' \
