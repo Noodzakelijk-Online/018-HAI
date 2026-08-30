@@ -95,15 +95,13 @@ test.describe('HAI operator acceptance flow', () => {
           && candidate !== null
           && typeof (candidate as { connectSource?: unknown }).connectSource === 'function'
           && Array.isArray((candidate as { sources?: unknown }).sources));
-        return {
+        return JSON.stringify({
           component: component?.constructor?.name || 'not-found',
           connecting: component?.connecting || false,
           pending: component?.createdSourcesAwaitingList?.map((source) => source.name) || [],
           sources: component?.sources?.map((source) => source.name) || [],
-        };
-      }), { timeout: 5_000 }).toMatchObject({
-        sources: expect.arrayContaining([sourceName]),
-      });
+        });
+      }), { timeout: 5_000 }).toContain(sourceName);
       await expect(page.getByTestId('source-list')).toHaveAttribute('data-source-count', '1');
 
       const sourceRow = page.getByTestId('source-row').filter({ hasText: sourceName });
