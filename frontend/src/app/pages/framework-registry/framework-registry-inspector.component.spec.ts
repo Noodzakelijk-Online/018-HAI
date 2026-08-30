@@ -11,7 +11,7 @@ import { NzInputNumberModule } from 'ng-zorro-antd/input-number';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 import { NzSpinModule } from 'ng-zorro-antd/spin';
 import { NzTagModule } from 'ng-zorro-antd/tag';
-import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
+import { NzTooltipModule } from 'ng-zorro-antd/tooltip';
 import { IFrameworkView } from '../../models/framework-registry.model.interface';
 import { FrameworkRegistryInspectorComponent } from './framework-registry-inspector.component';
 import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http';
@@ -67,7 +67,7 @@ describe('FrameworkRegistryInspectorComponent role rendering', () => {
         NzSelectModule,
         NzSpinModule,
         NzTagModule,
-        NzToolTipModule],
+        NzTooltipModule],
     providers: [provideHttpClient(withInterceptorsFromDi()), provideHttpClientTesting()]
 }).compileComponents();
 
@@ -163,7 +163,7 @@ describe('FrameworkRegistryInspectorComponent role rendering', () => {
     expect(root.textContent).toContain('cannot be disabled');
   });
 
-  it('makes experimental and deprecated lifecycle behavior explicit', () => {
+  it('makes experimental lifecycle behavior explicit', () => {
     component.framework = {
       ...framework,
       id: 'agent-development-implementations',
@@ -176,7 +176,9 @@ describe('FrameworkRegistryInspectorComponent role rendering', () => {
     let root = fixture.nativeElement as HTMLElement;
     expect(root.textContent).toContain('Experimental contract');
     expect(root.textContent).toContain('disabled by default');
+  });
 
+  it('makes deprecated lifecycle behavior explicit', () => {
     component.framework = {
       ...framework,
       id: 'legacy-framework',
@@ -186,7 +188,7 @@ describe('FrameworkRegistryInspectorComponent role rendering', () => {
     };
     fixture.detectChanges();
 
-    root = fixture.nativeElement as HTMLElement;
+    const root = fixture.nativeElement as HTMLElement;
     expect(root.textContent).toContain('Deprecated contract');
     expect(root.textContent).toContain('never eligible for new selections');
   });

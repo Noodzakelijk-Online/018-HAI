@@ -136,16 +136,26 @@ func (r *PostgresTaskStateRepository) CreateReviewItem(ownerIdentity string, ite
 }
 
 func (r *PostgresTaskStateRepository) ListReviewItems(ownerIdentity string, limit int) ([]ReviewQueueItem, error) {
+	return r.listReviewItems(ownerIdentity, limit, nil)
+}
+
+func (r *PostgresTaskStateRepository) ListPendingReviewItems(ownerIdentity string, limit int) ([]ReviewQueueItem, error) {
+	return r.listReviewItems(ownerIdentity, limit, []string{"open", "needs_review"})
+}
+
+func (r *PostgresTaskStateRepository) listReviewItems(ownerIdentity string, limit int, statuses []string) ([]ReviewQueueItem, error) {
 	ownerIdentity, err := normalizeTaskStateOwner(ownerIdentity)
 	if err != nil {
 		return nil, err
 	}
 	var rows []models.TaskReviewItemRecord
-	if err := r.DB.
+	query := r.DB.
 		Where("owner_identity = ?", ownerIdentity).
-		Order("created_at DESC, id DESC").
-		Limit(normalizeTaskStateLimit(limit)).
-		Find(&rows).Error; err != nil {
+		Order("created_at DESC, id DESC")
+	if len(statuses) > 0 {
+		query = query.Where("status IN ?", statuses)
+	}
+	if err := query.Limit(normalizeTaskStateLimit(limit)).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	result := make([]ReviewQueueItem, 0, len(rows))

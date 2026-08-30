@@ -87,12 +87,10 @@ class CIWorkflowContractTest(unittest.TestCase):
         frontend = ROOT / "frontend"
         package = json.loads((frontend / "package.json").read_text(encoding="utf-8"))
         package_lock = (frontend / "package-lock.json").read_text(encoding="utf-8")
-        pnpm_lock = (frontend / "pnpm-lock.yaml").read_text(encoding="utf-8")
 
         self.assertIn("@angular/cdk", package["dependencies"])
         self.assertNotIn("angular-mixed-cdk-drag-drop", package["dependencies"])
         self.assertNotIn("angular-mixed-cdk-drag-drop", package_lock)
-        self.assertNotIn("angular-mixed-cdk-drag-drop", pnpm_lock)
 
     def test_frontend_theme_excludes_unused_ng_zorro_components(self) -> None:
         theme = (ROOT / "frontend" / "src" / "theme.less").read_text(

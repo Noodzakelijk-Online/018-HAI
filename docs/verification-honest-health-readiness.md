@@ -462,10 +462,39 @@ connected accounts, and target-machine acceptance remain release gates. Treat
 the next completed CI run and the target-machine acceptance run as the
 authoritative evidence for those environments.
 
-The same pass also ran the production-dependency frontend audit. It reported 12
-high and 1 moderate advisory in the Angular 16 dependency family. The audit is
-therefore not green and remains an explicit release gate; see
-`docs/dependency-vulnerabilities.md`. No breaking automatic upgrade was applied.
+That dated pass also ran the production-dependency frontend audit and found 12
+high and 1 moderate advisory in the Angular 16 dependency family. The finding
+was subsequently superseded by the coordinated 2026-08-09 Angular 22 migration:
+the full audit now reports 3 moderate development-tool findings and 0
+high/critical, and `npm audit --audit-level=high` is blocking. See
+`docs/dependency-vulnerabilities.md` for the accepted scope and review deadline.
+
+### 2026-08-09 live Windows regression acceptance
+
+The current Angular 22 frontend, IDP, and task-review backend were rebuilt and
+deployed into the retained local Windows Compose stack. The full backend and
+IDP Go suites passed, all 379 frontend tests passed under Node 22.22.3, the
+production frontend build passed, and all 17 executable CI contract tests
+passed. An authenticated browser run against `http://localhost` verified login,
+the shared shell, Basic-to-Advanced disclosure, mobile overflow, and meaningful
+content on Control Center, Pursuits, Workflow Engine, Task Blueprint, Connected
+Sources, Framework Registry, Runtime Control, and System Status. The browser
+reported no console or HTTP failures.
+
+This pass also repaired two live defects rather than masking them: the pending
+task review queue no longer fails because of unreadable resolved history, and
+the signed-out session probe now returns an explicit unauthenticated status
+without producing a normal 401 console error. Historical task digests are
+accepted only when they exactly match the legacy v1 algorithm and carry none of
+the newer mandate or coordination provenance, preserving the fail-closed trust
+boundary.
+
+The repository now also contains a disabled-by-default, digest-pinned ngrok
+profile and a Windows public-exposure preflight. Static CI contracts, Compose
+validation, ngrok v3 configuration validation, shell syntax, and positive and
+negative fail-closed gate cases pass. No live ngrok token or public endpoint was
+used in this verification, so external tunnel and callback behavior remains a
+target-environment acceptance gate rather than a readiness claim.
 
 ### Known recovery and deployment gaps
 

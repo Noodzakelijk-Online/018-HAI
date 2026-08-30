@@ -76,6 +76,14 @@ type TaskStateRepository interface {
 	FindApprovedReviewDecision(ownerIdentity, reviewItemID string) (*ReviewDecisionRecord, error)
 }
 
+// PendingReviewStateRepository lets the interactive queue read only work that
+// still requires a decision. Historical outcomes remain available to audit and
+// reconciliation paths, but an unreadable legacy outcome cannot take the live
+// approval queue offline.
+type PendingReviewStateRepository interface {
+	ListPendingReviewItems(ownerIdentity string, limit int) ([]ReviewQueueItem, error)
+}
+
 // ReviewResolution is the only input required to resolve an open review item.
 // The repository derives ResolvedBy and the trusted approval source from the
 // authenticated owner and stored item; callers cannot spoof either field.
@@ -174,6 +182,50 @@ func ReviewRequestDigest(ownerIdentity string, request IntakeRequest) (string, e
 	payload, _, err := marshalSanitizedJSONObject(projection)
 	if err != nil {
 		return "", fmt.Errorf("encode review request digest: %w", err)
+	}
+	sum := sha256.Sum256([]byte(payload))
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// reviewRequestDigestV1 verifies records written before mandate and accepted
+// plan-revision provenance became part of the reviewed action identity. It may
+// only be used when those newer fields are absent, otherwise accepting the old
+// digest would leave action-defining data outside the integrity boundary.
+func reviewRequestDigestV1(ownerIdentity string, request IntakeRequest) (string, error) {
+	if strings.TrimSpace(request.MandateID) != "" || !request.CoordinationPlan.IsZero() {
+		return "", fmt.Errorf("legacy review digest cannot cover mandate or coordination provenance")
+	}
+	ownerIdentity, err := normalizeTaskStateOwner(ownerIdentity)
+	if err != nil {
+		return "", err
+	}
+	if requestOwner := strings.TrimSpace(request.OwnerIdentity); requestOwner != "" && requestOwner != ownerIdentity {
+		return "", fmt.Errorf("%w: request owner differs from repository owner", ErrTaskReviewBindingMismatch)
+	}
+	requestText := strings.TrimSpace(request.Request)
+	if requestText == "" {
+		return "", fmt.Errorf("review request is required")
+	}
+	projection := struct {
+		OwnerIdentity   string   `json:"ownerIdentity"`
+		PursuitID       string   `json:"pursuitId,omitempty"`
+		WorkflowID      string   `json:"workflowId,omitempty"`
+		Request         string   `json:"request"`
+		ProjectKey      string   `json:"projectKey,omitempty"`
+		AutomationID    string   `json:"automationId,omitempty"`
+		SuccessCriteria []string `json:"successCriteria,omitempty"`
+	}{
+		OwnerIdentity:   ownerIdentity,
+		PursuitID:       strings.TrimSpace(request.PursuitID),
+		WorkflowID:      strings.TrimSpace(request.WorkflowID),
+		Request:         requestText,
+		ProjectKey:      strings.TrimSpace(request.ProjectKey),
+		AutomationID:    strings.TrimSpace(request.AutomationID),
+		SuccessCriteria: append([]string(nil), request.SuccessCriteria...),
+	}
+	payload, _, err := marshalSanitizedJSONObject(projection)
+	if err != nil {
+		return "", fmt.Errorf("encode legacy review request digest: %w", err)
 	}
 	sum := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(sum[:]), nil
@@ -351,7 +403,10 @@ func reviewItemFromModel(row models.TaskReviewItemRecord, latest *models.TaskRev
 		return ReviewQueueItem{}, fmt.Errorf("verify review item %s request: %w", row.ID, err)
 	}
 	if digest != row.RequestDigest {
-		return ReviewQueueItem{}, fmt.Errorf("review item %s request digest mismatch", row.ID)
+		legacyDigest, legacyErr := reviewRequestDigestV1(row.OwnerIdentity, request)
+		if legacyErr != nil || legacyDigest != row.RequestDigest {
+			return ReviewQueueItem{}, fmt.Errorf("review item %s request digest mismatch", row.ID)
+		}
 	}
 	item := ReviewQueueItem{
 		ID:         row.ID.String(),

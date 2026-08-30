@@ -1,5 +1,12 @@
 # Final Verification Report — Codex Goal Run
 
+> Historical evidence note (2026-08-09): this report records the 2026-07-08
+> run and must not be read as the current dependency or runtime status. Current
+> evidence is maintained in `docs/completion-matrix.md`,
+> `docs/dependency-vulnerabilities.md`, and the CI workflow contract. In
+> particular, Go is now 1.25.12, the frontend is Angular 22.1.1 with 379 tests,
+> and high/critical dependency scans are blocking.
+
 **Phases covered:** 093 (Manual verification evidence), 094 (Final no-excuses search), 096 (Final verification report), 097 (Final response requirements)
 **Date:** 2026-07-08 (final, post-implementation)
 **Base:** `main` @ `0f7f12c` → work delivered via PR #13 (merged)

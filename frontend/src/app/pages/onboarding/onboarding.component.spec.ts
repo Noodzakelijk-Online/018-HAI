@@ -35,6 +35,7 @@ describe('OnboardingComponent', () => {
 
   it('uses the shared theme token for its explanatory text', () => {
     const styles = (OnboardingComponent as any).ɵcmp.styles.join('\n');
-    expect(styles).toContain('color: var(--hai-muted)');
+    // Angular 22 namespaces CSS custom properties in compiled component styles.
+    expect(styles).toMatch(/color:\s*var\(--(?:%NS%)?hai-muted\)/);
   });
 });

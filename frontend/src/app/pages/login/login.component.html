@@ -69,7 +69,8 @@
         nzHasFeedback
         [nzValidateStatus]="validateForm.controls['password']"
       >
-        <nz-input-group nzPrefixIcon="lock" [nzSuffix]="suffixIcon">
+        <nz-input-wrapper>
+          <ng-template nzInputPrefix><i nz-icon nzType="lock" aria-hidden="true"></i></ng-template>
           <input
             type="password"
             nz-input
@@ -80,9 +81,7 @@
             [attr.autocomplete]="recoveryMode ? 'new-password' : 'current-password'"
             data-testid="login-password"
           />
-        </nz-input-group>
-
-        <ng-template #suffixIcon>
+          <ng-template nzInputSuffix>
           <button
             type="button"
             class="password-visibility-toggle"
@@ -92,7 +91,8 @@
           >
             <i nz-icon [nzType]="hidePassword ? 'eye-invisible' : 'eye'" aria-hidden="true"></i>
           </button>
-        </ng-template>
+          </ng-template>
+        </nz-input-wrapper>
       </nz-form-control>
     </nz-form-item>
 

@@ -137,6 +137,26 @@ func TestCurrentSessionIgnoresIdentityHeaders(t *testing.T) {
 	require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
 }
 
+func TestCurrentSessionReturnsExplicitUnauthenticatedState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(&middlewareAuthService{})
+	router := gin.New()
+	router.GET("/session", handler.CurrentSession)
+
+	request := httptest.NewRequest(http.MethodGet, "/session", nil)
+	request.Header.Set("X-HAI-Role", "owner")
+	request.Header.Set("X-HAI-Subject", "spoofed-owner")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var session dto.AuthSession
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &session))
+	require.False(t, session.Authenticated)
+	require.Empty(t, session.Subject)
+	require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+}
+
 func TestCurrentSessionRefreshOnlySessionSetsAccessCookie(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	userID := uuid.New()
