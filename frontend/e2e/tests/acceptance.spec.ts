@@ -68,7 +68,19 @@ test.describe('HAI operator acceptance flow', () => {
       sourceName = `E2E local source ${Date.now()}`;
       await page.getByTestId('source-name').fill(sourceName);
       await page.getByTestId('source-target').fill('.');
+      const createResponse = page.waitForResponse(
+        (response) => response.url().includes('/api/v1/sources/')
+          && response.request().method() === 'POST'
+      );
+      const sourceListResponse = page.waitForResponse(
+        (response) => response.url().includes('/api/v1/sources/?includeDisabled=true')
+          && response.request().method() === 'GET'
+      );
       await page.getByTestId('source-connect').click();
+      const createdSource = await (await createResponse).json();
+      expect(createdSource.name).toBe(sourceName);
+      const listedSources = await (await sourceListResponse).json();
+      expect(listedSources.map((source: { name: string }) => source.name)).toContain(sourceName);
 
       const sourceRow = page.getByTestId('source-row').filter({ hasText: sourceName });
       await expect(sourceRow).toBeVisible();
