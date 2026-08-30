@@ -152,7 +152,13 @@ echo "==> Resume re-enables processing"
 resume_authorization="$(curl -fsS "${hdr[@]}" -X POST "${BASE}/background/resume/approval")"
 check "resume approval is effect-bound" 'true' \
   "$(echo "${resume_authorization}" | jq -r '(.idempotencyKey != "") and (.taskId != "") and (.approvalSourceId | startswith("opscontrol-owner:")) and (.approvalBindingDigest | length == 64)')"
-curl -fsS "${hdr[@]}" -X POST "${BASE}/background/resume" -d "${resume_authorization}" >/dev/null
+resume_response="$(curl -sS -w $'\n%{http_code}' "${hdr[@]}" -X POST "${BASE}/background/resume" -d "${resume_authorization}")"
+resume_status="${resume_response##*$'\n'}"
+resume_body="${resume_response%$'\n'*}"
+if [ "${resume_status}" != "200" ]; then
+  echo "resume failed with HTTP ${resume_status}: ${resume_body}" >&2
+  exit 1
+fi
 check "processing active after resume" 'true' \
   "$(curl -sS "${hdr[@]}" "${BASE}/background/status" | jq -r '.backgroundProcessingActive==true')"
 run_resumed="$(curl -sS "${hdr[@]}" -X POST "${BASE}/background/run")"
