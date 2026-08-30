@@ -31,6 +31,8 @@ test.describe('HAI operator acceptance flow', () => {
   );
 
   test('login -> source -> sync -> workflow -> approval -> exact bounded execution', async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
     let sourceName = '';
     const runId = Date.now();
     const pursuitName = `E2E governed pursuit ${runId}`;
@@ -81,7 +83,12 @@ test.describe('HAI operator acceptance flow', () => {
       expect(createdSource.name).toBe(sourceName);
       const listedSources = await (await sourceListResponse).json();
       expect(listedSources.map((source: { name: string }) => source.name)).toContain(sourceName);
-      await expect(page.getByTestId('source-list')).toHaveAttribute('data-source-count', '1');
+      try {
+        await expect(page.getByTestId('source-list')).toHaveAttribute('data-source-count', '1');
+      } catch (error) {
+        const browserErrors = pageErrors.length ? pageErrors.join(' | ') : 'none';
+        throw new Error(`${error instanceof Error ? error.message : String(error)}\nBrowser runtime errors: ${browserErrors}`);
+      }
 
       const sourceRow = page.getByTestId('source-row').filter({ hasText: sourceName });
       await expect(sourceRow).toBeVisible();
