@@ -107,6 +107,10 @@ test.describe('HAI operator acceptance flow', () => {
         `Email from lawyer: run the HAI backend readiness ${capabilityMarker}, attach the source-grounded result, and prepare it for Robert's approval.`
       );
       await page.getByTestId('workflow-project-key').fill(projectKey);
+      await page.getByTestId('workflow-match-pursuit').click();
+      const pursuitMatch = page.locator('.pursuit-match-card').filter({ hasText: pursuitName });
+      await expect(pursuitMatch).toBeVisible();
+      await pursuitMatch.click();
       await page.getByTestId('workflow-create').click();
       await expect(
         page.getByTestId('workflow-approval-controls').or(page.getByTestId('workflow-runtime-selection'))
