@@ -104,7 +104,7 @@ test.describe('HAI operator acceptance flow', () => {
     await test.step('create an explicitly approval-gated workflow', async () => {
       await page.goto('/workflow-engine');
       await page.locator('#workflow-intake-input').fill(
-        `Run the HAI backend readiness ${capabilityMarker} only after explicit human approval and attach the source-grounded result.`
+        `Email from lawyer: run the HAI backend readiness ${capabilityMarker}, attach the source-grounded result, and prepare it for Robert's approval.`
       );
       await page.getByTestId('workflow-project-key').fill(projectKey);
       await page.getByTestId('workflow-create').click();
