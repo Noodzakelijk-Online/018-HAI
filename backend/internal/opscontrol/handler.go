@@ -145,6 +145,7 @@ func (h *Handler) Resume(c *gin.Context) {
 	if err != nil {
 		c.JSON(controlErrorStatus(err), gin.H{
 			"error":         publicControlError(err),
+			"reasonCode":    publicControlReasonCode(err),
 			"emergencyStop": h.svc.Control().EmergencyState(),
 		})
 		return
@@ -170,7 +171,10 @@ func (h *Handler) SetMode(c *gin.Context) {
 		h.controlAuthorization(c, req.controlAuthorizationRequest),
 	)
 	if err != nil {
-		c.JSON(controlErrorStatus(err), gin.H{"error": publicControlError(err)})
+		c.JSON(controlErrorStatus(err), gin.H{
+			"error":      publicControlError(err),
+			"reasonCode": publicControlReasonCode(err),
+		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"mode": mode})
@@ -235,5 +239,30 @@ func publicControlError(err error) string {
 		return "safety-control state changed; refresh and retry"
 	default:
 		return apierror.PublicMessage(err, "safety-control request could not be completed")
+	}
+}
+
+// publicControlReasonCode gives authenticated clients a stable recovery hint
+// without disclosing the wrapped authorization error or approval material.
+func publicControlReasonCode(err error) string {
+	var failure *controlAuthorizationFailure
+	if errors.As(err, &failure) && failure.code != "" {
+		return failure.code
+	}
+	switch {
+	case errors.Is(err, ErrUnauthenticated):
+		return "control.authorization.actor_missing"
+	case errors.Is(err, ErrAuthorizationMismatch):
+		return "control.authorization.effect_mismatch"
+	case errors.Is(err, ErrAuthorizationUnavailable):
+		return "control.authorization.unavailable"
+	case errors.Is(err, ErrAuthorizationDenied):
+		return "control.authorization.denied"
+	case errors.Is(err, ErrControlPersistence):
+		return "control.persistence_failed"
+	case errors.Is(err, ErrEmergencyStopStateChanged), errors.Is(err, ErrAutonomyModeStateChanged):
+		return "control.state_changed"
+	default:
+		return "control.request_failed"
 	}
 }

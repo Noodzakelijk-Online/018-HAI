@@ -27,3 +27,16 @@ func TestPublicControlErrorKeepsActionableSafetyStates(t *testing.T) {
 		t.Fatalf("concurrent message = %q", got)
 	}
 }
+
+func TestPublicControlReasonCodeDoesNotExposeAuthorizationDetails(t *testing.T) {
+	err := controlAuthorizationFailureFor(
+		"control.authorization.execution_denied",
+		errors.New("provider rejected signature=super-secret"),
+	)
+	if got := publicControlReasonCode(err); got != "control.authorization.execution_denied" {
+		t.Fatalf("reason code = %q", got)
+	}
+	if strings.Contains(publicControlReasonCode(err), "secret") {
+		t.Fatal("reason code leaked internal authorization detail")
+	}
+}

@@ -31,6 +31,24 @@ var (
 	ErrAuthorizationMismatch    = errors.New("opscontrol authorization does not match the requested control change")
 )
 
+// controlAuthorizationFailure keeps a stable, safe-to-expose diagnostic code
+// alongside the underlying fail-closed error. The HTTP layer exposes the code
+// but never the wrapped error, which may include implementation details.
+type controlAuthorizationFailure struct {
+	code  string
+	cause error
+}
+
+func (e *controlAuthorizationFailure) Error() string {
+	return fmt.Sprintf("%s: %v", e.code, e.cause)
+}
+
+func (e *controlAuthorizationFailure) Unwrap() error { return e.cause }
+
+func controlAuthorizationFailureFor(code string, cause error) error {
+	return &controlAuthorizationFailure{code: code, cause: cause}
+}
+
 // ExecutionAuthorizer is the consumed authorization boundary used immediately
 // before a safety control is weakened. Production composition injects the
 // shared executionauth service; tests can inject a strict spy.
@@ -77,22 +95,28 @@ func (s *Service) authorizeSafetyChange(
 	auth.ApprovalBindingDigest = strings.ToLower(strings.TrimSpace(auth.ApprovalBindingDigest))
 
 	if auth.ActorIdentity == "" {
-		return ErrUnauthenticated
+		return controlAuthorizationFailureFor("control.authorization.actor_missing", ErrUnauthenticated)
 	}
 	if strings.TrimSpace(s.owner) == "" {
-		return fmt.Errorf("%w: owner identity is not configured", ErrAuthorizationUnavailable)
+		return controlAuthorizationFailureFor(
+			"control.authorization.owner_unconfigured",
+			fmt.Errorf("%w: owner identity is not configured", ErrAuthorizationUnavailable),
+		)
 	}
 	// The direct owner-confirmation source is intentionally non-delegable. Other
 	// approval sources retain their existing policy-specific actor semantics.
 	if strings.HasPrefix(auth.ApprovalSourceID, OwnerControlApprovalPrefix) && auth.ActorIdentity != s.owner {
-		return ErrAuthorizationDenied
+		return controlAuthorizationFailureFor("control.authorization.owner_mismatch", ErrAuthorizationDenied)
 	}
 	if s.authorization == nil {
-		return ErrAuthorizationUnavailable
+		return controlAuthorizationFailureFor("control.authorization.unavailable", ErrAuthorizationUnavailable)
 	}
 	if auth.IdempotencyKey == "" || auth.TaskID == "" ||
 		auth.ApprovalSourceID == "" || auth.ApprovalBindingDigest == "" {
-		return fmt.Errorf("%w: fresh approval references are required", ErrAuthorizationDenied)
+		return controlAuthorizationFailureFor(
+			"control.authorization.references_missing",
+			fmt.Errorf("%w: fresh approval references are required", ErrAuthorizationDenied),
+		)
 	}
 
 	effectDigest, err := controlEffectDigest(controlEffect{
@@ -104,10 +128,13 @@ func (s *Service) authorizeSafetyChange(
 		Target:        target,
 	})
 	if err != nil {
-		return fmt.Errorf("derive safety-control effect: %w", err)
+		return controlAuthorizationFailureFor(
+			"control.authorization.effect_unavailable",
+			fmt.Errorf("derive safety-control effect: %w", err),
+		)
 	}
 	if auth.ApprovalBindingDigest != effectDigest {
-		return ErrAuthorizationMismatch
+		return controlAuthorizationFailureFor("control.authorization.effect_mismatch", ErrAuthorizationMismatch)
 	}
 
 	request := executionauth.Request{
@@ -141,9 +168,15 @@ func (s *Service) authorizeSafetyChange(
 		action+":"+resourceID,
 	)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAuthorizationDenied, err)
+		return controlAuthorizationFailureFor(
+			"control.authorization.execution_denied",
+			fmt.Errorf("%w: %v", ErrAuthorizationDenied, err),
+		)
 	}
-	return s.validateSafetyReceipt(receipt, request)
+	if err := s.validateSafetyReceipt(receipt, request); err != nil {
+		return controlAuthorizationFailureFor("control.authorization.receipt_invalid", err)
+	}
+	return nil
 }
 
 func (s *Service) validateSafetyReceipt(
