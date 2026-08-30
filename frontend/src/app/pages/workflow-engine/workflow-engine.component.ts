@@ -1,4 +1,4 @@
-import { Component, Inject, OnDestroy, OnInit, ViewEncapsulation } from '@angular/core';
+import { ChangeDetectorRef, Component, Inject, OnDestroy, OnInit, ViewEncapsulation } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
@@ -124,7 +124,8 @@ export class WorkflowEngineComponent implements OnInit, OnDestroy {
     private notification: NzNotificationService,
     private modal: NzModalService,
     private route: ActivatedRoute,
-    private router: Router
+    private router: Router,
+    private changeDetector: ChangeDetectorRef
   ) {}
 
   ngOnInit(): void {
@@ -314,6 +315,9 @@ export class WorkflowEngineComponent implements OnInit, OnDestroy {
         if (!this.selectedPursuitMatch && matches[0].score >= 0.7) {
           this.selectedPursuitMatch = matches[0];
         }
+        // Matching can be initiated from the shared shell after a lazy route
+        // change. Render the returned, selectable candidates immediately.
+        this.changeDetector.detectChanges();
       },
       error: () => {
         this.matchingPursuits = false;

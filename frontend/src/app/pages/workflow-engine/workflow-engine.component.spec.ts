@@ -110,6 +110,7 @@ describe('WorkflowEngineComponent', () => {
     notification: jasmine.SpyObj<any>;
     modal: jasmine.SpyObj<any>;
     router: jasmine.SpyObj<any>;
+    changeDetector: jasmine.SpyObj<any>;
   } {
     const workflowService = jasmine.createSpyObj('workflowService', [
       'overview',
@@ -141,10 +142,28 @@ describe('WorkflowEngineComponent', () => {
     const modal = jasmine.createSpyObj('modal', ['confirm']);
     const route = { snapshot: { queryParamMap: convertToParamMap({}) } } as any;
     const router = jasmine.createSpyObj('router', ['navigate']);
-    const component = new WorkflowEngineComponent(new FormBuilder(), workflowService, pursuitService, notification, modal, route, router);
+    const changeDetector = jasmine.createSpyObj('changeDetector', ['detectChanges']);
+    const component = new WorkflowEngineComponent(new FormBuilder(), workflowService, pursuitService, notification, modal, route, router, changeDetector);
     spyOn(component, 'refresh');
-    return { component, workflowService, pursuitService, notification, modal, router };
+    return { component, workflowService, pursuitService, notification, modal, router, changeDetector };
   }
+
+  it('renders returned pursuit matches immediately after an operator requests them', () => {
+    const { component, pursuitService, changeDetector } = createComponent();
+    component.intakeForm.patchValue({ input: 'Prepare the evidence bundle', projectKey: 'vivare' });
+    pursuitService.match.and.returnValue(of([{
+      pursuit: { id: 'pursuit-1', title: 'Vivare evidence bundle' },
+      score: 0.9,
+      confidence: 'high',
+      reasons: ['project key matches'],
+    }]));
+
+    component.matchPursuits();
+
+    expect(component.pursuitMatches.length).toBe(1);
+    expect(component.selectedPursuitMatch?.pursuit.id).toBe('pursuit-1');
+    expect(changeDetector.detectChanges).toHaveBeenCalled();
+  });
 
   it('starts manual intake without executable demo provenance', () => {
     const { component } = createComponent();
