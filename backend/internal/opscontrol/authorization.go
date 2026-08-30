@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"regexp"
 	"strings"
 	"time"
 
 	"automation-hub-backend/internal/executionauth"
+	"automation-hub-backend/internal/safety"
 
 	"github.com/google/uuid"
 )
@@ -29,6 +32,10 @@ var (
 	ErrAuthorizationUnavailable = errors.New("opscontrol authorization is unavailable")
 	ErrAuthorizationDenied      = errors.New("opscontrol authorization was denied")
 	ErrAuthorizationMismatch    = errors.New("opscontrol authorization does not match the requested control change")
+)
+
+var ownerControlApprovalReferencePattern = regexp.MustCompile(
+	`opscontrol-owner:[A-Za-z0-9:_-]+`,
 )
 
 // controlAuthorizationFailure keeps a stable, safe-to-expose diagnostic code
@@ -168,8 +175,15 @@ func (s *Service) authorizeSafetyChange(
 		action+":"+resourceID,
 	)
 	if err != nil {
+		code := controlExecutionAuthorizationCode(receipt, err)
+		log.Printf(
+			"opscontrol safety authorization rejected: code=%s receipt_present=%t detail=%s",
+			code,
+			receipt.ID != uuid.Nil,
+			controlAuthorizationDiagnostic(err),
+		)
 		return controlAuthorizationFailureFor(
-			controlExecutionAuthorizationCode(receipt, err),
+			code,
 			fmt.Errorf("%w: %v", ErrAuthorizationDenied, err),
 		)
 	}
@@ -177,6 +191,22 @@ func (s *Service) authorizeSafetyChange(
 		return controlAuthorizationFailureFor("control.authorization.receipt_invalid", err)
 	}
 	return nil
+}
+
+func controlAuthorizationDiagnostic(err error) string {
+	if err == nil {
+		return "none"
+	}
+	value := safety.RedactSecrets(err.Error())
+	value = ownerControlApprovalReferencePattern.ReplaceAllString(
+		value,
+		"opscontrol-owner:[REDACTED]",
+	)
+	value = strings.Join(strings.Fields(value), " ")
+	if len(value) > 512 {
+		return value[:512]
+	}
+	return value
 }
 
 // controlExecutionAuthorizationCode permits only the execution boundary's

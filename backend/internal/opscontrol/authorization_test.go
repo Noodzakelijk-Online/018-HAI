@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -578,6 +579,26 @@ func TestControlExecutionAuthorizationCodeIsBoundedAndActionable(t *testing.T) {
 	}
 	if got := controlExecutionAuthorizationCode(executionauth.Receipt{}, executionauth.ErrAuthorizationChanged); got != "control.execution.policy_changed" {
 		t.Fatalf("changed policy code = %q", got)
+	}
+}
+
+func TestControlAuthorizationDiagnosticRedactsOwnerApprovalCapability(t *testing.T) {
+	err := errors.New(
+		"authorization rejected source=opscontrol-owner:1756540800000000000:0123456789abcdef0123456789abcdef:signed-proof token=top-secret",
+	)
+	got := controlAuthorizationDiagnostic(err)
+	for _, forbidden := range []string{
+		"1756540800000000000",
+		"0123456789abcdef0123456789abcdef",
+		"signed-proof",
+		"top-secret",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("diagnostic leaked %q: %s", forbidden, got)
+		}
+	}
+	if !strings.Contains(got, "opscontrol-owner:[REDACTED]") {
+		t.Fatalf("diagnostic did not retain redacted source type: %s", got)
 	}
 }
 
