@@ -1,12 +1,27 @@
 package opscontrol
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"automation-hub-backend/internal/executionauth"
 )
+
+type allowExactControlConstitution struct{}
+
+func (allowExactControlConstitution) EvaluateExecutionPolicy(
+	_ string,
+	_ []string,
+	_ int,
+) (executionauth.ConstitutionDecision, error) {
+	return executionauth.ConstitutionDecision{
+		ID: "opscontrol-test-policy", Version: 1, Source: "test", Digest: strings.Repeat("c", 64), AuthorityCeiling: 10,
+	}, nil
+}
 
 func TestOwnerControlApprovalBindsOwnerEffectAndFreshness(t *testing.T) {
 	service, err := NewOwnerControlApprovalService([]byte("01234567890123456789012345678901"))
@@ -84,5 +99,33 @@ func TestPrepareEmergencyStopResumeRequiresOwnerExactStopAndIssuer(t *testing.T)
 	if auth.ActorIdentity != service.owner || auth.TaskID != "opscontrol-emergency-stop-"+strconv.FormatUint(state.Revision, 10) ||
 		!strings.HasPrefix(auth.ApprovalSourceID, OwnerControlApprovalPrefix) || !isSHA256Digest(auth.ApprovalBindingDigest) {
 		t.Fatalf("prepared control authorization = %#v", auth)
+	}
+
+	// Exercise the same direct owner approval and live persisted-stop evidence
+	// used by the production composition. This prevents a shape-only test from
+	// masking a resume path that cannot actually consume its approval.
+	authorization, err := executionauth.NewService(
+		executionauth.NewMemoryRepository(),
+		allowExactControlConstitution{},
+		nil,
+		nil,
+		issuer,
+		service.now,
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	authorization.WithEmergencyStopEvaluator(func() executionauth.EmergencyStopEvidence {
+		current := service.Control().EmergencyState()
+		return executionauth.EmergencyStopEvidence{
+			Active: current.Engaged, Source: "persisted_control", Reason: current.Reason,
+		}
+	})
+	service.WithExecutionAuthorizer(authorization)
+	if _, err := service.DisengageEmergencyStop(context.Background(), auth); err != nil {
+		t.Fatalf("DisengageEmergencyStop with owner approval: %v", err)
+	}
+	if service.Control().EmergencyStop() {
+		t.Fatal("consumed owner approval must clear the exact stop revision")
 	}
 }

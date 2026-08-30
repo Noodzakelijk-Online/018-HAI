@@ -157,6 +157,12 @@ resume_status="${resume_response##*$'\n'}"
 resume_body="${resume_response%$'\n'*}"
 if [ "${resume_status}" != "200" ]; then
   echo "resume failed with HTTP ${resume_status}: ${resume_body}" >&2
+  # The public control endpoint deliberately keeps authorization failures
+  # generic. Its owner-scoped inspection ledger exposes the policy reason
+  # codes without printing the approval capability or other secret material.
+  curl -sS "${hdr[@]}" "${BASE}/execution-authorizations?limit=3" \
+    | jq -c '{receipts: [.receipts[] | select(.action == "opscontrol.emergency-stop.clear") | {outcome, reason, evidence: {reasonCodes: .evidence.reasonCodes, constitution: {requestedCapabilities: .evidence.constitution.requestedCapabilities, deniedCapabilities: .evidence.constitution.deniedCapabilities, authorityCeiling: .evidence.constitution.authorityCeiling}}}]}' >&2 \
+    || true
   exit 1
 fi
 check "processing active after resume" 'true' \

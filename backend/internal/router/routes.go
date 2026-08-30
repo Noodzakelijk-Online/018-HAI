@@ -644,6 +644,18 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 			executionAuthorizationService,
 		)
 		opsControlService.WithOwnerControlApprovalIssuer(ownerControlApprovalService)
+		// The final authorization boundary must read the same persisted control
+		// state that this service will mutate. Relying only on the process-wide
+		// safety provider makes the composition implicit and can drift in tests
+		// or alternate startup paths.
+		executionAuthorizationService.WithEmergencyStopEvaluator(func() executionauth.EmergencyStopEvidence {
+			state := opsControlService.Control().EmergencyState()
+			return executionauth.EmergencyStopEvidence{
+				Active: state.Engaged,
+				Source: "persisted_control",
+				Reason: state.Reason,
+			}
+		})
 		initializeExecutionAuthorizationRoutes(
 			v1,
 			executionauth.NewInspectionHandler(executionAuthorizationService),
