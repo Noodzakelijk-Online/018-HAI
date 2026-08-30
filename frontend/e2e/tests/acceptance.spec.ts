@@ -82,13 +82,16 @@ test.describe('HAI operator acceptance flow', () => {
       const listedSources = await (await sourceListResponse).json();
       expect(listedSources.map((source: { name: string }) => source.name)).toContain(sourceName);
       const componentSourceNames = await page.locator('app-connected-sources').evaluate((element) => {
-        const context = (element as HTMLElement & { __ngContext__?: unknown[] }).__ngContext__ || [];
-        const component = context.find((candidate): candidate is { sources?: Array<{ name?: string }> } =>
-          typeof candidate === 'object'
-          && candidate !== null
-          && 'sources' in candidate
-          && Array.isArray((candidate as { sources?: unknown }).sources)
+        const context = Array.from(
+          (element as HTMLElement & { __ngContext__?: ArrayLike<unknown> }).__ngContext__ || []
         );
+        const component = context.find((candidate): candidate is {
+          connectSource?: unknown;
+          sources?: Array<{ name?: string }>;
+        } => typeof candidate === 'object'
+          && candidate !== null
+          && typeof (candidate as { connectSource?: unknown }).connectSource === 'function'
+          && Array.isArray((candidate as { sources?: unknown }).sources));
         return component?.sources?.map((source) => source.name) || [];
       });
       expect(componentSourceNames).toContain(sourceName);
