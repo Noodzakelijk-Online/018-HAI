@@ -100,6 +100,24 @@ func autoMigrateEnabled() bool {
 	}
 }
 
+// autoMigrateMissingTables is intentionally narrower than GORM AutoMigrate.
+// Versioned SQL is authoritative for every existing table, index, and
+// constraint. In the deliberate development-only AutoMigrate mode, only a
+// model whose table is genuinely absent may be materialised. Altering an
+// existing table remains a reviewed migration responsibility.
+func autoMigrateMissingTables(db *gorm.DB, candidates ...interface{}) error {
+	missing := make([]interface{}, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !db.Migrator().HasTable(candidate) {
+			missing = append(missing, candidate)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return db.AutoMigrate(missing...)
+}
+
 func RunMigrations(db *gorm.DB) error {
 	// Phase 1: versioned migrations that must precede table creation (extensions
 	// the models' UUID defaults depend on).
@@ -115,11 +133,13 @@ func RunMigrations(db *gorm.DB) error {
 		}
 	}
 
-	// Phase 2: optional dev-only table sync. The baseline migration already
-	// created every table, so this is opt-in (DB_AUTOMIGRATE=true) and exists
-	// only to materialise a newly-added model before its migration is generated.
+	// Phase 2: optional dev-only missing-table creation. The baseline migration
+	// already created every versioned table, so this is opt-in
+	// (DB_AUTOMIGRATE=true) and exists only to materialise a newly-added model
+	// before its migration is generated. It must never alter migration-owned
+	// columns, indexes, or constraints.
 	if autoMigrateEnabled() {
-		if err := db.AutoMigrate(
+		if err := autoMigrateMissingTables(db,
 			&models.Automation{},
 			&models.AutomationHealthEvent{},
 			&models.AutomationLaunchEvent{},
@@ -157,10 +177,7 @@ func RunMigrations(db *gorm.DB) error {
 			&models.WorkflowSourceLink{},
 			&models.WorkflowDecision{},
 			&models.WorkflowEvent{},
-			// WorkflowCompletionAttestation is fully owned by versioned migration
-			// 0044. Do not hand its legacy UNIQUE constraint to AutoMigrate: GORM
-			// derives a different constraint name and attempts an unsafe drop on a
-			// schema that was already migrated correctly.
+			&models.WorkflowCompletionAttestation{},
 			&models.WorkflowReminderActivationRequest{},
 			&models.WorkflowReminderActivationDecision{},
 			&models.Pursuit{},

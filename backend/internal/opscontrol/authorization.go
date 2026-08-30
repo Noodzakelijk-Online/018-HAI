@@ -82,6 +82,11 @@ func (s *Service) authorizeSafetyChange(
 	if strings.TrimSpace(s.owner) == "" {
 		return fmt.Errorf("%w: owner identity is not configured", ErrAuthorizationUnavailable)
 	}
+	// The direct owner-confirmation source is intentionally non-delegable. Other
+	// approval sources retain their existing policy-specific actor semantics.
+	if strings.HasPrefix(auth.ApprovalSourceID, OwnerControlApprovalPrefix) && auth.ActorIdentity != s.owner {
+		return ErrAuthorizationDenied
+	}
 	if s.authorization == nil {
 		return ErrAuthorizationUnavailable
 	}

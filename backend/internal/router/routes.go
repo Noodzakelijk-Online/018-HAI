@@ -511,10 +511,17 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 		if err != nil {
 			return err
 		}
+		ownerControlApprovalService, err := opscontrol.NewOwnerControlApprovalService(
+			[]byte(config.AppConfig.ApprovalProofSigningKey),
+		)
+		if err != nil {
+			return fmt.Errorf("initialize owner control approvals: %w", err)
+		}
 		approvalResolver, err := executionapproval.NewCompositeResolver(
 			taskReviewApprovalResolver,
 			workflowApprovalResolver,
 			portfolioApprovalResolver,
+			ownerControlApprovalService,
 		)
 		if err != nil {
 			return err
@@ -636,6 +643,7 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 		opsControlService.WithExecutionAuthorizer(
 			executionAuthorizationService,
 		)
+		opsControlService.WithOwnerControlApprovalIssuer(ownerControlApprovalService)
 		initializeExecutionAuthorizationRoutes(
 			v1,
 			executionauth.NewInspectionHandler(executionAuthorizationService),
@@ -1766,7 +1774,9 @@ func initializeOpsControlRoutes(apiVersion *gin.RouterGroup, handler *opscontrol
 		// Operators may always halt work. Only an owner may resume it or change
 		// the autonomy mode.
 		bg.POST("/pause", requirePermission(rbac.PermExecute), handler.Pause)
+		bg.POST("/resume/approval", requirePermission(rbac.PermAdmin), handler.PrepareResume)
 		bg.POST("/resume", requirePermission(rbac.PermAdmin), handler.Resume)
+		bg.POST("/mode/approval", requirePermission(rbac.PermAdmin), handler.PrepareModeChange)
 		bg.PATCH("/mode", requirePermission(rbac.PermAdmin), handler.SetMode)
 	}
 	wr := apiVersion.Group("/windows-runtime")

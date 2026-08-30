@@ -109,7 +109,9 @@ export class RuntimeControlComponent implements OnInit {
       return
     }
     this.busy = true
-    this.service.resume().subscribe({
+    this.service.prepareResume().pipe(
+      switchMap((authorization) => this.service.resume(authorization))
+    ).subscribe({
       next: () => {
         this.busy = false
         this.notification.success('Resumed', 'Background processing re-enabled.')
@@ -130,12 +132,22 @@ export class RuntimeControlComponent implements OnInit {
     )) {
       return
     }
-    this.service.setMode(mode).subscribe({
+    this.busy = true
+    this.service.prepareModeChange(mode).pipe(
+      switchMap((result) => result.authorization
+        ? this.service.setMode(mode, result.authorization)
+        : this.service.setMode(mode)
+      )
+    ).subscribe({
       next: () => {
+        this.busy = false
         this.notification.success('Mode updated', `Autonomy mode set to ${mode}.`)
         this.refresh()
       },
-      error: (err) => this.notification.error('Error', err?.error?.error ?? 'Mode change failed.'),
+      error: (err) => {
+        this.busy = false
+        this.notification.error('Error', err?.error?.error ?? 'Mode change failed.')
+      },
     })
   }
 

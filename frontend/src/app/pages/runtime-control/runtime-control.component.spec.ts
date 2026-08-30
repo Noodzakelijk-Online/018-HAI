@@ -97,7 +97,9 @@ describe('RuntimeControlComponent role boundaries', () => {
       'status',
       'readiness',
       'pause',
+      'prepareResume',
       'resume',
+      'prepareModeChange',
       'setMode',
       'verifyEmergencyStop',
       'recover',
@@ -114,7 +116,14 @@ describe('RuntimeControlComponent role boundaries', () => {
     runtimeService.status.and.returnValue(of(activeStatus))
     runtimeService.readiness.and.returnValue(of(readiness))
     runtimeService.pause.and.returnValue(of({ emergencyStop: activeStatus.emergencyStop }))
+    runtimeService.prepareResume.and.returnValue(of({
+      idempotencyKey: 'resume-1',
+      taskId: 'opscontrol-emergency-stop-1',
+      approvalSourceId: 'opscontrol-owner:approval',
+      approvalBindingDigest: 'a'.repeat(64),
+    }))
     runtimeService.resume.and.returnValue(of({ emergencyStop: activeStatus.emergencyStop }))
+    runtimeService.prepareModeChange.and.returnValue(of({ authorizationRequired: false }))
     runtimeService.setMode.and.returnValue(of({ mode: 'read_only' }))
     runtimeService.verifyEmergencyStop.and.returnValue(of({
       engagedDuringTest: true,
@@ -171,7 +180,14 @@ describe('RuntimeControlComponent role boundaries', () => {
     button('Resume').click()
     component.setMode('read_only')
 
-    expect(runtimeService.resume).toHaveBeenCalled()
+    expect(runtimeService.prepareResume).toHaveBeenCalled()
+    expect(runtimeService.resume).toHaveBeenCalledWith({
+      idempotencyKey: 'resume-1',
+      taskId: 'opscontrol-emergency-stop-1',
+      approvalSourceId: 'opscontrol-owner:approval',
+      approvalBindingDigest: 'a'.repeat(64),
+    })
+    expect(runtimeService.prepareModeChange).toHaveBeenCalledWith('read_only')
     expect(runtimeService.setMode).toHaveBeenCalledWith('read_only')
     expect(component.canAdministerRuntime).toBeTrue()
   })

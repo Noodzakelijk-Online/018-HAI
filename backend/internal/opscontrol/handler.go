@@ -58,6 +58,65 @@ type controlAuthorizationRequest struct {
 	ApprovalBindingDigest string `json:"approvalBindingDigest"`
 }
 
+// PrepareResume obtains an explicit, short-lived owner approval bound to the
+// exact persisted emergency-stop revision. The approval cannot itself change
+// state; Resume consumes it immediately.
+func (h *Handler) PrepareResume(c *gin.Context) {
+	actor, ok := h.actor(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated actor is required"})
+		return
+	}
+	authorization, err := h.svc.PrepareEmergencyStopResume(actor)
+	if err != nil {
+		c.JSON(controlErrorStatus(err), gin.H{"error": publicControlError(err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"idempotencyKey":        authorization.IdempotencyKey,
+		"taskId":                authorization.TaskID,
+		"approvalSourceId":      authorization.ApprovalSourceID,
+		"approvalBindingDigest": authorization.ApprovalBindingDigest,
+	})
+}
+
+type prepareModeRequest struct {
+	Mode string `json:"mode"`
+}
+
+// PrepareModeChange returns an approval only for an autonomy escalation.
+// Restrictive transitions deliberately remain usable without a fresh approval.
+func (h *Handler) PrepareModeChange(c *gin.Context) {
+	var request prepareModeRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode is required"})
+		return
+	}
+	actor, ok := h.actor(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated actor is required"})
+		return
+	}
+	authorization, err := h.svc.PrepareAutonomyModeChange(actor, request.Mode)
+	if err != nil {
+		c.JSON(controlErrorStatus(err), gin.H{"error": publicControlError(err)})
+		return
+	}
+	if authorization.IdempotencyKey == "" {
+		c.JSON(http.StatusOK, gin.H{"authorizationRequired": false})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"authorizationRequired": true,
+		"authorization": gin.H{
+			"idempotencyKey":        authorization.IdempotencyKey,
+			"taskId":                authorization.TaskID,
+			"approvalSourceId":      authorization.ApprovalSourceID,
+			"approvalBindingDigest": authorization.ApprovalBindingDigest,
+		},
+	})
+}
+
 func (h *Handler) controlAuthorization(
 	c *gin.Context,
 	req controlAuthorizationRequest,

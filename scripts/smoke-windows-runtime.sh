@@ -149,7 +149,10 @@ check "emergency stop still engaged after restart" 'true' \
   "$(curl -sS "${hdr[@]}" "${BASE}/background/status" | jq -r '.emergencyStop.engaged==true')"
 
 echo "==> Resume re-enables processing"
-curl -sS "${hdr[@]}" -X POST "${BASE}/background/resume" >/dev/null
+resume_authorization="$(curl -fsS "${hdr[@]}" -X POST "${BASE}/background/resume/approval")"
+check "resume approval is effect-bound" 'true' \
+  "$(echo "${resume_authorization}" | jq -r '(.idempotencyKey != "") and (.taskId != "") and (.approvalSourceId | startswith("opscontrol-owner:")) and (.approvalBindingDigest | length == 64)')"
+curl -fsS "${hdr[@]}" -X POST "${BASE}/background/resume" -d "${resume_authorization}" >/dev/null
 check "processing active after resume" 'true' \
   "$(curl -sS "${hdr[@]}" "${BASE}/background/status" | jq -r '.backgroundProcessingActive==true')"
 run_resumed="$(curl -sS "${hdr[@]}" -X POST "${BASE}/background/run")"

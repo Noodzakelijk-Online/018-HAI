@@ -209,7 +209,10 @@ jobs:
         run: npm test
       - name: Compose diagnostics on failure
         if: failure()
-        run: docker compose --env-file .env.browser-acceptance -f docker-compose.local.yml ps
+        run: |
+          docker compose --env-file .env.browser-acceptance -f docker-compose.local.yml ps
+          docker compose --env-file .env.browser-acceptance -f docker-compose.local.yml logs --no-color \
+            backend-migrate backend-runtime-role backend idp gateway || true
       - name: Remove isolated HAI stack
         if: always()
         run: docker compose --env-file .env.browser-acceptance -f docker-compose.local.yml down -v --remove-orphans
@@ -424,8 +427,10 @@ jobs:
           DB_USER: postgres
           DB_PASSWORD: postgres
           DB_NAME: automation_hub
-          # Empty CI database: let the schema materialise on boot.
-          DB_AUTOMIGRATE: "true"
+          # The explicit versioned migration runner owns the CI schema too.
+          # AutoMigrate is deliberately limited to local, pre-migration model
+          # scaffolding and must not alter an already-migrated database.
+          DB_AUTOMIGRATE: "false"
           JWT_SECRET: devsecret
           BACKEND_API_SHARED_KEY: ci-backend-api-shared-key-0123456789
           HAI_MEMORY_ENCRYPTION_KEY: ci-memory-encryption-key-0123456789

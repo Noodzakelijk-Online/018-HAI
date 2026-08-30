@@ -106,6 +106,9 @@ func indexExists(t *testing.T, db *gorm.DB, name string) bool {
 }
 
 func TestRunMigrationsAppliesAndIsIdempotent(t *testing.T) {
+	// The optional development scaffolding must not rewrite any schema that the
+	// versioned migrations just created.
+	t.Setenv("DB_AUTOMIGRATE", "true")
 	db := integrationDB(t)
 
 	if err := RunMigrations(db); err != nil {
