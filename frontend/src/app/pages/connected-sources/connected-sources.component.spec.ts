@@ -1,4 +1,5 @@
 import { FormBuilder } from '@angular/forms';
+import { ChangeDetectorRef } from '@angular/core';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { Subject, of, throwError } from 'rxjs';
@@ -6,23 +7,26 @@ import { IConnectedSource, ISourceConnectionHealth, ISourcePursuitRoutingOutcome
 import { ConnectedSourcesComponent } from './connected-sources.component';
 
 describe('ConnectedSourcesComponent pursuit handoff', () => {
-  function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router>; sourceService: jasmine.SpyObj<any> } {
+  function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router>; sourceService: jasmine.SpyObj<any>; changeDetector: jasmine.SpyObj<ChangeDetectorRef> } {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
     const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['info', 'success', 'error', 'warning']);
     const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
       'createSource', 'sync', 'transcribe', 'extractDocuments', 'runDueScheduledSyncs',
       'connectors', 'sources', 'extractions', 'auditLogs', 'syncJobs', 'connectionHealth', 'connectionHealths', 'startGoogleOAuth'
     ]);
+    const changeDetector = jasmine.createSpyObj<ChangeDetectorRef>('ChangeDetectorRef', ['detectChanges']);
     return {
       component: new ConnectedSourcesComponent(
         new FormBuilder(),
 		sourceService,
 		notification,
-		router,
+        router,
         { mode: () => 'light' } as any,
+        changeDetector,
       ),
       router,
 	  sourceService,
+      changeDetector,
     };
   }
 
@@ -128,7 +132,7 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
   });
 
   it('uses a reliable same-tab handoff for Google authorization', () => {
-    const { component, sourceService } = createComponent();
+    const { component, sourceService, changeDetector } = createComponent();
     sourceService.startGoogleOAuth.and.returnValue(of({ authorizeUrl: 'https://accounts.google.test/authorize' }));
     const navigate = spyOn<any>(component, 'navigateToGoogleAuthorization');
 
@@ -270,7 +274,7 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 	});
 
   it('keeps a server-confirmed source visible while preserving existing sources', () => {
-    const { component, sourceService } = createComponent();
+    const { component, sourceService, changeDetector } = createComponent();
     const created = {
       id: 'created-source',
       connectorKey: 'local-folder',
@@ -286,6 +290,7 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 
     expect(component.sources.map((source) => source.id)).toEqual(['created-source', 'existing-source']);
     expect(component.selectedSourceId).toBe('created-source');
+    expect(changeDetector.detectChanges).toHaveBeenCalled();
   });
 
   it('does not start duplicate source work while another sync is running', () => {

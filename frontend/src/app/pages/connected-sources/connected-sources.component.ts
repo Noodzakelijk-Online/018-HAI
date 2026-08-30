@@ -1,4 +1,4 @@
-import { Component, Inject, OnDestroy, OnInit } from '@angular/core';
+import { ChangeDetectorRef, Component, Inject, OnDestroy, OnInit } from '@angular/core';
 import { AbstractControl, FormBuilder, FormGroup, ValidationErrors, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
@@ -170,7 +170,8 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
     private sourceService: IConnectedSourceService,
     private notification: NzNotificationService,
     private router: Router,
-    private themeService: ThemeService
+    private themeService: ThemeService,
+    private changeDetector: ChangeDetectorRef,
   ) {}
 
   ngOnInit(): void {
@@ -316,6 +317,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
           this.rebuildSourceIndexes();
           this.applySourceDefaults(this.sources);
           this.updateSourceActions();
+          this.changeDetector.detectChanges();
           this.notification.success('Source connected', 'The source is ready for controlled sync.');
         },
         error: (error) => this.notification.error('Error', this.operationErrorMessage(error, 'Failed to connect source.')),
