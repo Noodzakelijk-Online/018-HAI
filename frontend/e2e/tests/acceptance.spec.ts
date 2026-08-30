@@ -107,8 +107,6 @@ test.describe('HAI operator acceptance flow', () => {
         `Run the HAI backend readiness ${capabilityMarker} only after explicit human approval and attach the source-grounded result.`
       );
       await page.getByTestId('workflow-project-key').fill(projectKey);
-      await page.getByRole('button', { name: 'Basic', exact: true }).click();
-      await expect(page.getByRole('button', { name: 'Advanced', exact: true })).toBeVisible();
       await page.locator('details.advanced-block > summary').click();
       await page.getByTestId('workflow-source-id').fill(`e2e-source-${runId}`);
       await page.getByTestId('workflow-source-uri').fill(`local://e2e/source/${runId}`);
