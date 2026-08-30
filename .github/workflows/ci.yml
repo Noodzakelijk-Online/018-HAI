@@ -181,13 +181,7 @@ jobs:
           for attempt in $(seq 1 60); do
             readyz_http="$(curl -sS -o readyz.json -w '%{http_code}' http://127.0.0.1:8080/readyz || true)"
             if [ "${readyz_http}" = "200" ]; then
-              python3 - <<'PY'
-              import json
-              from pathlib import Path
-              status = json.loads(Path("readyz.json").read_text(encoding="utf-8")).get("status")
-              if status != "ready":
-                  raise SystemExit(f"unexpected readiness status: {status!r}")
-              PY
+              python3 -c 'import json; from pathlib import Path; status = json.loads(Path("readyz.json").read_text(encoding="utf-8")).get("status"); assert status == "ready", f"unexpected readiness status: {status!r}"'
               exit 0
             fi
             sleep 2

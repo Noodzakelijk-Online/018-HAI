@@ -942,7 +942,7 @@ class CIWorkflowContractTest(unittest.TestCase):
             'LOCAL_LOGIN_BYPASS_ENABLED": "false"',
             'docker compose --env-file .env.browser-acceptance -f docker-compose.local.yml up -d --build --wait --wait-timeout 240',
             'http://127.0.0.1:8080/readyz',
-            'if status != "ready"',
+            'assert status == "ready"',
             'E2E_BASE_URL: http://127.0.0.1:8080',
             'E2E_OPERATOR_EMAIL: e2e-owner@example.test',
             'E2E_ALLOW_MUTATION: "true"',
