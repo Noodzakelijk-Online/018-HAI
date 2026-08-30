@@ -3771,7 +3771,7 @@ func resolveAllowedFolder(root, requested string) (string, error) {
 		return "", err
 	}
 	if rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("folder path must stay inside allowlisted root %s", rootAbs)
+		return "", fmt.Errorf("folder path must stay inside the configured local source root")
 	}
 	info, err := os.Stat(folderAbs)
 	if err != nil {
@@ -3793,7 +3793,7 @@ func resolveAllowedFolder(root, requested string) (string, error) {
 		return "", err
 	}
 	if rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("folder path must not resolve outside allowlisted root %s", rootAbs)
+		return "", fmt.Errorf("folder path must not resolve outside the configured local source root")
 	}
 	return folderAbs, nil
 }

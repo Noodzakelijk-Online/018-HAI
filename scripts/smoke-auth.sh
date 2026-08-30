@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+# Production-mode smoke suites intentionally use deterministic, test-only
+# secrets unless their caller supplies stronger values. Keeping these here
+# prevents individual smoke flows from silently bypassing startup hardening.
+: "${HAI_MEMORY_ENCRYPTION_KEY:=smoke-a7c4d9e1f2b8c6d0e5f7a3b9c1d2e4f6}"
+: "${HAI_APPROVAL_PROOF_SIGNING_KEY:=smoke-f6e4d2c1b9a3f7e5d0c6b8f2e1d9c4a7}"
+export HAI_MEMORY_ENCRYPTION_KEY HAI_APPROVAL_PROOF_SIGNING_KEY
+
 hai_smoke_mint_jwt() { # role, secret, optional subject
   local role="$1"
   local secret="$2"

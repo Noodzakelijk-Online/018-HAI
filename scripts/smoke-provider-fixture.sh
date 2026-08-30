@@ -25,7 +25,7 @@ docker run -d \
   --pids-limit 32 \
   --memory 32m \
   --cpus 0.10 \
-  -p 127.0.0.1::11434 \
+  -p 127.0.0.1:0:11434 \
   "$IMAGE" >/dev/null
 
 for _ in $(seq 1 20); do
