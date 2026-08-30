@@ -585,6 +585,25 @@ func TestPostgresReceiptPersistsOwnerSafePolymorphicApprovals(t *testing.T) {
 		t.Fatalf("workflow approval source = %q", storedWorkflow.ApprovalSourceID)
 	}
 
+	controlReceipt := postgresTestReceipt(owner, OutcomeAuthorized, now.Add(7*time.Second))
+	controlReceipt.ApprovalSourceID = "opscontrol-owner:test-signed-approval"
+	controlReceipt.Evidence.Approval = ApprovalEvidence{
+		SourceID:       controlReceipt.ApprovalSourceID,
+		DecisionID:     postgresDigest("owner-control-decision"),
+		DecisionDigest: postgresDigest("owner-control-receipt"),
+		ApprovedBy:     owner,
+		ApprovedAt:     now,
+		ExpiresAt:      now.Add(time.Minute),
+	}
+	storedControl, created, err := repository.CreateOrGet(ctx, controlReceipt)
+	if err != nil || !created {
+		t.Fatalf("create owner-control-approved receipt = (%t, %v)", created, err)
+	}
+	if storedControl.ApprovalSourceID != controlReceipt.ApprovalSourceID ||
+		storedControl.Evidence.Approval.DecisionID != controlReceipt.Evidence.Approval.DecisionID {
+		t.Fatalf("owner control approval evidence = %#v", storedControl.Evidence.Approval)
+	}
+
 	crossOwner := workflowReceipt
 	crossOwner.ID = uuid.New()
 	crossOwner.OwnerIdentity = "other-" + owner
@@ -611,6 +630,28 @@ func TestPostgresReceiptPersistsOwnerSafePolymorphicApprovals(t *testing.T) {
 		now,
 	).Error; err == nil {
 		t.Fatal("database accepted workflow decision with mismatched owner")
+	}
+}
+
+func TestReceiptReferencesAcceptSignedOwnerControlApproval(t *testing.T) {
+	evidence := DecisionEvidence{Approval: ApprovalEvidence{
+		SourceID:       "opscontrol-owner:fixture",
+		DecisionID:     postgresDigest("owner-control-decision"),
+		DecisionDigest: postgresDigest("owner-control-receipt"),
+	}}
+	references, err := receiptReferencesFromEvidence(evidence)
+	if err != nil {
+		t.Fatalf("signed owner-control approval reference: %v", err)
+	}
+	if references.taskReviewDecisionID != nil ||
+		references.workflowDecisionID != nil ||
+		references.portfolioProposalDecisionID != nil {
+		t.Fatalf("owner-control approval must not create an unrelated foreign key: %#v", references)
+	}
+
+	evidence.Approval.DecisionID = "not-a-sha256-digest"
+	if _, err := receiptReferencesFromEvidence(evidence); err == nil {
+		t.Fatal("malformed signed owner-control approval was accepted")
 	}
 }
 
