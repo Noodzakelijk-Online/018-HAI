@@ -8,7 +8,7 @@ import { ConnectedSourcesComponent } from './connected-sources.component';
 describe('ConnectedSourcesComponent pursuit handoff', () => {
   function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router>; sourceService: jasmine.SpyObj<any> } {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
-    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['info', 'error', 'warning']);
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['info', 'success', 'error', 'warning']);
     const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
       'createSource', 'sync', 'transcribe', 'extractDocuments', 'runDueScheduledSyncs',
       'connectors', 'sources', 'extractions', 'auditLogs', 'syncJobs', 'connectionHealth', 'connectionHealths', 'startGoogleOAuth'
@@ -268,6 +268,26 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 		pending.complete();
 		expect(component.connecting).toBeFalse();
 	});
+
+  it('shows a server-confirmed source before the follow-up refresh completes', () => {
+    const { component, sourceService } = createComponent();
+    const created = {
+      id: 'created-source',
+      connectorKey: 'local-folder',
+      name: 'New local source',
+    } as IConnectedSource;
+    component.sources = [{ id: 'existing-source', name: 'Existing source' } as IConnectedSource];
+    component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only', category: 'local_folder' } as any];
+    component.sourceForm.patchValue({ connectorKey: 'local-folder', syncTarget: 'projects/018-hai' });
+    sourceService.createSource.and.returnValue(of(created));
+    spyOn(component, 'refresh');
+
+    component.connectSource();
+
+    expect(component.sources.map((source) => source.id)).toEqual(['created-source', 'existing-source']);
+    expect(component.selectedSourceId).toBe('created-source');
+    expect(component.refresh).toHaveBeenCalled();
+  });
 
   it('does not start duplicate source work while another sync is running', () => {
     const { component, sourceService } = createComponent();

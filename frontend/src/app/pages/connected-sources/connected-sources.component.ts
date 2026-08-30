@@ -307,7 +307,12 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
 		  finalize(() => (this.connecting = false))
 		)
       .subscribe({
-        next: () => {
+        next: (created) => {
+          this.sources = [created, ...this.sources.filter((source) => source.id !== created.id)];
+          this.selectedSourceId = created.id;
+          this.rebuildSourceIndexes();
+          this.applySourceDefaults(this.sources);
+          this.updateSourceActions();
           this.notification.success('Source connected', 'The source is ready for controlled sync.');
           this.refresh();
         },
