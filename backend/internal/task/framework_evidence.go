@@ -407,13 +407,16 @@ func compileFrameworkEvidenceContracts(
 		}
 		seen[key] = struct{}{}
 		phase := frameworkEvidencePhase(requirement)
+		validator := frameworkEvidenceValidator(requirement, phase)
 		contracts = append(contracts, FrameworkEvidenceContract{
-			ID:            frameworkEvidenceRequirementID(frameworkID, requirement),
-			FrameworkID:   frameworkID,
-			Requirement:   requirement,
-			Phase:         phase,
-			Validator:     frameworkEvidenceValidator(requirement, phase),
-			Required:      true,
+			ID:          frameworkEvidenceRequirementID(frameworkID, requirement),
+			FrameworkID: frameworkID,
+			Requirement: requirement,
+			Phase:       phase,
+			Validator:   validator,
+			// Catalog prose without a concrete validator remains visible in the
+			// plan, but cannot become an unsatisfiable execution precondition.
+			Required:      validator != "explicit_evidence",
 			MaxAgeSeconds: frameworkEvidenceMaxAge(requirement),
 		})
 	}

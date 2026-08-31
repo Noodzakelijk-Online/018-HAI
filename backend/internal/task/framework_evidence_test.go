@@ -65,6 +65,37 @@ func TestCompileFrameworkEvidenceContractsPreservesFrameworkAndDeterministicPhas
 	}
 }
 
+func TestCompileFrameworkEvidenceContractsKeepsUnverifiableGuidanceAdvisory(t *testing.T) {
+	decision := &frameworkregistry.SelectionDecision{
+		Selected: []frameworkregistry.SelectedFramework{{
+			ID: "workflow-design",
+			EvidenceRequirements: []string{
+				"active Constitution",
+				"a qualitative operating principle with no machine validator",
+			},
+		}},
+	}
+
+	contracts := compileFrameworkEvidenceContracts(decision)
+	if len(contracts) != 2 {
+		t.Fatalf("contract count = %d, want 2", len(contracts))
+	}
+	byRequirement := map[string]FrameworkEvidenceContract{}
+	for _, contract := range contracts {
+		byRequirement[contract.Requirement] = contract
+	}
+	if !byRequirement["active Constitution"].Required {
+		t.Fatal("active Constitution must remain an enforced pre-authorization requirement")
+	}
+	unsupported := byRequirement["a qualitative operating principle with no machine validator"]
+	if unsupported.Validator != "explicit_evidence" {
+		t.Fatalf("unsupported validator = %q, want explicit_evidence", unsupported.Validator)
+	}
+	if unsupported.Required {
+		t.Fatal("unverifiable qualitative guidance must not block controlled execution")
+	}
+}
+
 func TestLegalPrimarySourceRequirementBlocksBeforeExecutorSideEffect(t *testing.T) {
 	executor := &fakeToolExecutor{result: completedToolResult()}
 	service := frameworkEvidenceRunService(t, executor, frameworkregistry.SelectionDecision{
