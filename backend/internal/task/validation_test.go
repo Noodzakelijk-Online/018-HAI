@@ -427,6 +427,35 @@ func TestRequiredFrameworkAutonomyMatchesConstitutionAuthorityLadder(t *testing.
 	}
 }
 
+func TestModelRouteEvidenceIsInapplicableForEligibleDeterministicRuntime(t *testing.T) {
+	plan := &CompletionPlan{
+		Intake: IntakeAnalysis{
+			NeedsTools: true,
+		},
+		RiskAssessment: RiskAssessment{
+			Level:      "low",
+			AllowedNow: true,
+		},
+	}
+	for _, requirement := range []string{"provider health", "capability profile", "price and quota data"} {
+		applicable, reason := frameworkEvidenceRequirementApplies(plan, requirement)
+		if applicable || !strings.Contains(reason, "no model route is required") {
+			t.Fatalf("%s applicability = %t (%q), want not applicable for deterministic runtime", requirement, applicable, reason)
+		}
+	}
+
+	plan.RiskAssessment.ApprovalRequired = true
+	if applicable, _ := frameworkEvidenceRequirementApplies(plan, "provider health"); !applicable {
+		t.Fatal("approval-gated execution must still require model-route evidence when the model framework applies")
+	}
+
+	plan.RiskAssessment.ApprovalRequired = false
+	plan.ModelDecision.SelectedModelID = "local-model"
+	if applicable, _ := frameworkEvidenceRequirementApplies(plan, "capability profile"); !applicable {
+		t.Fatal("a selected model must retain its model-route evidence requirement")
+	}
+}
+
 func TestPlanDoesNotPremarkExecutionValidationOrMemory(t *testing.T) {
 	service := NewService(&fakeMemoryService{}, newTaskTestLLMService(t))
 	plan, err := service.Plan(IntakeRequest{

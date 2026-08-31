@@ -435,6 +435,10 @@ func frameworkEvidenceRequirementApplies(plan *CompletionPlan, criterion string)
 		if !plan.Intake.NeedsTools && !plan.Intake.NeedsLocalExecution {
 			return false, "the task does not cross the controlled runtime boundary"
 		}
+	case "provider health", "capability profile", "price and quota data":
+		if modelRouteIsNotRequiredForDeterministicRuntime(plan) {
+			return false, "a low-risk controlled runtime is the sole execution path; no model route is required"
+		}
 	case "deterministic checks where possible":
 		if !plan.Intake.NeedsTools &&
 			!plan.Intake.NeedsLocalExecution &&
@@ -452,6 +456,23 @@ func frameworkEvidenceRequirementApplies(plan *CompletionPlan, criterion string)
 		}
 	}
 	return true, ""
+}
+
+// modelRouteIsNotRequiredForDeterministicRuntime is deliberately narrow. It
+// does not treat an unavailable model as a substitute for reasoning. It only
+// applies when a low-risk, approval-free task has already been admitted to the
+// controlled runtime boundary and no model was selected for the plan. The
+// runtime executor still validates the exact allowlisted action and emits the
+// launch evidence used by the execution and postcondition gates.
+func modelRouteIsNotRequiredForDeterministicRuntime(plan *CompletionPlan) bool {
+	if plan == nil || strings.TrimSpace(plan.ModelDecision.SelectedModelID) != "" {
+		return false
+	}
+	if !strings.EqualFold(plan.RiskAssessment.Level, "low") ||
+		plan.RiskAssessment.ApprovalRequired || !plan.RiskAssessment.AllowedNow {
+		return false
+	}
+	return plan.Intake.NeedsTools || plan.Intake.NeedsLocalExecution
 }
 
 func taskDataClassification(plan *CompletionPlan) string {
