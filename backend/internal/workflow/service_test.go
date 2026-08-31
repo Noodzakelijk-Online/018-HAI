@@ -213,6 +213,35 @@ func TestIntakeBindsSingleSuitableAutomationBeforeApproval(t *testing.T) {
 	}
 }
 
+func TestIntakeRequiresExplicitSelectionForNamedSingleRuntime(t *testing.T) {
+	automationID := uuid.NewString()
+	runner := &selectingTaskRunner{
+		bindingTaskRunner: &bindingTaskRunner{fakeTaskRunner: &fakeTaskRunner{}},
+		candidates: []AutomationCandidate{{
+			ID: automationID, Name: "HAI backend readiness probe", RuntimeType: "api", Score: 20, Reason: "read-only readiness capability matched",
+		}},
+	}
+	service := NewServiceWithTaskRunner(newFakeWorkflowRepo(), runner)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "operator@example.com",
+		Input:         "Run the selected HAI backend readiness probe and record its read-only verification result. Do not send anything externally.",
+		SourceType:    "manual",
+		SourceID:      "e2e-readiness-single-runtime",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if record.Item.AutomationID != "" || record.Item.CurrentState != StateNeedsApproval {
+		t.Fatalf("explicit runtime selection was skipped: %#v", record.Item)
+	}
+	for index := range record.Proposals {
+		if isAutomationSelectionProposal(&record.Proposals[index]) {
+			return
+		}
+	}
+	t.Fatalf("selection proposal = %#v, want an explicit runtime selection", record.Proposals)
+}
+
 func TestAmbiguousLowRiskAutomationSelectionDoesNotCreateActionApproval(t *testing.T) {
 	firstID := uuid.NewString()
 	secondID := uuid.NewString()

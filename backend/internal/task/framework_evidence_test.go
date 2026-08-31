@@ -275,6 +275,60 @@ func TestLowRiskReadinessProbeExecutesWithoutApproval(t *testing.T) {
 	}
 }
 
+func TestLowRiskReadinessProbeWithUnknownOwnerCapacityExecutesWithoutApproval(t *testing.T) {
+	selector, err := frameworkregistry.NewService(frameworkregistry.NewMemoryRepository())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	executor := &fakeToolExecutor{result: deterministicReadOnlyToolExecution()}
+	service := NewServiceWithDependenciesAndAgentContext(
+		&fakeMemoryService{},
+		newTaskNoProviderLLMService(t),
+		nil,
+		&sequencedVerificationService{},
+		executor,
+		nil,
+		selector,
+		NewMemoryTaskStateRepository(),
+		&operatingContextProviderStub{capacity: &frameworkregistry.CapacitySnapshot{
+			Status:      "unknown",
+			NeedsReview: true,
+			SourceLabel: "lifeops:no_observation",
+		}},
+		emptyAgentContextProvider{},
+	)
+
+	plan, err := service.Run(IntakeRequest{
+		OwnerIdentity:  "operator@example.test",
+		WorkflowID:     uuid.NewString(),
+		Request:        "Run the selected HAI backend readiness probe-12345 for E2E governed pursuit 12345 (e2e-governed-12345) and record its read-only verification result. Do not send anything externally.",
+		ProjectKey:     "e2e-governed-12345",
+		AutomationID:   executor.result.AutomationID,
+		ExecuteAllowed: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if executor.calls != 1 {
+		t.Fatalf("executor calls = %d, want one bounded read-only execution; risk=%#v resource=%#v plan=%#v", executor.calls, plan.RiskAssessment, plan.ResourceDecision, plan)
+	}
+	if plan.RiskAssessment.ApprovalRequired || !plan.RiskAssessment.AllowedNow {
+		t.Fatalf("unknown owner capacity blocked an admitted automatic runtime: risk=%#v resource=%#v", plan.RiskAssessment, plan.ResourceDecision)
+	}
+	if plan.FrameworkEvidencePreflight == nil || !plan.FrameworkEvidencePreflight.Passed {
+		t.Fatalf("unapproved readiness preflight = %#v, want passed", plan.FrameworkEvidencePreflight)
+	}
+	if !plan.ValidationResult.Passed || plan.CompletionStatus != "validated" {
+		t.Fatalf("unapproved readiness execution was not validated: status=%s failures=%#v criteria=%#v", plan.CompletionStatus, plan.ValidationResult.Failures, plan.ValidationResult.Criteria)
+	}
+}
+
+type emptyAgentContextProvider struct{}
+
+func (emptyAgentContextProvider) LatestAgents(string, time.Time) ([]frameworkregistry.AgentCard, error) {
+	return nil, nil
+}
+
 func TestE2EReadinessProbeSelectionAllowsAutomaticControlledRuntime(t *testing.T) {
 	selector, err := frameworkregistry.NewService(frameworkregistry.NewMemoryRepository())
 	if err != nil {

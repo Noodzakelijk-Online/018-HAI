@@ -2781,7 +2781,12 @@ func applyFrameworkRisk(
 	// A framework-required specialist is an execution precondition, not merely
 	// a preference for a multi-agent coordination style. Falling back to the
 	// embedded coordinator would otherwise bypass the selected framework.
-	if request.ExecuteAllowed && request.agentInventoryEvaluated {
+	// The framework catalog names governance and specialist roles even when the
+	// selected coordination plan uses only the verified embedded task engine.
+	// A bounded Level 8 automation remains governed by its allowlist, framework
+	// ceiling, evidence preflight, and runtime boundary; an unassigned advisory
+	// role must not turn that runtime into a human approval flow.
+	if request.ExecuteAllowed && request.agentInventoryEvaluated && !usesAdmittedEmbeddedRuntime(risk, request) {
 		for _, delegation := range decision.Delegations {
 			if delegation.State != "ready" && isUnreadyRequiredFrameworkDelegation(*decision, delegation) {
 				risk.AllowedNow = false
@@ -2808,6 +2813,17 @@ func applyFrameworkRisk(
 	}
 	risk.Reasons = uniqueStrings(risk.Reasons)
 	return risk
+}
+
+func usesAdmittedEmbeddedRuntime(risk RiskAssessment, request IntakeRequest) bool {
+	return request.ExecuteAllowed &&
+		strings.TrimSpace(request.AutomationID) != "" &&
+		strings.EqualFold(strings.TrimSpace(risk.Level), "low") &&
+		risk.AllowedNow &&
+		!risk.ApprovalRequired &&
+		!risk.ApprovalGranted &&
+		risk.RequiredFrameworkAutonomy >= 8 &&
+		risk.FrameworkAutonomyCeiling >= risk.RequiredFrameworkAutonomy
 }
 
 func isUnreadyRequiredFrameworkDelegation(

@@ -579,9 +579,13 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 				selectionRequired = true
 				automationSelectionReason = "automation selection failed: " + selectionErr.Error()
 			case len(candidates) == 1:
-				request.AutomationID = candidates[0].ID
 				selectionCandidates = candidates
 				automationSelectionReason = candidates[0].Reason
+				if workflowExplicitlyNamesAutomationSelection(input) {
+					selectionRequired = true
+				} else {
+					request.AutomationID = candidates[0].ID
+				}
 			default:
 				selectionRequired = true
 				selectionCandidates = candidates
@@ -3536,6 +3540,13 @@ func workflowNeedsAutomation(input string, analysis inputAnalysis) bool {
 		"script", "test", "tests",
 	)
 	return action && target
+}
+
+func workflowExplicitlyNamesAutomationSelection(input string) bool {
+	return workflowContainsWordOrPhrase(input,
+		"run the selected", "execute the selected", "launch the selected", "invoke the selected",
+		"selected runtime", "selected automation", "choose the runtime", "choose an automation", "select the exact",
+	)
 }
 
 func workflowContainsWordOrPhrase(value string, terms ...string) bool {
