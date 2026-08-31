@@ -253,8 +253,8 @@ func TestLowRiskReadinessProbeExecutesWithoutApproval(t *testing.T) {
 	plan, err := service.Run(IntakeRequest{
 		OwnerIdentity:  "alice",
 		WorkflowID:     uuid.NewString(),
-		Request:        "Run the selected HAI backend readiness probe and record its read-only verification result. Do not send anything externally.",
-		ProjectKey:     "018-hai",
+		Request:        "Run the selected HAI backend readiness probe-12345 for E2E governed pursuit 12345 (e2e-governed-12345) and record its read-only verification result. Do not send anything externally.",
+		ProjectKey:     "e2e-governed-12345",
 		AutomationID:   executor.result.AutomationID,
 		ExecuteAllowed: true,
 	})

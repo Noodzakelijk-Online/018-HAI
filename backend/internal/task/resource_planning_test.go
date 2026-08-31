@@ -150,6 +150,10 @@ func TestResourcePlanningKeepsAdmittedAutomaticRuntimeApprovalFree(t *testing.T)
 			{ID: "verify", Name: "Verify readiness result", Allowed: true},
 		},
 		SelectedTools: []string{"tool-router"},
+		// The backend readiness probe consumes controlled runtime capacity, not
+		// Robert's time. An unavailable personal capacity observation must not
+		// turn this already-admitted automatic runtime into an approval gate.
+		Capacity: &frameworkregistry.CapacitySnapshot{Status: "unknown", NeedsReview: true},
 	})
 	if err != nil {
 		t.Fatalf("PlanResources: %v", err)

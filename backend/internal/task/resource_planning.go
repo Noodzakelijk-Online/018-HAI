@@ -89,9 +89,14 @@ func (bridge *resourcePlanningBridge) PlanResources(request ResourcePlanningRequ
 
 	tasks := make([]resourceplanner.Task, 0, len(request.Steps))
 	previous := ""
+	automaticRuntime := admittedAutomaticRuntime(request.Risk)
 	for index, step := range request.Steps {
 		optimistic, expected, pessimistic := resourceDuration(request.Difficulty, step)
-		capacityNeedsReview := request.Capacity != nil && request.Capacity.NeedsReview
+		// Personal-capacity uncertainty applies when the plan depends on Robert's
+		// time. A bounded Level 8 deterministic runtime is independently
+		// authorized and must not be converted into a human approval gate merely
+		// because no personal capacity observation has been recorded yet.
+		capacityNeedsReview := request.Capacity != nil && request.Capacity.NeedsReview && !automaticRuntime
 		planned := resourceplanner.Task{
 			ID:       resourceStepID(index),
 			Duration: resourceplanner.DurationEstimate{OptimisticMinutes: optimistic, ExpectedMinutes: expected, PessimisticMinutes: pessimistic, Basis: "bounded task difficulty and step type estimate"},
@@ -158,7 +163,7 @@ func (bridge *resourcePlanningBridge) PlanResources(request ResourcePlanningRequ
 		ownerIdentity = "system:unowned-planning"
 	}
 	uncertaintyThreshold := int64(5000)
-	if admittedAutomaticRuntime(request.Risk) {
+	if automaticRuntime {
 		// The planner's generic duration range is intentionally conservative. It
 		// must not convert that estimate alone into a human-approval requirement
 		// after the task and framework gates have already admitted a bounded,
