@@ -85,11 +85,50 @@ func TestDeterministicReadOnlyRuntimeRejectsMutableOrUnevidencedExecution(t *tes
 	}
 }
 
+func TestValidatePlanDoesNotCascadeWhenFrameworkPreflightIsBlocked(t *testing.T) {
+	plan := validStructuredValidationPlan()
+	plan.Intake.NeedsTools = true
+	plan.ExecutionResult = nil
+	plan.ValidationPlan.FrameworkEvidenceRequirements = []string{"verified operator identity"}
+	plan.ValidationPlan.FrameworkEvidenceContracts = []FrameworkEvidenceContract{{
+		ID:          "owner-identity",
+		FrameworkID: "human-sovereignty",
+		Requirement: "verified operator identity",
+		Phase:       EvidencePhasePreAuthorization,
+		Validator:   "owner_identity",
+		Required:    true,
+	}}
+	plan.FrameworkEvidencePreflight = &FrameworkEvidencePreflightResult{
+		Passed:  false,
+		Status:  "blocked",
+		Missing: 1,
+		Failures: []string{
+			"missing verified owner identity",
+		},
+	}
+
+	result := validatePlan(plan, 1)
+	if !containsString(result.Failures, "framework evidence preconditions were not verified before execution") {
+		t.Fatalf("preflight failure was not reported: %#v", result.Failures)
+	}
+	for _, failure := range result.Failures {
+		if strings.Contains(failure, "required typed framework evidence is missing") {
+			t.Fatalf("preflight block cascaded into duplicate typed evidence failure: %#v", result.Failures)
+		}
+	}
+	criterion := validationCriterionByText(result.Criteria, "verified operator identity")
+	if criterion == nil || criterion.Status != validationCriterionNotRun {
+		t.Fatalf("preauthorization criterion = %#v, want not_run", criterion)
+	}
+}
+
 func deterministicReadOnlyToolExecution() *ToolExecutionResult {
 	return &ToolExecutionResult{
 		AutomationID:  uuid.NewString(),
 		LaunchEventID: uuid.NewString(),
 		LaunchType:    "api",
+		RuntimeType:   "api",
+		Target:        "GET http://backend/readyz",
 		Status:        "completed",
 		Message:       "GET http://backend/readyz returned HTTP 200",
 		ExitCode:      http.StatusOK,

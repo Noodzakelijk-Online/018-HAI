@@ -121,6 +121,14 @@ func evaluateTypedFrameworkEvidence(
 		contractEvidence := []string{}
 		switch contract.Phase {
 		case EvidencePhasePreAuthorization:
+			if plan.FrameworkEvidencePreflight == nil || !plan.FrameworkEvidencePreflight.Passed {
+				// The dedicated preflight criterion carries the actionable cause.
+				// Do not turn the same blocked precondition into one failure for
+				// every typed requirement.
+				return validationCriterionNotRun,
+					frameworkEvidencePreflightSummary(plan.FrameworkEvidencePreflight),
+					"framework evidence preconditions were not verified before execution"
+			}
 			contractEvidence = verifiedFrameworkPreflightEvidence(plan.FrameworkEvidencePreflight, contract)
 		case EvidencePhaseExecution:
 			contractEvidence = exactFrameworkExecutionEvidence(plan, contract)
