@@ -275,6 +275,41 @@ func TestLowRiskReadinessProbeExecutesWithoutApproval(t *testing.T) {
 	}
 }
 
+func TestE2EReadinessProbeSelectionAllowsAutomaticControlledRuntime(t *testing.T) {
+	selector, err := frameworkregistry.NewService(frameworkregistry.NewMemoryRepository())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	request := "Run the selected HAI backend readiness probe-12345 for E2E governed pursuit 12345 (e2e-governed-12345) and record its read-only verification result. Do not send anything externally."
+	intake := analyzeIntake(IntakeRequest{Request: request, ProjectKey: "e2e-governed-12345"})
+
+	decision, err := selector.PlanSelection(frameworkregistry.SelectionRequest{
+		OwnerIdentity:       "operator@example.com",
+		TaskPlanID:          "e2e-readiness-probe",
+		Request:             request,
+		ProjectKey:          "e2e-governed-12345",
+		PursuitID:           "pursuit-12345",
+		TaskType:            intake.TaskType,
+		RiskLevel:           intake.RiskLevel,
+		Difficulty:          intake.Difficulty,
+		RequiredReasoning:   intake.RequiredReasoning,
+		SuccessCriteria:     intake.SuccessCriteria,
+		NeedsMemory:         intake.NeedsMemory,
+		NeedsTools:          intake.NeedsTools,
+		NeedsDocuments:      intake.NeedsDocuments,
+		NeedsWebAccess:      intake.NeedsWebAccess,
+		NeedsLocalExecution: intake.NeedsLocalExecution,
+		NeedsApproval:       intake.NeedsApproval,
+		ExecuteRequested:    true,
+	})
+	if err != nil {
+		t.Fatalf("PlanSelection: %v", err)
+	}
+	if decision.MaximumAutonomyLevel < 8 || decision.RequiresApproval {
+		t.Fatalf("E2E deterministic readiness selection blocks automatic runtime: intake=%#v autonomy=%d requiresApproval=%t selected=%#v", intake, decision.MaximumAutonomyLevel, decision.RequiresApproval, decision.Selected)
+	}
+}
+
 func newTaskNoProviderLLMService(t *testing.T) *llm.Service {
 	t.Helper()
 	t.Setenv("LLM_PROVIDERS_JSON", "[]")
