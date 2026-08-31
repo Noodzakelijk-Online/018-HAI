@@ -451,6 +451,31 @@ func TestFrameworkRiskContractRejectsDowngradeAndAcceptsExactCeiling(t *testing.
 	}
 }
 
+func TestFrameworkRiskContractTreatsCriticalPlanRiskAsHighestSelectionBand(t *testing.T) {
+	maximumAutonomy := 6
+	requiresApproval := true
+	selection := &workflow.FrameworkSelectionProvenance{
+		SelectionDecisionID:       uuid.NewString(),
+		TaskPlanID:                "plan-critical-risk",
+		CatalogVersion:            "v2",
+		CatalogDigest:             strings.Repeat("a", 64),
+		SelectorAlgorithmVersion:  "selector-v5",
+		TaskRiskLevel:             "high",
+		EffectiveRiskCeiling:      "high",
+		MaximumAutonomyLevel:      &maximumAutonomy,
+		RequiresApproval:          &requiresApproval,
+		EffectivePreferenceDigest: strings.Repeat("b", 64),
+		ConstitutionVersion:       1,
+		ConstitutionDigest:        strings.Repeat("c", 64),
+		ConstitutionSource:        "builtin-robert-constitution-v1:v1",
+		OperatingContractDigest:   strings.Repeat("d", 64),
+	}
+	plan := &task.CompletionPlan{RiskAssessment: task.RiskAssessment{Level: "critical"}}
+	if err := enforceFrameworkPlanRisk(selection, plan); err != nil {
+		t.Fatalf("high selector-v5 contract rejected critical task plan risk: %v", err)
+	}
+}
+
 func TestFrameworkRiskContractExtractionRequiresExplicitFields(t *testing.T) {
 	contract, err := frameworkRiskContractFromDecision(struct {
 		TaskRiskLevel        string `json:"taskRiskLevel"`
