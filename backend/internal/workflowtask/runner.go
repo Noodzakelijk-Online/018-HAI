@@ -346,6 +346,11 @@ func (r *Runner) RunWorkflowTask(request workflow.TaskRunRequest) (*workflow.Tas
 	}
 	previewRequest := intake
 	previewRequest.ExecutionRequested = true
+	// Keep the approval state in the selector input so the preview's framework
+	// authority contract is comparable to the eventual approved run. The
+	// preview still clears HumanApproved and every approval proof, so it cannot
+	// cross the execution boundary.
+	previewRequest.FrameworkSelectionHumanApproved = request.HumanApproved
 	previewRequest.ExecuteAllowed = false
 	previewRequest.HumanApproved = false
 	previewRequest.ApprovalNote = ""

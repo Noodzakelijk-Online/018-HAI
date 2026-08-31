@@ -381,6 +381,9 @@ func TestRunnerPassesPursuitAndWorkflowContextToTaskEngine(t *testing.T) {
 	if !tasks.previewRequest.ExecutionRequested {
 		t.Fatalf("framework preflight lost execution intent: %#v", tasks.previewRequest)
 	}
+	if !tasks.previewRequest.FrameworkSelectionHumanApproved {
+		t.Fatalf("framework preflight lost the non-authorizing approval context required for a stable selection: %#v", tasks.previewRequest)
+	}
 	if tasks.previewRequest.ApprovalBindingDigest != "" || tasks.previewRequest.ApprovalActorIdentity != "" ||
 		tasks.previewRequest.ApprovalApprovedAt != nil {
 		t.Fatalf("framework preview retained trusted approval evidence: %#v", tasks.previewRequest)

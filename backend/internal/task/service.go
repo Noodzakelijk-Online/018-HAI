@@ -60,25 +60,30 @@ type IntakeRequest struct {
 	// ExecutionRequested preserves the caller's execution intent during a
 	// side-effect-free preview. It is internal context only and never grants
 	// execution authority.
-	ExecutionRequested    bool                                    `json:"-"`
-	HumanApproved         bool                                    `json:"humanApproved,omitempty"`
-	ApprovalNote          string                                  `json:"approvalNote,omitempty"`
-	ApprovalSourceID      string                                  `json:"-"`
-	ApprovalBindingDigest string                                  `json:"-"`
-	ApprovalActorIdentity string                                  `json:"-"`
-	ApprovalApprovedAt    *time.Time                              `json:"-"`
-	ObservedNeeds         []frameworkregistry.NeedStateAssessment `json:"-"`
-	Capacity              *frameworkregistry.CapacitySnapshot     `json:"-"`
-	AvailableAgents       []frameworkregistry.AgentCard           `json:"-"`
-	CoordinationMode      string                                  `json:"-"`
-	Deadline              *time.Time                              `json:"-"`
+	ExecutionRequested bool `json:"-"`
+	// FrameworkSelectionHumanApproved carries already-verified approval only
+	// into selector comparison during a side-effect-free preview. It must never
+	// authorize execution: assessRisk and execution boundaries use
+	// HumanApproved and its durable approval provenance exclusively.
+	FrameworkSelectionHumanApproved bool                                    `json:"-"`
+	HumanApproved                   bool                                    `json:"humanApproved,omitempty"`
+	ApprovalNote                    string                                  `json:"approvalNote,omitempty"`
+	ApprovalSourceID                string                                  `json:"-"`
+	ApprovalBindingDigest           string                                  `json:"-"`
+	ApprovalActorIdentity           string                                  `json:"-"`
+	ApprovalApprovedAt              *time.Time                              `json:"-"`
+	ObservedNeeds                   []frameworkregistry.NeedStateAssessment `json:"-"`
+	Capacity                        *frameworkregistry.CapacitySnapshot     `json:"-"`
+	AvailableAgents                 []frameworkregistry.AgentCard           `json:"-"`
+	CoordinationMode                string                                  `json:"-"`
+	Deadline                        *time.Time                              `json:"-"`
 	// agentInventoryEvaluated is set only after the configured owner-scoped
 	// registry provider has returned a complete inventory. It distinguishes an
 	// explicitly empty production inventory from a lightweight constructor that
 	// has no registry dependency at all.
 	agentInventoryEvaluated bool
-	operationID           string
-	reviewItemID          string
+	operationID             string
+	reviewItemID            string
 }
 
 type IntakeAnalysis struct {
@@ -1036,7 +1041,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 		NeedsLocalExecution:       intake.NeedsLocalExecution,
 		NeedsApproval:             intake.NeedsApproval,
 		ExecuteRequested:          request.ExecuteAllowed || request.ExecutionRequested,
-		HumanApproved:             request.HumanApproved,
+		HumanApproved:             request.HumanApproved || request.FrameworkSelectionHumanApproved,
 		ObservedNeeds:             request.ObservedNeeds,
 		Capacity:                  request.Capacity,
 		AvailableAgents:           request.AvailableAgents,
