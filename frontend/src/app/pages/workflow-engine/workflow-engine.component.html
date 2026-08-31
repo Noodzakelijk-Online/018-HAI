@@ -535,7 +535,7 @@
           </div>
           <div
             class="mini-actions mini-actions--execution"
-            *ngIf="record.item.currentState === 'ready' && record.item.approvalStatus === 'approved'"
+            *ngIf="record.item.currentState === 'ready' && (record.item.approvalStatus === 'approved' || (!record.item.requiresApproval && record.item.approvalStatus === 'not_required'))"
             data-testid="workflow-run-selected-controls"
           >
             <button

@@ -4,7 +4,7 @@ import { expect, Page, test } from '@playwright/test';
  * Real operator acceptance path:
  *
  * login -> local source registration -> bounded sync -> governed workflow
- * intake -> durable human approval -> one exact controlled workflow run.
+ * intake -> exact runtime selection -> one bounded, read-only workflow run.
  *
  * The source is the owner-scoped, read-only connected-sources mount. This test
  * never authorizes an external provider or requests an irreversible action.
@@ -30,7 +30,7 @@ test.describe('HAI operator acceptance flow', () => {
     'Set E2E_OPERATOR_PASSWORD and E2E_ALLOW_MUTATION=true only for an isolated acceptance stack.',
   );
 
-  test('login -> source -> sync -> workflow -> approval -> exact bounded execution', async ({ page }) => {
+  test('login -> source -> sync -> workflow -> exact bounded execution', async ({ page }) => {
     let sourceName = '';
     const runId = Date.now();
     const pursuitName = `E2E governed pursuit ${runId}`;
@@ -101,10 +101,10 @@ test.describe('HAI operator acceptance flow', () => {
       await expect(page.getByTestId('pursuit-row').filter({ hasText: pursuitName })).toBeVisible();
     });
 
-    await test.step('create an explicitly approval-gated workflow', async () => {
+    await test.step('create a low-risk workflow for the read-only probe', async () => {
       await page.goto('/workflow-engine');
       await page.locator('#workflow-intake-input').fill(
-        `Email from lawyer about ${pursuitName} (${projectKey}): run the HAI backend readiness ${capabilityMarker}, attach the source-grounded result, and prepare it for Robert's approval.`
+        `Run the selected HAI backend readiness ${capabilityMarker} for ${pursuitName} (${projectKey}) and record its read-only verification result. Do not send anything externally.`
       );
       await page.getByTestId('workflow-project-key').fill(projectKey);
       const matchResponse = page.waitForResponse(
@@ -118,40 +118,34 @@ test.describe('HAI operator acceptance flow', () => {
       await expect(pursuitMatch).toBeVisible();
       await pursuitMatch.click();
       await page.getByTestId('workflow-create').click();
-      await expect(
-        page.getByTestId('workflow-approval-controls').or(page.getByTestId('workflow-runtime-selection'))
-      ).toBeVisible();
+      await expect(page.getByTestId('workflow-runtime-selection')).toBeVisible();
     });
 
-    await test.step('select the exact runtime and approve through the durable boundary', async () => {
+    await test.step('select the exact runtime through the durable boundary', async () => {
       const runtimeSelection = page.getByTestId('workflow-runtime-selection');
-      if (await runtimeSelection.isVisible()) {
-        const exactRuntime = runtimeSelection.getByRole('button', {
-          name: `E2E backend readiness ${capabilityMarker}`,
-          exact: true,
-        });
-        await expect(exactRuntime).toBeVisible();
-        const proposalResponse = page.waitForResponse((response) =>
-          response.request().method() === 'POST'
-          && /\/api\/v1\/workflow\/[^/]+\/proposals\/[^/]+\/resolve$/.test(new URL(response.url()).pathname)
-        );
-        await exactRuntime.click();
-        const response = await proposalResponse;
-        expect(response.ok(), await response.text()).toBeTruthy();
-      } else {
-        await page.getByTestId('workflow-approve').click();
-      }
+      const exactRuntime = runtimeSelection.getByRole('button', {
+        name: `E2E backend readiness ${capabilityMarker}`,
+        exact: true,
+      });
+      await expect(exactRuntime).toBeVisible();
+      const proposalResponse = page.waitForResponse((response) =>
+        response.request().method() === 'POST'
+        && /\/api\/v1\/workflow\/[^/]+\/proposals\/[^/]+\/resolve$/.test(new URL(response.url()).pathname)
+      );
+      await exactRuntime.click();
+      const response = await proposalResponse;
+      expect(response.ok(), await response.text()).toBeTruthy();
       await expect(page.getByTestId('workflow-approval-controls')).toHaveCount(0);
       await expect(page.getByTestId('workflow-runtime-selection')).toHaveCount(0);
-      await expect(page.getByText(/approved/i).first()).toBeVisible();
+      await expect(page.getByTestId('workflow-selected-state')).toHaveText('ready');
     });
 
-    await test.step('run only the selected safe, approved workflow', async () => {
+    await test.step('run only the selected safe workflow', async () => {
       const exactRun = page.getByTestId('workflow-run-selected');
       await expect(exactRun).toBeVisible();
       await exactRun.click();
       const confirmation = page.getByRole('dialog');
-      await expect(confirmation.getByText('Run this approved workflow?')).toBeVisible();
+      await expect(confirmation.getByText('Run this selected workflow?')).toBeVisible();
       const runResponse = page.waitForResponse((response) =>
         response.request().method() === 'POST'
         && /\/api\/v1\/workflow\/[^/]+\/run$/.test(new URL(response.url()).pathname)

@@ -879,11 +879,13 @@ export class WorkflowEngineComponent implements OnInit, OnDestroy {
 
   runSelectedWorkflow(): void {
     const item = this.selected?.item;
-    if (!item || item.currentState !== 'ready' || item.approvalStatus !== 'approved' || this.runningAction) {
+    const approvalSatisfied = item?.approvalStatus === 'approved'
+      || (!item?.requiresApproval && item?.approvalStatus === 'not_required');
+    if (!item || item.currentState !== 'ready' || !approvalSatisfied || this.runningAction) {
       return;
     }
     this.modal.confirm({
-      nzTitle: 'Run this approved workflow?',
+      nzTitle: 'Run this selected workflow?',
       nzContent: 'HAI will claim only this workflow. Any concrete task or runtime action still passes authorization, emergency-stop, audit, and verification gates.',
       nzOkText: 'Run this workflow',
       nzCancelText: 'Cancel',

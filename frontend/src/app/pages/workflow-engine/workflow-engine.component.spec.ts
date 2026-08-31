@@ -614,6 +614,19 @@ describe('WorkflowEngineComponent', () => {
     expect(notification.success).toHaveBeenCalled();
   });
 
+  it('allows a ready workflow with no approval requirement to enter the controlled run confirmation', () => {
+    const { component, modal } = createComponent();
+    const ready = workflowRecord([]);
+    ready.item.currentState = 'ready';
+    ready.item.requiresApproval = false;
+    ready.item.approvalStatus = 'not_required';
+    component.applyWorkflowRecord(ready);
+
+    component.runSelectedWorkflow();
+
+    expect(modal.confirm).toHaveBeenCalled();
+  });
+
   it('records an explicit operator review before retrying interrupted execution', () => {
     const { component, workflowService, notification } = createComponent();
     const interrupted = workflowRecord([]);
