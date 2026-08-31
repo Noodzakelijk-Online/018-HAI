@@ -160,8 +160,9 @@ test.describe('HAI operator acceptance flow', () => {
       const response = await runResponse;
       expect(response.ok(), await response.text()).toBeTruthy();
       const result = await response.json();
-      expect(result.status).toBe('completed');
-      expect(result.state).toBe('completed');
+      const resultContext = JSON.stringify(result, null, 2);
+      expect(result.status, resultContext).toBe('completed');
+      expect(result.state, resultContext).toBe('completed');
       await expect(page.getByText(/workflow completed/i).first()).toBeVisible();
       await expect(page.getByText(/last operation/i).first()).toBeVisible();
       await expect(page.getByTestId('workflow-selected-state')).toHaveText('completed');
