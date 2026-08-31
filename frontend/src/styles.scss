@@ -48,13 +48,16 @@ body {
   padding: 0;
 }
 
-/* Notifications are passive status feedback. They must not cover a workflow
-   approval or other action in the shared overlay layer. */
-.cdk-overlay-container nz-notification-container,
-.cdk-overlay-container .ant-notification-notice {
-  pointer-events: none;
+/* Notifications are passive status feedback. NG-Zorro renders them inside a
+   CDK overlay pane, so disabling only the notice leaves that parent pane able
+   to intercept clicks on the workflow beneath it. Keep notification panes
+   transparent to input while preserving the explicit close affordance. */
+.cdk-overlay-container .cdk-overlay-pane:has(> nz-notification-container),
+.cdk-overlay-container .cdk-overlay-pane:has(> nz-notification-container) nz-notification-container,
+.cdk-overlay-container .cdk-overlay-pane:has(> nz-notification-container) .ant-notification-notice {
+  pointer-events: none !important;
 }
 
-.cdk-overlay-container .ant-notification-notice-close {
-  pointer-events: auto;
+.cdk-overlay-container .cdk-overlay-pane:has(> nz-notification-container) .ant-notification-notice-close {
+  pointer-events: auto !important;
 }
