@@ -157,6 +157,15 @@ func (bridge *resourcePlanningBridge) PlanResources(request ResourcePlanningRequ
 	if ownerIdentity == "" {
 		ownerIdentity = "system:unowned-planning"
 	}
+	uncertaintyThreshold := int64(5000)
+	if admittedAutomaticRuntime(request.Risk) {
+		// The planner's generic duration range is intentionally conservative. It
+		// must not convert that estimate alone into a human-approval requirement
+		// after the task and framework gates have already admitted a bounded,
+		// reversible Level 8 runtime. Capacity, budget, and explicit-risk flags
+		// still flow through unchanged.
+		uncertaintyThreshold = 0
+	}
 	decision, err := bridge.planner.Plan(resourceplanner.Request{
 		OwnerIdentity:  ownerIdentity,
 		WorkspaceID:    workspaceID,
@@ -168,7 +177,7 @@ func (bridge *resourcePlanningBridge) PlanResources(request ResourcePlanningRequ
 		Tasks:          tasks,
 		Availability:   availability,
 		Budget:         budget,
-		ApprovalPolicy: resourceplanner.ApprovalPolicy{SoftDeadlineMiss: true, UncertaintyThreshold: 5000},
+		ApprovalPolicy: resourceplanner.ApprovalPolicy{SoftDeadlineMiss: true, UncertaintyThreshold: uncertaintyThreshold},
 	})
 	if err != nil {
 		return nil, err
@@ -177,6 +186,15 @@ func (bridge *resourcePlanningBridge) PlanResources(request ResourcePlanningRequ
 		return nil, fmt.Errorf("resource planner violated the advisory-only authority boundary")
 	}
 	return &decision, nil
+}
+
+func admittedAutomaticRuntime(risk RiskAssessment) bool {
+	return strings.EqualFold(strings.TrimSpace(risk.Level), "low") &&
+		risk.AllowedNow &&
+		!risk.ApprovalRequired &&
+		!risk.ApprovalGranted &&
+		risk.RequiredFrameworkAutonomy >= 8 &&
+		risk.FrameworkAutonomyCeiling >= risk.RequiredFrameworkAutonomy
 }
 
 func ownerCapacityWindows(start, end time.Time, busy []source.CalendarBusyInterval) []resourceplanner.CapacityWindow {
