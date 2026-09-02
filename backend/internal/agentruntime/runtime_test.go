@@ -782,6 +782,75 @@ func TestOpenClawInfoAdvertisesEcosystemAndControls(t *testing.T) {
 	}
 }
 
+func TestOpenClawCompanionGatewayHealthDoesNotRequireHostCLI(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.Method != http.MethodGet || request.URL.Path != "/health" {
+			t.Fatalf("unexpected companion health request: %s %s", request.Method, request.URL.Path)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	}))
+	defer server.Close()
+
+	gatewayURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	adapter := &openClawAdapter{
+		enabled:        true,
+		gatewayEnabled: true,
+		gatewayURL:     gatewayURL,
+		allowedHost:    map[string]bool{"127.0.0.1": true},
+		timeout:        time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "available" {
+		t.Fatalf("companion gateway health = %#v, want available", health)
+	}
+	if !strings.Contains(health.Reason, "gateway health endpoint is live") {
+		t.Fatalf("companion gateway reason = %q", health.Reason)
+	}
+	if requests != 1 {
+		t.Fatalf("companion health request count = %d, want 1", requests)
+	}
+}
+
+func TestOpenClawCompanionGatewayHealthRejectsUnexpectedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"starting"}`))
+	}))
+	defer server.Close()
+
+	adapter := &openClawAdapter{
+		enabled:        true,
+		gatewayEnabled: true,
+		gatewayURL:     "ws" + strings.TrimPrefix(server.URL, "http"),
+		allowedHost:    map[string]bool{"127.0.0.1": true},
+		timeout:        time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "unavailable" || !strings.Contains(health.Reason, "unexpected health response") {
+		t.Fatalf("unexpected companion gateway health = %#v", health)
+	}
+}
+
+func TestOpenClawCompanionGatewayHealthRejectsCredentialBearingURL(t *testing.T) {
+	adapter := &openClawAdapter{
+		enabled:        true,
+		gatewayEnabled: true,
+		gatewayURL:     "ws://gateway-token@127.0.0.1:18789",
+		allowedHost:    map[string]bool{"127.0.0.1": true},
+		timeout:        time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "blocked" || !strings.Contains(health.Reason, "must not include credentials") {
+		t.Fatalf("credential-bearing companion gateway URL health = %#v", health)
+	}
+}
+
 func TestOpenClawHighRiskSurfacesBlockExecutionUntilAcknowledged(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "openclaw")

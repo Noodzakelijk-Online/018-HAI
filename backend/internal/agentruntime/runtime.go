@@ -1141,6 +1141,19 @@ func (a *openClawAdapter) HealthCheck(ctx context.Context) Health {
 		health.Reason = "OPENCLAW_AGENT_ENABLED is false"
 		return health
 	}
+	if reason := a.validGatewayURL(); reason != "" {
+		health.Status = "blocked"
+		health.Reason = reason
+		return health
+	}
+	if a.gatewayEnabled {
+		if strings.TrimSpace(a.gatewayURL) == "" {
+			health.Status = "blocked"
+			health.Reason = "OPENCLAW_GATEWAY_URL is required when OPENCLAW_GATEWAY_ENABLED=true"
+			return health
+		}
+		return a.gatewayHealthCheck(ctx, started)
+	}
 	if !a.agentCLIEnabled {
 		health.Status = "blocked"
 		health.Reason = "OPENCLAW_AGENT_CLI_ENABLED is false"
@@ -1159,16 +1172,6 @@ func (a *openClawAdapter) HealthCheck(ctx context.Context) Health {
 	if stat, err := os.Stat(a.workspace); err != nil || !stat.IsDir() {
 		health.Status = "blocked"
 		health.Reason = "OpenClaw workspace is not an accessible directory"
-		return health
-	}
-	if reason := a.validGatewayURL(); reason != "" {
-		health.Status = "blocked"
-		health.Reason = reason
-		return health
-	}
-	if a.gatewayEnabled && a.gatewayToken == "" {
-		health.Status = "blocked"
-		health.Reason = "OPENCLAW_GATEWAY_TOKEN is required when OPENCLAW_GATEWAY_ENABLED=true"
 		return health
 	}
 	if blocked := a.highRiskExecutionBlockers(); len(blocked) > 0 {
@@ -1193,6 +1196,75 @@ func (a *openClawAdapter) HealthCheck(ctx context.Context) Health {
 	health.Reason = "OpenClaw executable and workspace are available: " + filepath.Base(path) + "; " + strings.Join(a.ecosystemReadiness(), ", ")
 	health.LatencyMs = time.Since(started).Milliseconds()
 	return health
+}
+
+func (a *openClawAdapter) gatewayHealthCheck(ctx context.Context, started time.Time) Health {
+	health := Health{RuntimeID: "openclaw", Status: "unavailable", CheckedAt: time.Now().UTC()}
+	endpoint, err := openClawGatewayHealthURL(a.gatewayURL)
+	if err != nil {
+		health.Status = "blocked"
+		health.Reason = "OpenClaw Gateway health endpoint is invalid"
+		return health
+	}
+	timeout := a.timeout
+	if timeout <= 0 {
+		timeout = defaultTimeoutSeconds * time.Second
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		health.Status = "blocked"
+		health.Reason = "OpenClaw Gateway health request could not be created"
+		return health
+	}
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		health.Reason = "OpenClaw Gateway health endpoint is unavailable"
+		return health
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		health.Reason = "OpenClaw Gateway health endpoint returned an unexpected status"
+		return health
+	}
+	var payload struct {
+		OK     bool   `json:"ok"`
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4*1024)).Decode(&payload); err != nil || !payload.OK || strings.ToLower(strings.TrimSpace(payload.Status)) != "live" {
+		health.Reason = "OpenClaw Gateway health endpoint returned an unexpected health response"
+		return health
+	}
+	health.Status = "available"
+	health.Reason = "OpenClaw Companion gateway health endpoint is live; discovery is read-only and execution still requires HAI's approved OpenClaw CLI/workspace path"
+	health.LatencyMs = time.Since(started).Milliseconds()
+	return health
+}
+
+func openClawGatewayHealthURL(rawURL string) (string, error) {
+	endpoint, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" {
+		return "", fmt.Errorf("invalid gateway URL")
+	}
+	switch strings.ToLower(endpoint.Scheme) {
+	case "ws":
+		endpoint.Scheme = "http"
+	case "wss":
+		endpoint.Scheme = "https"
+	case "http", "https":
+	default:
+		return "", fmt.Errorf("unsupported gateway URL scheme")
+	}
+	endpoint.Path = "/health"
+	endpoint.RawPath = ""
+	endpoint.RawQuery = ""
+	endpoint.Fragment = ""
+	return endpoint.String(), nil
 }
 
 func (a *openClawAdapter) ListSkills(context.Context) []Skill {
@@ -3083,6 +3155,9 @@ func (a *openClawAdapter) validGatewayURL() string {
 	parsed, err := url.Parse(a.gatewayURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "OPENCLAW_GATEWAY_URL must be an absolute URL"
+	}
+	if parsed.User != nil {
+		return "OPENCLAW_GATEWAY_URL must not include credentials; use OPENCLAW_GATEWAY_TOKEN"
 	}
 	switch parsed.Scheme {
 	case "ws", "wss", "http", "https":

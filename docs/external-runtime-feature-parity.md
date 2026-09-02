@@ -52,11 +52,16 @@ treating an arbitrary HTTP 200 as health:
 
 Responses are limited to 64 KiB, redirects are refused, hosts are allowlisted,
 JSON shape is checked, raw bodies are not returned, and only a SHA-256 evidence
-digest plus bounded metadata reaches the dashboard. Successful discovery keeps
-the runtime status `blocked`: `ready` is reserved for a genuinely executable
-adapter. Discovery evidence is currently in-process and intentionally expires
-on backend restart; durable readiness restoration will require a PostgreSQL
-ledger record rather than configuration inference.
+digest plus bounded metadata reaches the dashboard. The OpenClaw adapter now
+also performs the stricter Companion-specific `GET /health` handshake: its
+response body is capped at 4 KiB, it accepts only `ok=true` with `status=live`,
+and it refuses URL credentials and redirects. Query and fragment data are
+never forwarded to the fixed `/health` request. A live Companion reports
+`available` for read-only discovery; `ready` remains reserved for a genuinely
+executable adapter. No gateway token is sent during this health probe. Discovery
+evidence is currently in-process and intentionally expires on backend restart;
+durable readiness restoration will require a PostgreSQL ledger record rather
+than configuration inference.
 
 ## Disposition Rules
 

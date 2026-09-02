@@ -767,6 +767,18 @@ state, enables the adapter, and validates it. HAI does not bundle these tools,
 send messages through them, control browsers, create cron jobs, or bypass their
 or HAI's security boundaries.
 
+OpenClaw Companion on Windows is supported as a separate, read-only gateway
+discovery path. With `OPENCLAW_AGENT_ENABLED=true`,
+`OPENCLAW_GATEWAY_ENABLED=true`, and
+`OPENCLAW_GATEWAY_URL=ws://host.docker.internal:18789` for a Compose backend,
+HAI converts the loopback WebSocket address into a strict `GET /health` probe.
+It accepts only `{"ok":true,"status":"live"}`, follows no redirects, sends no
+gateway token, and reports `available` rather than executable. The Companion's
+WSL gateway being live does not authorize HAI to run a task, access Companion
+node capabilities, or use a browser, desktop, channel, or host tool. Those
+remain blocked until the existing CLI/workspace, approval-proof, and
+postcondition paths are independently configured and validated.
+
 DeepSeek Harness remains an upstream developer preview, but it now documents a
 one-shot headless profile: `dsh --profile headless "task"`. HAI integrates only
 that documented process boundary. It is disabled by default and requires both
