@@ -2,7 +2,7 @@ import { Component, Inject, OnDestroy, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
-import { Subscription } from 'rxjs';
+import { finalize, Subscription, switchMap } from 'rxjs';
 import {
   IAgentRuntimeEcosystemSurface,
   IAgentRuntimeHealth,
@@ -449,9 +449,13 @@ export class CommandDashboardComponent implements OnInit, OnDestroy {
       return;
     }
     this.openClawConfigLoading = true;
-    this.agentRuntimes.setOpenClawEcosystemPath(path).subscribe({
-      next: (runtime) => {
+    this.agentRuntimes.prepareOpenClawEcosystemPath(path).pipe(
+      switchMap((authorization) => this.agentRuntimes.setOpenClawEcosystemPath(path, authorization)),
+      finalize(() => {
         this.openClawConfigLoading = false;
+      })
+    ).subscribe({
+      next: (runtime) => {
         const index = this.runtimes.findIndex((item) => item.id === runtime.id);
         if (index >= 0) {
           this.runtimes[index] = runtime;
@@ -460,7 +464,6 @@ export class CommandDashboardComponent implements OnInit, OnDestroy {
         this.notification.success('OpenClaw ecosystem path updated', `Configured at ${this.openClawEcosystemPath}`);
       },
       error: (error) => {
-        this.openClawConfigLoading = false;
         this.notification.error(
           'OpenClaw ecosystem config failed',
           error?.error?.error || 'The backend rejected the configured OpenClaw ecosystem path.'
@@ -474,18 +477,24 @@ export class CommandDashboardComponent implements OnInit, OnDestroy {
       return;
     }
     this.openClawRefreshLoading = true;
-    this.agentRuntimes.refreshOpenClawEcosystem().subscribe({
-      next: (updatedRuntime) => {
+    this.agentRuntimes.prepareOpenClawEcosystemRefresh().pipe(
+      switchMap((authorization) => this.agentRuntimes.refreshOpenClawEcosystem(authorization)),
+      finalize(() => {
         this.openClawRefreshLoading = false;
+      })
+    ).subscribe({
+      next: (updatedRuntime) => {
         const index = this.runtimes.findIndex((item) => item.id === updatedRuntime.id);
         if (index >= 0) {
           this.runtimes[index] = updatedRuntime;
           this.openClawEcosystemPath = updatedRuntime.ecosystemPath || '';
         }
-        this.notification.success('OpenClaw ecosystem refresh queued', 'Re-scanned the selected OpenClaw source path.');
+        this.notification.success(
+          'OpenClaw ecosystem refreshed',
+          'Re-scanned the selected OpenClaw source after a one-time owner confirmation.'
+        );
       },
       error: (error) => {
-        this.openClawRefreshLoading = false;
         this.notification.error(
           'OpenClaw ecosystem refresh failed',
           error?.error?.error || 'The backend failed to refresh OpenClaw ecosystem inventory.'
@@ -521,9 +530,13 @@ export class CommandDashboardComponent implements OnInit, OnDestroy {
       return;
     }
     this.openClawUploadLoading = true;
-    this.agentRuntimes.uploadOpenClawEcosystem(file).subscribe({
-      next: (runtime) => {
+    this.agentRuntimes.prepareOpenClawEcosystemUpload(file).pipe(
+      switchMap((authorization) => this.agentRuntimes.uploadOpenClawEcosystem(file, authorization)),
+      finalize(() => {
         this.openClawUploadLoading = false;
+      })
+    ).subscribe({
+      next: (runtime) => {
         this.openClawUploadFileName = '';
         const index = this.runtimes.findIndex((item) => item.id === runtime.id);
         if (index >= 0) {
@@ -536,7 +549,7 @@ export class CommandDashboardComponent implements OnInit, OnDestroy {
         );
       },
       error: (error) => {
-        this.openClawUploadLoading = false;
+        this.openClawUploadFileName = '';
         this.notification.error(
           'OpenClaw ecosystem upload failed',
           error?.error?.error || 'The uploaded archive could not be indexed.'

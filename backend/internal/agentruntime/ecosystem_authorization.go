@@ -20,7 +20,11 @@ const (
 	openClawResourceType   = "agent-runtime-ecosystem"
 	openClawResourceID     = "openclaw"
 	openClawMutationTarget = "agentruntime:openclaw-ecosystem:"
-	openClawMutationTTL    = 5 * time.Minute
+	// The persisted upload path is chosen by HAI after authorization. Binding a
+	// synthetic user-visible path would either leak a temporary location or let
+	// the caller influence a filesystem destination.
+	openClawManagedArchiveTarget = "hai-managed-openclaw-archive"
+	openClawMutationTTL          = 5 * time.Minute
 )
 
 var (
@@ -37,6 +41,32 @@ type EcosystemMutationAuthorization struct {
 	TaskID                string `json:"taskId" form:"taskId"`
 	ApprovalSourceID      string `json:"approvalSourceId" form:"approvalSourceId"`
 	ApprovalBindingDigest string `json:"approvalBindingDigest" form:"approvalBindingDigest"`
+}
+
+// EcosystemMutationApprovalPreparer creates a short-lived, owner-confirmed
+// authorization for one already-derived mutation digest. Implementations keep
+// signing material and approval facts server-side; the browser receives only
+// the bounded references required by the immediate follow-up mutation.
+type EcosystemMutationApprovalPreparer interface {
+	PrepareEcosystemMutationApproval(
+		ownerIdentity string,
+		taskID string,
+		effectDigest string,
+	) (EcosystemMutationAuthorization, error)
+}
+
+type EcosystemMutationApprovalPreparerFunc func(
+	ownerIdentity string,
+	taskID string,
+	effectDigest string,
+) (EcosystemMutationAuthorization, error)
+
+func (f EcosystemMutationApprovalPreparerFunc) PrepareEcosystemMutationApproval(
+	ownerIdentity string,
+	taskID string,
+	effectDigest string,
+) (EcosystemMutationAuthorization, error) {
+	return f(ownerIdentity, taskID, effectDigest)
 }
 
 // These cycle-free types are adapted to executionauth.Request and Receipt by
@@ -126,8 +156,6 @@ type openClawEcosystemEffect struct {
 	UploadedContentDigest string `json:"uploadedContentDigest,omitempty"`
 	UploadedSize          int64  `json:"uploadedSize,omitempty"`
 	DeleteManagedPath     string `json:"deleteManagedPath,omitempty"`
-	ApprovalSourceID      string `json:"approvalSourceId"`
-	ApprovalBindingDigest string `json:"approvalBindingDigest"`
 }
 
 func normalizeEcosystemAuthorization(
@@ -160,53 +188,20 @@ func buildEcosystemMutationAuthorizationRequest(
 	authorization EcosystemMutationAuthorization,
 	effect openClawEcosystemEffect,
 ) (EcosystemMutationAuthorizationRequest, string, error) {
+	digest, err := ecosystemMutationEffectDigest(owner, actor, effect)
+	if err != nil {
+		return EcosystemMutationAuthorizationRequest{}, "", err
+	}
 	owner = strings.TrimSpace(owner)
 	actor = strings.TrimSpace(actor)
-	if owner == "" || actor == "" {
+
+	authorization, err = normalizeEcosystemAuthorization(authorization)
+	if err != nil {
+		return EcosystemMutationAuthorizationRequest{}, "", err
+	}
+	if authorization.ApprovalBindingDigest != digest {
 		return EcosystemMutationAuthorizationRequest{}, "", ErrEcosystemAuthorizationDenied
 	}
-	switch effect.Action {
-	case openClawSetPathAction:
-		if strings.TrimSpace(effect.TargetPath) == "" ||
-			strings.TrimSpace(effect.TargetSignature) == "" {
-			return EcosystemMutationAuthorizationRequest{}, "",
-				ErrEcosystemAuthorizationDenied
-		}
-	case openClawRefreshAction:
-		if effect.TargetPath != effect.CurrentPath ||
-			effect.TargetSignature != effect.CurrentSignature {
-			return EcosystemMutationAuthorizationRequest{}, "",
-				ErrEcosystemAuthorizationDenied
-		}
-	case openClawUploadAction:
-		if !isOpenClawUploadArtifactPath(effect.TargetPath) ||
-			!isLowerSHA256(effect.UploadedContentDigest) ||
-			effect.UploadedSize <= 0 {
-			return EcosystemMutationAuthorizationRequest{}, "",
-				ErrEcosystemAuthorizationDenied
-		}
-	default:
-		return EcosystemMutationAuthorizationRequest{}, "",
-			ErrEcosystemAuthorizationDenied
-	}
-	authorization, err := normalizeEcosystemAuthorization(authorization)
-	if err != nil {
-		return EcosystemMutationAuthorizationRequest{}, "", err
-	}
-	effect.ContractVersion = 1
-	effect.OwnerIdentity = owner
-	effect.ActorIdentity = actor
-	effect.ResourceType = openClawResourceType
-	effect.ResourceID = openClawResourceID
-	effect.RuntimeID = openClawResourceID
-	effect.ApprovalSourceID = authorization.ApprovalSourceID
-	effect.ApprovalBindingDigest = authorization.ApprovalBindingDigest
-	encoded, err := json.Marshal(effect)
-	if err != nil {
-		return EcosystemMutationAuthorizationRequest{}, "", err
-	}
-	sum := sha256.Sum256(encoded)
-	digest := hex.EncodeToString(sum[:])
 	request := EcosystemMutationAuthorizationRequest{
 		OwnerIdentity:     owner,
 		IdempotencyKey:    authorization.IdempotencyKey,
@@ -233,6 +228,54 @@ func buildEcosystemMutationAuthorizationRequest(
 		RequestedAt:           time.Now().UTC(),
 	}
 	return request, openClawMutationTarget + digest, nil
+}
+
+// ecosystemMutationEffectDigest derives the immutable operation identity
+// before approval references exist. Approval sources are intentionally not
+// part of the effect: the signed source is generated from this digest, so
+// including either value would create a circular, unauditable contract.
+func ecosystemMutationEffectDigest(
+	owner string,
+	actor string,
+	effect openClawEcosystemEffect,
+) (string, error) {
+	owner = strings.TrimSpace(owner)
+	actor = strings.TrimSpace(actor)
+	if owner == "" || actor == "" {
+		return "", ErrEcosystemAuthorizationDenied
+	}
+	switch effect.Action {
+	case openClawSetPathAction:
+		if strings.TrimSpace(effect.TargetPath) == "" ||
+			strings.TrimSpace(effect.TargetSignature) == "" {
+			return "", ErrEcosystemAuthorizationDenied
+		}
+	case openClawRefreshAction:
+		if effect.TargetPath != effect.CurrentPath ||
+			effect.TargetSignature != effect.CurrentSignature {
+			return "", ErrEcosystemAuthorizationDenied
+		}
+	case openClawUploadAction:
+		if effect.TargetPath != openClawManagedArchiveTarget ||
+			!isLowerSHA256(effect.UploadedContentDigest) ||
+			effect.UploadedSize <= 0 {
+			return "", ErrEcosystemAuthorizationDenied
+		}
+	default:
+		return "", ErrEcosystemAuthorizationDenied
+	}
+	effect.ContractVersion = 1
+	effect.OwnerIdentity = owner
+	effect.ActorIdentity = actor
+	effect.ResourceType = openClawResourceType
+	effect.ResourceID = openClawResourceID
+	effect.RuntimeID = openClawResourceID
+	encoded, err := json.Marshal(effect)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func validateEcosystemMutationReceipt(

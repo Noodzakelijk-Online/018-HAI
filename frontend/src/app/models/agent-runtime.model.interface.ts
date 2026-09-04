@@ -16,6 +16,16 @@ export interface IAgentRuntimeInfo {
   endpoint?: string;
 }
 
+// Short-lived, server-issued references for one exact OpenClaw ecosystem
+// mutation. They are deliberately kept in-memory by the caller and are never
+// persisted in browser storage.
+export interface IAgentRuntimeEcosystemAuthorization {
+  idempotencyKey: string;
+  taskId: string;
+  approvalSourceId: string;
+  approvalBindingDigest: string;
+}
+
 export interface IAgentRuntimeEcosystemSurface {
   category: string;
   status: string;

@@ -9,12 +9,21 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
   function createComponent(): {
     component: CommandDashboardComponent;
     memoryEngine: jasmine.SpyObj<any>;
+    agentRuntimes: jasmine.SpyObj<any>;
     pursuits: jasmine.SpyObj<any>;
     workflows: jasmine.SpyObj<any>;
     commands: jasmine.SpyObj<any>;
     notification: jasmine.SpyObj<any>;
   } {
     const memoryEngine = jasmine.createSpyObj('MemoryEngineService', ['dashboard', 'search', 'deleteConversation']);
+    const agentRuntimes = jasmine.createSpyObj('AgentRuntimeService', [
+      'prepareOpenClawEcosystemPath',
+      'setOpenClawEcosystemPath',
+      'prepareOpenClawEcosystemRefresh',
+      'refreshOpenClawEcosystem',
+      'prepareOpenClawEcosystemUpload',
+      'uploadOpenClawEcosystem',
+    ]);
     const pursuits = jasmine.createSpyObj('PursuitService', ['acceptCandidate', 'archive', 'resolveDecision']);
     const workflows = jasmine.createSpyObj('WorkflowService', ['resolveApproval', 'resolveProposal']);
     const commands = jasmine.createSpyObj('AssistantCommandService', ['logs']);
@@ -23,7 +32,7 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
     const component = new CommandDashboardComponent(
       new FormBuilder(),
       memoryEngine,
-      {} as any,
+      agentRuntimes,
       commands,
       pursuits,
       workflows,
@@ -31,7 +40,7 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
       router,
     );
     spyOn(component, 'refreshPursuits');
-    return { component, memoryEngine, pursuits, workflows, commands, notification };
+    return { component, memoryEngine, agentRuntimes, pursuits, workflows, commands, notification };
   }
 
   function candidateDecision(riskLevel: string = 'medium'): IPursuitDashboardDecision {
@@ -188,5 +197,29 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
 
     expect(component.openClawPosture(openClaw)).toContain('discovery is connected');
     expect(component.openClawPosture(openClaw)).toContain('Task execution remains disabled');
+  });
+
+  it('prepares one owner-bound authorization before setting the OpenClaw ecosystem path', () => {
+    const { component, agentRuntimes, notification } = createComponent();
+    const authorization = {
+      idempotencyKey: 'runtime-openclaw:one-time-key',
+      taskId: 'agent-runtime-openclaw-set-path-test',
+      approvalSourceId: 'opscontrol-owner:test',
+      approvalBindingDigest: 'a'.repeat(64),
+    };
+    const updatedRuntime = { id: 'openclaw', ecosystemPath: 'C:\\OpenClaw\\openclaw-main.zip' };
+    agentRuntimes.prepareOpenClawEcosystemPath.and.returnValue(of(authorization));
+    agentRuntimes.setOpenClawEcosystemPath.and.returnValue(of(updatedRuntime));
+    component.runtimes = [{ id: 'openclaw' } as any];
+    component.openClawEcosystemPath = updatedRuntime.ecosystemPath;
+
+    component.setOpenClawEcosystemPath(component.runtimes[0]);
+
+    expect(agentRuntimes.prepareOpenClawEcosystemPath).toHaveBeenCalledWith(updatedRuntime.ecosystemPath);
+    expect(agentRuntimes.setOpenClawEcosystemPath).toHaveBeenCalledWith(updatedRuntime.ecosystemPath, authorization);
+    expect(notification.success).toHaveBeenCalledWith(
+      'OpenClaw ecosystem path updated',
+      `Configured at ${updatedRuntime.ecosystemPath}`,
+    );
   });
 });

@@ -429,7 +429,10 @@ work from the command dashboard.
   multiple backend instances. Rotating the key invalidates unexpired proofs.
 - Stopping a runtime task requires an approval-capable role. Uploading,
   selecting, or refreshing the shared OpenClaw ecosystem requires an owner
-  role because it changes the host-wide runtime configuration.
+  role because it changes the host-wide runtime configuration. The dashboard
+  first requests a short-lived, single-use owner authorization bound to the
+  exact validated action, then submits it immediately; browser input cannot
+  assert an approval or reuse it for a different ecosystem change.
 - The shared automation registry follows the same boundary: reads are role
   scoped, launch/stop actions require approval capability, health checks
   require write capability, and create/update/delete/reorder operations require

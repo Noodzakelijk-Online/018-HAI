@@ -687,10 +687,13 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 		// exact task that exercised a receipt can also be cancelled by its owner.
 		initializeAgentRuntimeRoutes(
 			v1,
-			agentruntime.NewHandlerWithEcosystemMutationAuthorizer(
+			agentruntime.NewHandlerWithEcosystemMutationAuthorization(
 				runtimeRegistry,
 				ecosystemExecutionAuthorizer{
 					service: executionAuthorizationService,
+				},
+				ecosystemMutationApprovalPreparer{
+					issuer: ownerControlApprovalService,
 				},
 			),
 		)
@@ -1166,6 +1169,9 @@ func initializeAgentRuntimeRoutes(apiVersion *gin.RouterGroup, handler *agentrun
 		routes.GET("/:id/skills", requirePermission(rbac.PermRead), handler.Skills)
 		routes.POST("/:id/tasks/:taskId/stop", requirePermission(rbac.PermExecute), handler.StopTask)
 		routes.GET("/openclaw/ecosystem", requirePermission(rbac.PermRead), handler.OpenClawEcosystem)
+		routes.POST("/openclaw/ecosystem/approval/set-path", requirePermission(rbac.PermAdmin), handler.PrepareSetOpenClawEcosystem)
+		routes.POST("/openclaw/ecosystem/approval/refresh", requirePermission(rbac.PermAdmin), handler.PrepareRefreshOpenClawEcosystem)
+		routes.POST("/openclaw/ecosystem/approval/upload", requirePermission(rbac.PermAdmin), handler.PrepareUploadOpenClawEcosystem)
 		routes.PATCH("/openclaw/ecosystem", requirePermission(rbac.PermAdmin), handler.SetOpenClawEcosystem)
 		routes.POST("/openclaw/ecosystem/refresh", requirePermission(rbac.PermAdmin), handler.RefreshOpenClawEcosystem)
 		routes.POST("/openclaw/ecosystem/upload", requirePermission(rbac.PermAdmin), handler.UploadOpenClawEcosystem)

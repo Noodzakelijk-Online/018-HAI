@@ -3,6 +3,7 @@ import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   IAgentRuntimeHealth,
+  IAgentRuntimeEcosystemAuthorization,
   IAgentRuntimeInfo,
   IAgentRuntimeSkill,
   IAgentRuntimeStopResult,
@@ -38,17 +39,59 @@ export class AgentRuntimeService {
     return this.http.post<IAgentRuntimeStopResult>(`${this.apiUrl}/${runtimeId}/tasks/${taskId}/stop`, null);
   }
 
-  setOpenClawEcosystemPath(ecosystemPath: string): Observable<IAgentRuntimeInfo> {
-    return this.http.patch<IAgentRuntimeInfo>(`${this.apiUrl}/openclaw/ecosystem`, { ecosystemPath });
+  prepareOpenClawEcosystemPath(
+    ecosystemPath: string
+  ): Observable<IAgentRuntimeEcosystemAuthorization> {
+    return this.http.post<IAgentRuntimeEcosystemAuthorization>(
+      `${this.apiUrl}/openclaw/ecosystem/approval/set-path`,
+      { ecosystemPath }
+    );
   }
 
-  uploadOpenClawEcosystem(file: File): Observable<IAgentRuntimeInfo> {
+  setOpenClawEcosystemPath(
+    ecosystemPath: string,
+    authorization: IAgentRuntimeEcosystemAuthorization
+  ): Observable<IAgentRuntimeInfo> {
+    return this.http.patch<IAgentRuntimeInfo>(`${this.apiUrl}/openclaw/ecosystem`, {
+      ecosystemPath,
+      ...authorization,
+    });
+  }
+
+  prepareOpenClawEcosystemUpload(
+    file: File
+  ): Observable<IAgentRuntimeEcosystemAuthorization> {
     const form = new FormData();
     form.append('ecosystem', file, file.name);
+    return this.http.post<IAgentRuntimeEcosystemAuthorization>(
+      `${this.apiUrl}/openclaw/ecosystem/approval/upload`,
+      form
+    );
+  }
+
+  uploadOpenClawEcosystem(
+    file: File,
+    authorization: IAgentRuntimeEcosystemAuthorization
+  ): Observable<IAgentRuntimeInfo> {
+    const form = new FormData();
+    form.append('ecosystem', file, file.name);
+    form.append('idempotencyKey', authorization.idempotencyKey);
+    form.append('taskId', authorization.taskId);
+    form.append('approvalSourceId', authorization.approvalSourceId);
+    form.append('approvalBindingDigest', authorization.approvalBindingDigest);
     return this.http.post<IAgentRuntimeInfo>(`${this.apiUrl}/openclaw/ecosystem/upload`, form);
   }
 
-  refreshOpenClawEcosystem(): Observable<IAgentRuntimeInfo> {
-    return this.http.post<IAgentRuntimeInfo>(`${this.apiUrl}/openclaw/ecosystem/refresh`, null);
+  prepareOpenClawEcosystemRefresh(): Observable<IAgentRuntimeEcosystemAuthorization> {
+    return this.http.post<IAgentRuntimeEcosystemAuthorization>(
+      `${this.apiUrl}/openclaw/ecosystem/approval/refresh`,
+      null
+    );
+  }
+
+  refreshOpenClawEcosystem(
+    authorization: IAgentRuntimeEcosystemAuthorization
+  ): Observable<IAgentRuntimeInfo> {
+    return this.http.post<IAgentRuntimeInfo>(`${this.apiUrl}/openclaw/ecosystem/refresh`, authorization);
   }
 }
