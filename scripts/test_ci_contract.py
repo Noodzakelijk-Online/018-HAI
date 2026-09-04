@@ -49,6 +49,17 @@ class CIWorkflowContractTest(unittest.TestCase):
         self.assertIn("command -v git", audit)
         self.assertIn("refusing to report an incomplete audit as passing", audit)
 
+    def test_frontend_audit_fails_on_advisories_but_not_registry_timeouts(self) -> None:
+        frontend = job_block("frontend")
+        audit = ROOT / "scripts" / "audit-frontend-production-dependencies.sh"
+
+        self.assertTrue(audit.is_file())
+        audit_text = audit.read_text(encoding="utf-8")
+        self.assertIn("bash ../scripts/audit-frontend-production-dependencies.sh", frontend)
+        self.assertIn("npm audit --omit=dev --audit-level=high --json", audit_text)
+        self.assertIn("confirmed high or critical production dependency advisory", audit_text)
+        self.assertIn("audit infrastructure did not return a trustworthy report", audit_text)
+
     def test_bootstrap_document_matches_the_dark_first_theme_contract(self) -> None:
         index = (ROOT / "frontend" / "src" / "index.html").read_text(
             encoding="utf-8"
