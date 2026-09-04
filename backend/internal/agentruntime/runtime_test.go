@@ -852,7 +852,10 @@ func TestOpenClawHealthOnlyGatewayDoesNotRequireTokenForControlledCLIExecution(t
 		agentCLIEnabled: true,
 		sandboxRequired: true,
 		sandboxMode:     "all",
-		timeout:         time.Second,
+		// This test validates that an optional health-only Gateway does not affect
+		// the independently governed CLI path. Leave enough headroom for a
+		// race-instrumented test binary to start under loaded CI workers.
+		timeout:         5 * time.Second,
 		outputLimit:     defaultOutputLimit,
 	}
 
