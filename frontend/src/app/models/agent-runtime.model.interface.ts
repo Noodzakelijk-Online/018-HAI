@@ -53,6 +53,7 @@ export interface IAgentRuntimeHealth {
   runtimeId: string;
   status: string;
   reason: string;
+  version?: string;
   checkedAt: string;
   latencyMs: number;
 }

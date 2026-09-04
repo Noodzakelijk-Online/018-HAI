@@ -77,9 +77,12 @@ type RouteTrace struct {
 }
 
 type Health struct {
-	RuntimeID string    `json:"runtimeId"`
-	Status    string    `json:"status"`
-	Reason    string    `json:"reason"`
+	RuntimeID string `json:"runtimeId"`
+	Status    string `json:"status"`
+	Reason    string `json:"reason"`
+	// Version is populated only from a validated authenticated runtime response.
+	// Health-only probes deliberately leave it empty rather than inferring identity.
+	Version   string    `json:"version,omitempty"`
 	CheckedAt time.Time `json:"checkedAt"`
 	LatencyMs int64     `json:"latencyMs"`
 }
@@ -1250,11 +1253,12 @@ func (a *openClawAdapter) gatewayHealthCheck(ctx context.Context, started time.T
 	if a.gatewayAuthenticatedDiscoveryEnabled {
 		if strings.TrimSpace(a.gatewayToken) == "" {
 			health.Reason = "OpenClaw Companion gateway health endpoint is live; authenticated operator.read discovery was skipped because OPENCLAW_GATEWAY_TOKEN is not configured"
-		} else if err := a.gatewayAuthenticatedOperatorReadCheck(ctx); err != nil {
+		} else if version, err := a.gatewayAuthenticatedOperatorReadCheck(ctx); err != nil {
 			health.Status = "unavailable"
 			health.Reason = "OpenClaw Gateway authenticated operator.read discovery was unavailable, malformed, or over-scoped"
 			return health
 		} else {
+			health.Version = version
 			health.Reason = "OpenClaw Companion gateway health endpoint is live and authenticated operator.read discovery was verified; HAI closes the connection without calling Gateway RPCs or enabling task execution"
 		}
 	} else if a.gatewayProtocolDiscoveryEnabled {
@@ -1279,10 +1283,10 @@ func (a *openClawAdapter) gatewayProtocolChallengeCheck(ctx context.Context) err
 	return connection.Close()
 }
 
-func (a *openClawAdapter) gatewayAuthenticatedOperatorReadCheck(ctx context.Context) error {
+func (a *openClawAdapter) gatewayAuthenticatedOperatorReadCheck(ctx context.Context) (string, error) {
 	connection, err := a.openClawGatewayPreAuthConnection(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer connection.Close()
 
@@ -1311,7 +1315,7 @@ func (a *openClawAdapter) gatewayAuthenticatedOperatorReadCheck(ctx context.Cont
 		},
 	}
 	if err := websocket.JSON.Send(connection, request); err != nil {
-		return err
+		return "", err
 	}
 
 	var response struct {
@@ -1338,32 +1342,45 @@ func (a *openClawAdapter) gatewayAuthenticatedOperatorReadCheck(ctx context.Cont
 		} `json:"payload"`
 	}
 	if err := websocket.JSON.Receive(connection, &response); err != nil {
-		return err
+		return "", err
 	}
 	if response.Type != "res" || response.ID != requestID || !response.OK || response.Payload.Type != "hello-ok" {
-		return fmt.Errorf("unexpected authenticated gateway response")
+		return "", fmt.Errorf("unexpected authenticated gateway response")
 	}
 	protocol, err := response.Payload.Protocol.Int64()
-	if err != nil || protocol != openClawGatewayProtocolVersion || strings.TrimSpace(response.Payload.Server.Version) == "" || strings.TrimSpace(response.Payload.Server.ConnID) == "" || !presentGatewayJSON(response.Payload.Features) || !presentGatewayJSON(response.Payload.Snapshot) {
-		return fmt.Errorf("invalid authenticated gateway hello response")
+	serverVersion := strings.TrimSpace(response.Payload.Server.Version)
+	if err != nil || protocol != openClawGatewayProtocolVersion || !validGatewayEvidenceValue(serverVersion) || !validGatewayEvidenceValue(strings.TrimSpace(response.Payload.Server.ConnID)) || !presentGatewayJSON(response.Payload.Features) || !presentGatewayJSON(response.Payload.Snapshot) {
+		return "", fmt.Errorf("invalid authenticated gateway hello response")
 	}
 	maxPayload, err := response.Payload.Policy.MaxPayload.Int64()
 	if err != nil || maxPayload <= 0 {
-		return fmt.Errorf("invalid authenticated gateway payload policy")
+		return "", fmt.Errorf("invalid authenticated gateway payload policy")
 	}
 	maxBufferedBytes, err := response.Payload.Policy.MaxBufferedBytes.Int64()
 	if err != nil || maxBufferedBytes <= 0 {
-		return fmt.Errorf("invalid authenticated gateway buffer policy")
+		return "", fmt.Errorf("invalid authenticated gateway buffer policy")
 	}
 	if response.Payload.Auth.Role != "operator" || len(response.Payload.Auth.Scopes) != 1 || response.Payload.Auth.Scopes[0] != "operator.read" {
-		return fmt.Errorf("authenticated gateway negotiated unexpected operator scope")
+		return "", fmt.Errorf("authenticated gateway negotiated unexpected operator scope")
 	}
-	return nil
+	return serverVersion, nil
 }
 
 func presentGatewayJSON(value json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(value)
 	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
+}
+
+func validGatewayEvidenceValue(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *openClawAdapter) openClawGatewayPreAuthConnection(ctx context.Context) (*websocket.Conn, error) {

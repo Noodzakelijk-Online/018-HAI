@@ -1011,6 +1011,9 @@ func TestOpenClawCompanionGatewayAuthenticatedReadDiscoveryUsesBoundedOperatorHa
 	if health.Status != "available" || !strings.Contains(health.Reason, "authenticated operator.read") {
 		t.Fatalf("authenticated discovery health = %#v", health)
 	}
+	if health.Version != "2026.8.1" {
+		t.Fatalf("authenticated discovery version = %q, want server version", health.Version)
+	}
 	if authorizationHeader != "" {
 		t.Fatalf("authenticated discovery sent an authorization header: %q", authorizationHeader)
 	}
@@ -1057,6 +1060,26 @@ func TestPresentGatewayJSONRejectsMissingOrNullValues(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := presentGatewayJSON(test.value); got != test.want {
 				t.Fatalf("presentGatewayJSON(%q) = %t, want %t", test.value, got, test.want)
+			}
+		})
+	}
+}
+
+func TestValidGatewayEvidenceValueRejectsUnboundedOrControlValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "empty", value: "", want: false},
+		{name: "version", value: "2026.7.1-2", want: true},
+		{name: "control character", value: "2026.7\n1", want: false},
+		{name: "oversized", value: strings.Repeat("a", 129), want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := validGatewayEvidenceValue(test.value); got != test.want {
+				t.Fatalf("validGatewayEvidenceValue(%q) = %t, want %t", test.value, got, test.want)
 			}
 		})
 	}

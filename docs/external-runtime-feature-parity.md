@@ -78,6 +78,8 @@ After the same bounded challenge it sends only `connect`, requests exactly
 `operator.read`, validates a matching `hello-ok` response and closes the socket.
 The returned role and scope must be exactly `operator` and `operator.read`;
 over-scoped, incomplete, malformed, or unavailable responses are `unavailable`.
+Only this authenticated path may expose the bounded printable Gateway server
+version in HAI health evidence; a health-only probe never infers a version.
 No Gateway RPC, task, tool, browser, node, message, pairing, or channel command
 is sent. This is an opt-in credential boundary and remains discovery-only.
 
