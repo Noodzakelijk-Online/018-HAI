@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -938,6 +939,126 @@ func TestOpenClawCompanionGatewayProtocolChallengeRejectsMalformedFrame(t *testi
 	health := adapter.HealthCheck(context.Background())
 	if health.Status != "unavailable" || !strings.Contains(health.Reason, "protocol challenge") {
 		t.Fatalf("malformed companion gateway protocol health = %#v", health)
+	}
+}
+
+func TestOpenClawCompanionGatewayAuthenticatedReadDiscoveryUsesBoundedOperatorHandshake(t *testing.T) {
+	var receivedFrame map[string]any
+	var authorizationHeader string
+	done := make(chan struct{})
+	gateway := websocket.Server{
+		Handshake: func(_ *websocket.Config, request *http.Request) error {
+			authorizationHeader = request.Header.Get("Authorization")
+			return nil
+		},
+		Handler: func(connection *websocket.Conn) {
+			defer close(done)
+			if err := websocket.JSON.Send(connection, map[string]any{
+				"type":    "event",
+				"event":   "connect.challenge",
+				"payload": map[string]any{"nonce": "challenge-nonce", "ts": float64(1_737_264_000_000)},
+			}); err != nil {
+				t.Errorf("send protocol challenge: %v", err)
+				return
+			}
+			_ = connection.SetDeadline(time.Now().Add(time.Second))
+			if err := websocket.JSON.Receive(connection, &receivedFrame); err != nil {
+				return
+			}
+			requestID, _ := receivedFrame["id"].(string)
+			if err := websocket.JSON.Send(connection, map[string]any{
+				"type": "res",
+				"id":   requestID,
+				"ok":   true,
+				"payload": map[string]any{
+					"type":     "hello-ok",
+					"protocol": float64(4),
+					"server":   map[string]any{"version": "2026.8.1", "connId": "connection-1"},
+					"features": map[string]any{"methods": []string{"status"}, "events": []string{}},
+					"snapshot": map[string]any{},
+					"auth":     map[string]any{"role": "operator", "scopes": []string{"operator.read"}},
+					"policy":   map[string]any{"maxPayload": float64(65536), "maxBufferedBytes": float64(65536)},
+				},
+			}); err != nil {
+				t.Errorf("send hello response: %v", err)
+			}
+		},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	})
+	mux.Handle("/", gateway)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	t.Setenv("OPENCLAW_AGENT_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_TOKEN", "gateway-read-token")
+	t.Setenv("OPENCLAW_GATEWAY_URL", "ws"+strings.TrimPrefix(server.URL, "http"))
+	t.Setenv("AGENT_RUNTIME_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("OPENCLAW_TIMEOUT_SECONDS", "1")
+
+	health := newOpenClawAdapterFromEnv().HealthCheck(context.Background())
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gateway did not finish the authenticated handshake")
+	}
+	if health.Status != "available" || !strings.Contains(health.Reason, "authenticated operator.read") {
+		t.Fatalf("authenticated discovery health = %#v", health)
+	}
+	if authorizationHeader != "" {
+		t.Fatalf("authenticated discovery sent an authorization header: %q", authorizationHeader)
+	}
+	if receivedFrame["type"] != "req" || receivedFrame["method"] != "connect" {
+		t.Fatalf("unexpected gateway frame: %#v", receivedFrame)
+	}
+	params, ok := receivedFrame["params"].(map[string]any)
+	if !ok {
+		t.Fatalf("connect params missing: %#v", receivedFrame)
+	}
+	scopes, ok := params["scopes"].([]any)
+	if !ok {
+		t.Fatalf("connect scopes missing: %#v", params)
+	}
+	hasRead := false
+	hasWrite := false
+	for _, scope := range scopes {
+		value, _ := scope.(string)
+		hasRead = hasRead || value == "operator.read"
+		hasWrite = hasWrite || value == "operator.write"
+	}
+	if params["role"] != "operator" || len(scopes) != 1 || !hasRead || hasWrite {
+		t.Fatalf("connect scopes were not bounded to operator.read: %#v", params)
+	}
+	auth, ok := params["auth"].(map[string]any)
+	if !ok || auth["token"] != "gateway-read-token" {
+		t.Fatalf("connect auth token was not sent through the protocol body: %#v", params)
+	}
+}
+
+func TestPresentGatewayJSONRejectsMissingOrNullValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		value json.RawMessage
+		want  bool
+	}{
+		{name: "missing", value: nil, want: false},
+		{name: "empty", value: json.RawMessage("  "), want: false},
+		{name: "null", value: json.RawMessage("null"), want: false},
+		{name: "object", value: json.RawMessage(`{}`), want: true},
+		{name: "array", value: json.RawMessage(`[]`), want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := presentGatewayJSON(test.value); got != test.want {
+				t.Fatalf("presentGatewayJSON(%q) = %t, want %t", test.value, got, test.want)
+			}
+		})
 	}
 }
 

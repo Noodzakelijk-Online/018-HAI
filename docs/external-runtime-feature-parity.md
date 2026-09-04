@@ -46,7 +46,7 @@ treating an arbitrary HTTP 200 as health:
 
 | Runtime | Requests | Validation | Highest discovery level | Identity limitation |
 | --- | --- | --- | --- | --- |
-| OpenClaw | `GET /health` | `ok=true`, `status=live` | `available` | The public health body does not identify or authenticate the runtime. |
+| OpenClaw | `GET /health`; optionally a bounded Gateway `connect` handshake | Health: `ok=true`, `status=live`. Auth discovery: challenge, protocol `4`, `hello-ok`, server identity, non-null features/snapshot, positive policy limits, and exactly `operator.read`. | `available` | Health is unauthenticated. Auth discovery proves only that the configured Gateway accepted one read-only socket; it does not prove execution readiness or a final effect. |
 | Hermes | `GET /health`; optionally authenticated `GET /v1/capabilities` | `platform=hermes-agent`, version, capability object/platform | `health_checked` | Capability discovery requires `HERMES_API_SERVER_KEY`; liveness does not. |
 | Odysseus | `GET /api/health`, `GET /api/version` | healthy status, RFC3339 timestamp, non-empty version | `available` | The public responses do not carry a cryptographic product identity. |
 
@@ -71,6 +71,15 @@ timestamp, then closes the socket. It sends no token, Authorization header,
 `connect` frame, RPC, task, or node command. A malformed or unavailable
 challenge changes the result to `unavailable`; it can never be treated as an
 execution-ready state.
+
+With `OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED=true` and a configured
+`OPENCLAW_GATEWAY_TOKEN`, HAI may perform one further read-only identity check.
+After the same bounded challenge it sends only `connect`, requests exactly
+`operator.read`, validates a matching `hello-ok` response and closes the socket.
+The returned role and scope must be exactly `operator` and `operator.read`;
+over-scoped, incomplete, malformed, or unavailable responses are `unavailable`.
+No Gateway RPC, task, tool, browser, node, message, pairing, or channel command
+is sent. This is an opt-in credential boundary and remains discovery-only.
 
 ## Disposition Rules
 

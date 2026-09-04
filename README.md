@@ -783,9 +783,17 @@ Set `OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED=true` only when HAI should
 also validate the unauthenticated gateway boundary. It opens the configured
 WebSocket, accepts one bounded `connect.challenge` event, and closes the socket.
 It does not send an authorization header, gateway token, `connect` frame, RPC,
-or task. An authenticated `operator.read` handshake is intentionally a later,
-separately configured capability because it has a different credential and
-pairing boundary.
+or task.
+
+`OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED=true` is a separate, opt-in identity
+check. It requires `OPENCLAW_GATEWAY_TOKEN`, reads the bounded challenge, sends
+one Gateway `connect` request asking for exactly `operator.read`, validates the
+matching `hello-ok` response, returned scope, server identity fields, and policy,
+then closes the socket. It sends no Gateway RPC, task, tool, browser, message,
+node, or channel command and does not make OpenClaw executable in HAI. An
+authenticated discovery result is therefore still reported as `available`, not
+execution-ready. HAI has not configured a Companion token or live-validated the
+authenticated handshake on this installation.
 
 DeepSeek Harness remains an upstream developer preview, but it now documents a
 one-shot headless profile: `dsh --profile headless "task"`. HAI integrates only
