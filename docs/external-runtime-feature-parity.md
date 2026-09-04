@@ -78,10 +78,23 @@ After the same bounded challenge it sends only `connect`, requests exactly
 `operator.read`, validates a matching `hello-ok` response and closes the socket.
 The returned role and scope must be exactly `operator` and `operator.read`;
 over-scoped, incomplete, malformed, or unavailable responses are `unavailable`.
+
+`OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED=true` is an independent second
+opt-in that only operates after the authenticated identity check succeeds. HAI
+requires the `tasks.list` feature to be advertised, sends one `tasks.list`
+request with `limit: 50`, accepts only documented task-status values, and
+returns a non-persistent aggregate of status counts. It rejects malformed,
+unexpected, over-limit, or unknown-status responses. Task identifiers, titles,
+prompts, session keys, owner information, result summaries, and error text are
+discarded before the HAI health response is created. No task cancellation,
+creation, execution, tool invocation, channel action, browser action, node
+action, or configuration change is available through this discovery path.
 Only this authenticated path may expose the bounded printable Gateway server
 version in HAI health evidence; a health-only probe never infers a version.
-No Gateway RPC, task, tool, browser, node, message, pairing, or channel command
-is sent. This is an opt-in credential boundary and remains discovery-only.
+With task-ledger discovery disabled, no Gateway RPC, task, tool, browser, node,
+message, pairing, or channel command is sent. This remains an opt-in credential
+boundary and discovery-only even when the bounded task-ledger summary is
+enabled.
 
 ## Disposition Rules
 

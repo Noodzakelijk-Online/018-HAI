@@ -1044,6 +1044,112 @@ func TestOpenClawCompanionGatewayAuthenticatedReadDiscoveryUsesBoundedOperatorHa
 	}
 }
 
+func TestOpenClawCompanionGatewayReadOnlyTaskLedgerDiscoveryReturnsOnlyAggregateCounts(t *testing.T) {
+	var receivedFrames []map[string]any
+	done := make(chan struct{})
+	gateway := websocket.Server{
+		Handler: func(connection *websocket.Conn) {
+			defer close(done)
+			if err := websocket.JSON.Send(connection, map[string]any{
+				"type":    "event",
+				"event":   "connect.challenge",
+				"payload": map[string]any{"nonce": "challenge-nonce", "ts": float64(1_737_264_000_000)},
+			}); err != nil {
+				t.Errorf("send protocol challenge: %v", err)
+				return
+			}
+			_ = connection.SetDeadline(time.Now().Add(time.Second))
+			for len(receivedFrames) < 2 {
+				var frame map[string]any
+				if err := websocket.JSON.Receive(connection, &frame); err != nil {
+					return
+				}
+				receivedFrames = append(receivedFrames, frame)
+				requestID, _ := frame["id"].(string)
+				if frame["method"] == "connect" {
+					if err := websocket.JSON.Send(connection, map[string]any{
+						"type": "res",
+						"id":   requestID,
+						"ok":   true,
+						"payload": map[string]any{
+							"type":     "hello-ok",
+							"protocol": float64(4),
+							"server":   map[string]any{"version": "2026.8.1", "connId": "connection-1"},
+							"features": map[string]any{"methods": []string{"tasks.list"}, "events": []string{}},
+							"snapshot": map[string]any{},
+							"auth":     map[string]any{"role": "operator", "scopes": []string{"operator.read"}},
+							"policy":   map[string]any{"maxPayload": float64(65536), "maxBufferedBytes": float64(65536)},
+						},
+					}); err != nil {
+						t.Errorf("send hello response: %v", err)
+						return
+					}
+					continue
+				}
+				if err := websocket.JSON.Send(connection, map[string]any{
+					"type": "res",
+					"id":   requestID,
+					"ok":   true,
+					"payload": map[string]any{
+						"tasks": []map[string]any{
+							{"id": "sensitive-task-one", "title": "Never expose this", "status": "running"},
+							{"id": "sensitive-task-two", "title": "Never expose this either", "status": "completed"},
+							{"id": "sensitive-task-three", "title": "Still private", "status": "running"},
+						},
+						"nextCursor": "more-private-tasks",
+					},
+				}); err != nil {
+					t.Errorf("send task ledger response: %v", err)
+				}
+			}
+		},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	})
+	mux.Handle("/", gateway)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	t.Setenv("OPENCLAW_AGENT_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_TOKEN", "gateway-read-token")
+	t.Setenv("OPENCLAW_GATEWAY_URL", "ws"+strings.TrimPrefix(server.URL, "http"))
+	t.Setenv("AGENT_RUNTIME_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("OPENCLAW_TIMEOUT_SECONDS", "1")
+
+	health := newOpenClawAdapterFromEnv().HealthCheck(context.Background())
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gateway did not finish the bounded task ledger discovery")
+	}
+	if health.Status != "available" || health.GatewayTaskLedger == nil {
+		t.Fatalf("task-ledger discovery health = %#v", health)
+	}
+	if health.GatewayTaskLedger.SampledTasks != 3 || !health.GatewayTaskLedger.Truncated || health.GatewayTaskLedger.StatusCounts["running"] != 2 || health.GatewayTaskLedger.StatusCounts["completed"] != 1 {
+		t.Fatalf("unexpected aggregate task ledger = %#v", health.GatewayTaskLedger)
+	}
+	if len(receivedFrames) != 2 || receivedFrames[0]["method"] != "connect" || receivedFrames[1]["method"] != "tasks.list" {
+		t.Fatalf("unexpected gateway frames = %#v", receivedFrames)
+	}
+	params, ok := receivedFrames[1]["params"].(map[string]any)
+	if !ok || params["limit"] != float64(openClawGatewayTaskLedgerLimit) || len(params) != 1 {
+		t.Fatalf("task-ledger request should contain only its bounded limit: %#v", receivedFrames[1])
+	}
+}
+
+func TestOpenClawGatewayTaskLedgerRejectsUnknownTaskStatus(t *testing.T) {
+	_, err := openClawGatewayTaskLedgerFromResponse(json.RawMessage(`{"tasks":[{"status":"unexpected"}]}`))
+	if err == nil {
+		t.Fatal("unknown task status should be rejected")
+	}
+}
+
 func TestPresentGatewayJSONRejectsMissingOrNullValues(t *testing.T) {
 	tests := []struct {
 		name  string

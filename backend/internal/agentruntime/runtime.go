@@ -35,6 +35,7 @@ const (
 	maxOutputLimit                 = 1024 * 1024
 	maxTaskPromptBytes             = 50 * 1024
 	openClawGatewayProtocolVersion = 4
+	openClawGatewayTaskLedgerLimit = 50
 )
 
 type Task struct {
@@ -82,9 +83,20 @@ type Health struct {
 	Reason    string `json:"reason"`
 	// Version is populated only from a validated authenticated runtime response.
 	// Health-only probes deliberately leave it empty rather than inferring identity.
-	Version   string    `json:"version,omitempty"`
-	CheckedAt time.Time `json:"checkedAt"`
-	LatencyMs int64     `json:"latencyMs"`
+	Version           string                    `json:"version,omitempty"`
+	GatewayTaskLedger *GatewayTaskLedgerSummary `json:"gatewayTaskLedger,omitempty"`
+	CheckedAt         time.Time                 `json:"checkedAt"`
+	LatencyMs         int64                     `json:"latencyMs"`
+}
+
+// GatewayTaskLedgerSummary is a bounded, non-persistent projection obtained
+// only through the optional operator.read task-ledger discovery. It contains
+// status counts only: task titles, IDs, prompts, owner data, and errors never
+// cross the HAI gateway boundary.
+type GatewayTaskLedgerSummary struct {
+	SampledTasks int            `json:"sampledTasks"`
+	StatusCounts map[string]int `json:"statusCounts"`
+	Truncated    bool           `json:"truncated"`
 }
 
 type Info struct {
@@ -997,6 +1009,7 @@ type openClawAdapter struct {
 	gatewayEnabled                       bool
 	gatewayProtocolDiscoveryEnabled      bool
 	gatewayAuthenticatedDiscoveryEnabled bool
+	gatewayTaskLedgerDiscoveryEnabled    bool
 	messagesEnabled                      bool
 	skillsEnabled                        bool
 	pluginsEnabled                       bool
@@ -1061,6 +1074,7 @@ func newOpenClawAdapterFromEnv() *openClawAdapter {
 		gatewayEnabled:                       envEnabled("OPENCLAW_GATEWAY_ENABLED"),
 		gatewayProtocolDiscoveryEnabled:      envEnabled("OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED"),
 		gatewayAuthenticatedDiscoveryEnabled: envEnabled("OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED"),
+		gatewayTaskLedgerDiscoveryEnabled:    envEnabled("OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED"),
 		messagesEnabled:                      envEnabled("OPENCLAW_MESSAGES_ENABLED"),
 		skillsEnabled:                        envEnabled("OPENCLAW_SKILLS_ENABLED"),
 		pluginsEnabled:                       envEnabled("OPENCLAW_PLUGINS_ENABLED"),
@@ -1253,13 +1267,18 @@ func (a *openClawAdapter) gatewayHealthCheck(ctx context.Context, started time.T
 	if a.gatewayAuthenticatedDiscoveryEnabled {
 		if strings.TrimSpace(a.gatewayToken) == "" {
 			health.Reason = "OpenClaw Companion gateway health endpoint is live; authenticated operator.read discovery was skipped because OPENCLAW_GATEWAY_TOKEN is not configured"
-		} else if version, err := a.gatewayAuthenticatedOperatorReadCheck(ctx); err != nil {
+		} else if evidence, err := a.gatewayAuthenticatedOperatorReadDiscovery(ctx); err != nil {
 			health.Status = "unavailable"
 			health.Reason = "OpenClaw Gateway authenticated operator.read discovery was unavailable, malformed, or over-scoped"
 			return health
 		} else {
-			health.Version = version
-			health.Reason = "OpenClaw Companion gateway health endpoint is live and authenticated operator.read discovery was verified; HAI closes the connection without calling Gateway RPCs or enabling task execution"
+			health.Version = evidence.Version
+			health.GatewayTaskLedger = evidence.TaskLedger
+			if evidence.TaskLedger != nil {
+				health.Reason = "OpenClaw Companion gateway health endpoint is live and authenticated operator.read discovery verified a bounded task-ledger summary; HAI closes the connection without enabling task execution"
+			} else {
+				health.Reason = "OpenClaw Companion gateway health endpoint is live and authenticated operator.read discovery was verified; HAI closes the connection without calling Gateway RPCs or enabling task execution"
+			}
 		}
 	} else if a.gatewayProtocolDiscoveryEnabled {
 		if err := a.gatewayProtocolChallengeCheck(ctx); err != nil {
@@ -1283,10 +1302,15 @@ func (a *openClawAdapter) gatewayProtocolChallengeCheck(ctx context.Context) err
 	return connection.Close()
 }
 
-func (a *openClawAdapter) gatewayAuthenticatedOperatorReadCheck(ctx context.Context) (string, error) {
+type openClawGatewayReadOnlyEvidence struct {
+	Version    string
+	TaskLedger *GatewayTaskLedgerSummary
+}
+
+func (a *openClawAdapter) gatewayAuthenticatedOperatorReadDiscovery(ctx context.Context) (openClawGatewayReadOnlyEvidence, error) {
 	connection, err := a.openClawGatewayPreAuthConnection(ctx)
 	if err != nil {
-		return "", err
+		return openClawGatewayReadOnlyEvidence{}, err
 	}
 	defer connection.Close()
 
@@ -1315,7 +1339,7 @@ func (a *openClawAdapter) gatewayAuthenticatedOperatorReadCheck(ctx context.Cont
 		},
 	}
 	if err := websocket.JSON.Send(connection, request); err != nil {
-		return "", err
+		return openClawGatewayReadOnlyEvidence{}, err
 	}
 
 	var response struct {
@@ -1342,28 +1366,112 @@ func (a *openClawAdapter) gatewayAuthenticatedOperatorReadCheck(ctx context.Cont
 		} `json:"payload"`
 	}
 	if err := websocket.JSON.Receive(connection, &response); err != nil {
-		return "", err
+		return openClawGatewayReadOnlyEvidence{}, err
 	}
 	if response.Type != "res" || response.ID != requestID || !response.OK || response.Payload.Type != "hello-ok" {
-		return "", fmt.Errorf("unexpected authenticated gateway response")
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("unexpected authenticated gateway response")
 	}
 	protocol, err := response.Payload.Protocol.Int64()
 	serverVersion := strings.TrimSpace(response.Payload.Server.Version)
 	if err != nil || protocol != openClawGatewayProtocolVersion || !validGatewayEvidenceValue(serverVersion) || !validGatewayEvidenceValue(strings.TrimSpace(response.Payload.Server.ConnID)) || !presentGatewayJSON(response.Payload.Features) || !presentGatewayJSON(response.Payload.Snapshot) {
-		return "", fmt.Errorf("invalid authenticated gateway hello response")
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("invalid authenticated gateway hello response")
 	}
 	maxPayload, err := response.Payload.Policy.MaxPayload.Int64()
 	if err != nil || maxPayload <= 0 {
-		return "", fmt.Errorf("invalid authenticated gateway payload policy")
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("invalid authenticated gateway payload policy")
 	}
 	maxBufferedBytes, err := response.Payload.Policy.MaxBufferedBytes.Int64()
 	if err != nil || maxBufferedBytes <= 0 {
-		return "", fmt.Errorf("invalid authenticated gateway buffer policy")
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("invalid authenticated gateway buffer policy")
 	}
 	if response.Payload.Auth.Role != "operator" || len(response.Payload.Auth.Scopes) != 1 || response.Payload.Auth.Scopes[0] != "operator.read" {
-		return "", fmt.Errorf("authenticated gateway negotiated unexpected operator scope")
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("authenticated gateway negotiated unexpected operator scope")
 	}
-	return serverVersion, nil
+	evidence := openClawGatewayReadOnlyEvidence{Version: serverVersion}
+	if !a.gatewayTaskLedgerDiscoveryEnabled {
+		return evidence, nil
+	}
+
+	var features struct {
+		Methods []string `json:"methods"`
+	}
+	if err := json.Unmarshal(response.Payload.Features, &features); err != nil || !containsExact(features.Methods, "tasks.list") {
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("gateway does not advertise read-only tasks.list")
+	}
+	ledgerRequestID := uuid.NewString()
+	ledgerRequest := map[string]any{
+		"type":   "req",
+		"id":     ledgerRequestID,
+		"method": "tasks.list",
+		"params": map[string]any{"limit": openClawGatewayTaskLedgerLimit},
+	}
+	if err := websocket.JSON.Send(connection, ledgerRequest); err != nil {
+		return openClawGatewayReadOnlyEvidence{}, err
+	}
+	var ledgerResponse struct {
+		Type    string          `json:"type"`
+		ID      string          `json:"id"`
+		OK      bool            `json:"ok"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := websocket.JSON.Receive(connection, &ledgerResponse); err != nil {
+		return openClawGatewayReadOnlyEvidence{}, err
+	}
+	if ledgerResponse.Type != "res" || ledgerResponse.ID != ledgerRequestID || !ledgerResponse.OK || !presentGatewayJSON(ledgerResponse.Payload) {
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("unexpected read-only task ledger response")
+	}
+	ledger, err := openClawGatewayTaskLedgerFromResponse(ledgerResponse.Payload)
+	if err != nil {
+		return openClawGatewayReadOnlyEvidence{}, err
+	}
+	evidence.TaskLedger = &ledger
+	return evidence, nil
+}
+
+func openClawGatewayTaskLedgerFromResponse(payload json.RawMessage) (GatewayTaskLedgerSummary, error) {
+	var response struct {
+		Tasks      json.RawMessage `json:"tasks"`
+		NextCursor *string         `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil || !presentGatewayJSON(response.Tasks) {
+		return GatewayTaskLedgerSummary{}, fmt.Errorf("invalid read-only task ledger payload")
+	}
+	var tasks []struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(response.Tasks, &tasks); err != nil || len(tasks) > openClawGatewayTaskLedgerLimit {
+		return GatewayTaskLedgerSummary{}, fmt.Errorf("invalid bounded read-only task ledger")
+	}
+	summary := GatewayTaskLedgerSummary{SampledTasks: len(tasks), StatusCounts: map[string]int{}}
+	for _, task := range tasks {
+		status := strings.TrimSpace(task.Status)
+		if !validOpenClawGatewayTaskStatus(status) {
+			return GatewayTaskLedgerSummary{}, fmt.Errorf("invalid read-only task status")
+		}
+		summary.StatusCounts[status]++
+	}
+	if response.NextCursor != nil && strings.TrimSpace(*response.NextCursor) != "" {
+		summary.Truncated = true
+	}
+	return summary, nil
+}
+
+func validOpenClawGatewayTaskStatus(status string) bool {
+	switch status {
+	case "queued", "running", "completed", "failed", "cancelled", "timed_out":
+		return true
+	default:
+		return false
+	}
+}
+
+func containsExact(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func presentGatewayJSON(value json.RawMessage) bool {

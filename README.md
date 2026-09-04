@@ -789,11 +789,20 @@ or task.
 check. It requires `OPENCLAW_GATEWAY_TOKEN`, reads the bounded challenge, sends
 one Gateway `connect` request asking for exactly `operator.read`, validates the
 matching `hello-ok` response, returned scope, server identity fields, and policy,
-then closes the socket. It sends no Gateway RPC, task, tool, browser, message,
-node, or channel command and does not make OpenClaw executable in HAI. An
+then closes the socket. With task-ledger discovery disabled, it sends no
+Gateway RPC, task, tool, browser, message, node, or channel command and does
+not make OpenClaw executable in HAI. An
 authenticated discovery result is therefore still reported as `available`, not
 execution-ready. HAI has not configured a Companion token or live-validated the
 authenticated handshake on this installation.
+
+`OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED=true` is a narrower, separate
+opt-in after the authenticated identity check. HAI sends one read-only
+`tasks.list` request with a fixed limit of 50 and exposes only the sampled
+status counts in runtime health. It does not retain or return task IDs, titles,
+prompts, owners, error text, session keys, or gateway credentials. It cannot
+start, cancel, modify, or otherwise operate on an OpenClaw task, and it does
+not make the OpenClaw runtime executable in HAI.
 
 DeepSeek Harness remains an upstream developer preview, but it now documents a
 one-shot headless profile: `dsh --profile headless "task"`. HAI integrates only

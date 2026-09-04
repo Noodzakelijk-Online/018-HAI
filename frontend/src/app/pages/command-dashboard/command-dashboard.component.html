@@ -345,7 +345,7 @@
             </div>
             <div
               class="openclaw-metric"
-              title="Runtime health from the HAI runtime registry."
+              [title]="openClawGatewayHealthTitle(openClaw)"
             >
               <span>Health</span>
               <strong>{{ runtimeStatus(openClaw) }}</strong>

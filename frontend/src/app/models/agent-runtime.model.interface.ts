@@ -54,6 +54,13 @@ export interface IAgentRuntimeHealth {
   status: string;
   reason: string;
   version?: string;
+  gatewayTaskLedger?: IAgentRuntimeGatewayTaskLedger;
   checkedAt: string;
   latencyMs: number;
+}
+
+export interface IAgentRuntimeGatewayTaskLedger {
+  sampledTasks: number;
+  statusCounts: Record<string, number>;
+  truncated: boolean;
 }

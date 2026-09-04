@@ -215,6 +215,28 @@ export class CommandDashboardComponent implements OnInit, OnDestroy {
     return this.runtimeHealth[runtime.id]?.reason || 'Not probed';
   }
 
+  openClawGatewayHealthTitle(runtime: IAgentRuntimeInfo): string {
+    const health = this.runtimeHealth[runtime.id];
+    if (!health) {
+      return 'Runtime health has not been probed.';
+    }
+    const detail = [health.reason];
+    if (health.version) {
+      detail.push(`Authenticated gateway version: ${health.version}.`);
+    }
+    const ledger = health.gatewayTaskLedger;
+    if (ledger) {
+      const counts = Object.entries(ledger.statusCounts)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([status, count]) => `${count} ${status}`)
+        .join(', ');
+      detail.push(
+        `Read-only task ledger sampled ${ledger.sampledTasks} task${ledger.sampledTasks === 1 ? '' : 's'}${counts ? `: ${counts}` : ''}${ledger.truncated ? '; more tasks may exist' : ''}.`
+      );
+    }
+    return detail.join(' ');
+  }
+
   openClawRuntime(): IAgentRuntimeInfo | undefined {
     return this.runtimes.find((runtime) => runtime.id === 'openclaw');
   }
