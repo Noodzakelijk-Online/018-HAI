@@ -106,6 +106,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   private readonly extractionPageLimit = 100;
   private lastSelectedConnectorKey = 'local-folder';
   private refreshSubscription?: Subscription;
+  private connectorSubscription?: Subscription;
   private connectionHealthSubscription?: Subscription;
 
   sourceForm: FormGroup = this.fb.group({
@@ -183,23 +184,30 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.refreshSubscription?.unsubscribe();
+    this.connectorSubscription?.unsubscribe();
     this.connectionHealthSubscription?.unsubscribe();
   }
 
   refresh(): void {
     this.refreshSubscription?.unsubscribe();
+    this.connectorSubscription?.unsubscribe();
     this.connectionHealthSubscription?.unsubscribe();
     this.loading = true;
     this.loadWarnings = [];
+    // The connector catalog controls whether the primary source action is safe
+    // to enable. It must not wait for unrelated historical panels to finish.
+    this.connectorSubscription = this.sourceService.connectors().pipe(
+      timeout(this.loadTimeoutMs),
+      catchError(() => {
+        this.recordLoadWarning('Connector catalog');
+        this.notification.error('Connectors unavailable', 'Connector status did not load in time.');
+        return of([] as ISourceConnector[]);
+      })
+    ).subscribe((connectors) => {
+      this.connectors = connectors;
+      this.updateSourceActions();
+    });
     this.refreshSubscription = forkJoin({
-      connectors: this.sourceService.connectors().pipe(
-        timeout(this.loadTimeoutMs),
-        catchError(() => {
-          this.recordLoadWarning('Connector catalog');
-          this.notification.error('Connectors unavailable', 'Connector status did not load in time.');
-          return of([] as ISourceConnector[]);
-        })
-      ),
       sources: this.sourceService.sources(this.includeDisabled).pipe(
         timeout(this.loadTimeoutMs),
         catchError(() => {
@@ -231,8 +239,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       ),
     })
       .pipe(finalize(() => (this.loading = false)))
-      .subscribe(({ connectors, sources, extractions, auditLogs, syncJobs }) => {
-        this.connectors = connectors;
+      .subscribe(({ sources, extractions, auditLogs, syncJobs }) => {
         this.sources = sources;
         this.setExtractionPage(extractions);
         this.auditLogs = auditLogs;

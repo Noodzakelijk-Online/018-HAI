@@ -352,6 +352,24 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.hasLoadWarnings()).toBeTrue();
   });
 
+  it('loads the connector catalog before unrelated source records finish loading', () => {
+    const { component, sourceService } = createComponent();
+    const delayedSources = new Subject<IConnectedSource[]>();
+    sourceService.connectors.and.returnValue(of([
+      { connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only' },
+    ]));
+    sourceService.sources.and.returnValue(delayedSources.asObservable());
+    sourceService.extractions.and.returnValue(of({ items: [], totalCount: 0, limit: 100 }));
+    sourceService.auditLogs.and.returnValue(of([]));
+    sourceService.syncJobs.and.returnValue(of([]));
+
+    component.refresh();
+    component.sourceForm.patchValue({ name: 'Local evidence', syncTarget: 'evidence' });
+
+    expect(component.sourceCanConnect()).toBeTrue();
+    delayedSources.complete();
+  });
+
   it('cancels an obsolete refresh so stale sources cannot replace the newest view', () => {
     const { component, sourceService } = createComponent();
     const firstSources = new Subject<IConnectedSource[]>();

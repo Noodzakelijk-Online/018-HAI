@@ -871,7 +871,10 @@ export class WorkflowEngineComponent implements OnInit, OnDestroy {
       next: (record) => {
         this.applyWorkflowRecord(record);
         this.notification.success('Proposal updated', noteByStatus[status]);
-        this.refresh();
+        // The just-returned workflow is authoritative for this action. Keep
+        // background list reconciliation non-blocking so a ready workflow can
+        // immediately enter its own guarded execution confirmation.
+        this.refresh(false, true);
       },
       error: () => this.notification.error('Error', 'Failed to update proposal.'),
     });

@@ -627,6 +627,31 @@ describe('WorkflowEngineComponent', () => {
     expect(modal.confirm).toHaveBeenCalled();
   });
 
+  it('keeps a newly selected safe workflow runnable while the list refreshes', () => {
+    const { component, workflowService, modal } = createComponent();
+    const beforeSelection = workflowRecord([]);
+    beforeSelection.item.currentState = 'needs_approval';
+    const ready = workflowRecord([]);
+    ready.item.currentState = 'ready';
+    ready.item.requiresApproval = false;
+    ready.item.approvalStatus = 'not_required';
+    beforeSelection.proposals = [{
+      id: 'proposal-1',
+      status: 'open',
+      recommendedAction: 'Select an automation for controlled execution',
+      options: ['Use E2E readiness probe'],
+    }] as any;
+    workflowService.resolveProposal.and.returnValue(of(ready));
+    component.applyWorkflowRecord(beforeSelection);
+
+    component.resolveProposal('proposal-1', 'approved', 'Use E2E readiness probe');
+
+    expect(component.refresh).toHaveBeenCalledWith(false, true);
+    expect(component.anyActionRunning()).toBeFalse();
+    component.runSelectedWorkflow();
+    expect(modal.confirm).toHaveBeenCalled();
+  });
+
   it('records an explicit operator review before retrying interrupted execution', () => {
     const { component, workflowService, notification } = createComponent();
     const interrupted = workflowRecord([]);
