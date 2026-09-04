@@ -50,10 +50,18 @@ treating an arbitrary HTTP 200 as health:
 | Hermes | `GET /health`; optionally authenticated `GET /v1/capabilities` | `platform=hermes-agent`, version, capability object/platform | `health_checked` | Capability discovery requires `HERMES_API_SERVER_KEY`; liveness does not. |
 | Odysseus | `GET /api/health`, `GET /api/version` | healthy status, RFC3339 timestamp, non-empty version | `available` | The public responses do not carry a cryptographic product identity. |
 
-Responses are limited to 64 KiB, redirects are refused, hosts are allowlisted,
-JSON shape is checked, raw bodies are not returned, and only a SHA-256 evidence
-digest plus bounded metadata reaches the dashboard. The OpenClaw adapter now
-also performs the stricter Companion-specific `GET /health` handshake: its
+The production Runtime Lab OpenClaw entry is a read-only projection of the same
+canonical `internal/agentruntime` registry used by governed automation. It does
+not consult `OPENCLAW_BASE_URL`, create a second Gateway client policy, own
+task cancellation, or enable task execution. Its manual probe maps only bounded
+canonical readiness to the Runtime Lab contract and retains no raw Gateway
+payload or synthetic evidence digest. The generic `OPENCLAW_BASE_URL` adapter
+remains only for isolated Runtime Lab tooling and compatibility tests.
+
+Generic Runtime Lab responses are limited to 64 KiB, redirects are refused,
+hosts are allowlisted, JSON shape is checked, raw bodies are not returned, and
+only a SHA-256 evidence digest plus bounded metadata reaches the dashboard. The
+canonical OpenClaw adapter now also performs the stricter Companion-specific `GET /health` handshake: its
 response body is capped at 4 KiB, it accepts only `ok=true` with `status=live`,
 and it refuses URL credentials and redirects. Query and fragment data are
 never forwarded to the fixed `/health` request. A live Companion reports

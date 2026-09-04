@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/executionauth"
 	"automation-hub-backend/internal/executionbroker"
 	"automation-hub-backend/internal/frameworkregistry"
@@ -476,6 +477,50 @@ func TestOpenClawDiscoveryValidatesExactHealthContractWithoutGrantingExecution(t
 	}
 	if _, err := runtime.Execute(context.Background(), map[string]any{"task": "do not run"}); err == nil {
 		t.Fatal("OpenClaw discovery must not enable execution")
+	}
+}
+
+func TestOpenClawRuntimeLabUsesCanonicalAgentRuntimeRegistry(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/health" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"status":"live"}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENCLAW_BASE_URL", "") // The legacy Runtime Lab endpoint must not be consulted.
+	t.Setenv("OPENCLAW_AGENT_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_URL", server.URL)
+	t.Setenv("OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED", "false")
+	t.Setenv("OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED", "false")
+	t.Setenv("OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED", "false")
+	t.Setenv("AGENT_RUNTIME_ALLOWED_HOSTS", "127.0.0.1")
+
+	broker := newAuthorizedRuntimeLabTestBroker(t, t.TempDir(), "local-operator", "local")
+	service := NewServiceWithAgentRuntimeRegistry(
+		broker,
+		operations.NewService(operations.NewMemoryRepository()),
+		"local-operator",
+		"local",
+		agentruntime.DefaultRegistry(),
+	)
+	probe, ok := service.Probe(context.Background(), "openclaw")
+	if !ok || probe.Status != executionbroker.RuntimeBlocked ||
+		probe.ReadinessLevel != ReadinessAvailable || !probe.ProtocolValid ||
+		probe.RuntimeVersion != "" || probe.Authenticated || probe.IdentityVerified {
+		t.Fatalf("canonical OpenClaw probe = (%#v, %t)", probe, ok)
+	}
+
+	openclaw, ok := service.reg.Adapter("openclaw")
+	if !ok {
+		t.Fatal("OpenClaw adapter must remain available in Runtime Lab")
+	}
+	if _, err := openclaw.Execute(context.Background(), map[string]any{"task": "do not run"}); err == nil {
+		t.Fatal("Runtime Lab must not gain OpenClaw execution authority from the canonical registry")
 	}
 }
 

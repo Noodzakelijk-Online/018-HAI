@@ -819,7 +819,13 @@ func initializeRoutesWithContext(router *gin.Engine, runtimeCtx context.Context)
 		privacyService := privacyfilter.DefaultService()
 		initializePrivacyRoutes(v1, privacyfilter.NewHandler(privacyService))
 		initializePhase2Routes(v1, phase2Module.Handler())
-		runtimeLabService := runtimelab.NewService(phase2Module.Broker(), phase2Module.Service(), phase2Module.OwnerUserID(), phase2Module.WorkspaceID())
+		runtimeLabService := runtimelab.NewServiceWithAgentRuntimeRegistry(
+			phase2Module.Broker(),
+			phase2Module.Service(),
+			phase2Module.OwnerUserID(),
+			phase2Module.WorkspaceID(),
+			runtimeRegistry,
+		)
 		initializeRuntimeLabRoutes(v1, runtimelab.NewHandler(runtimeLabService))
 		feedRegistry := accountfeed.NewRegistry(phase2Module.Service(), privacyService, accountfeed.FetchOptions{
 			FeedsRoot: phase2Module.FeedsDir(),

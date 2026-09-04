@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"automation-hub-backend/internal/agentruntime"
 	"automation-hub-backend/internal/background"
 	"automation-hub-backend/internal/executionbroker"
 	"automation-hub-backend/internal/idempotency"
@@ -58,8 +59,20 @@ type Service struct {
 
 // NewService builds a runtime lab service.
 func NewService(broker *executionbroker.Broker, ops *operations.Service, ownerUserID, workspaceID string) *Service {
+	return NewServiceWithAgentRuntimeRegistry(broker, ops, ownerUserID, workspaceID, nil)
+}
+
+// NewServiceWithAgentRuntimeRegistry builds Runtime Lab against the canonical
+// production agent-runtime registry. The registry is optional to preserve the
+// isolated Runtime Lab contract used by focused tests and local tooling.
+func NewServiceWithAgentRuntimeRegistry(
+	broker *executionbroker.Broker,
+	ops *operations.Service,
+	ownerUserID, workspaceID string,
+	agentRegistry *agentruntime.Registry,
+) *Service {
 	return &Service{
-		reg:    NewRegistry(broker),
+		reg:    NewRegistryWithAgentRuntimeRegistry(broker, agentRegistry),
 		broker: broker,
 		ops:    ops,
 		owner:  ownerUserID,
