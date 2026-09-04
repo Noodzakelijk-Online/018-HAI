@@ -238,6 +238,9 @@ export class CommandDashboardComponent implements OnInit, OnDestroy {
     if (!runtime.enabled) {
       return 'Installed as a reference surface. Runtime execution is disabled.';
     }
+    if (this.runtimeStatus(runtime) === 'available' && !runtime.executionEnabled) {
+      return 'OpenClaw Companion discovery is connected. Task execution remains disabled until the separate CLI, workspace, approval-proof, and gateway credential requirements are configured.';
+    }
     if (!runtime.configured) {
       return 'Registered but not ready. Complete workspace, executable, and safety configuration first.';
     }

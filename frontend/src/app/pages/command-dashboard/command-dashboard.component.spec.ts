@@ -168,4 +168,25 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
 
     expect(component.dashboard).toEqual({ summary: 'new dashboard' } as any);
   });
+
+  it('distinguishes a connected OpenClaw discovery gateway from executable runtime readiness', () => {
+    const { component } = createComponent();
+    const openClaw = {
+      id: 'openclaw',
+      enabled: true,
+      configured: false,
+      executionEnabled: false,
+    } as any;
+    component.runtimes = [openClaw];
+    component.runtimeHealth = {
+      openclaw: {
+        runtimeId: 'openclaw',
+        status: 'available',
+        reason: 'OpenClaw Companion gateway health endpoint is live.',
+      },
+    } as any;
+
+    expect(component.openClawPosture(openClaw)).toContain('discovery is connected');
+    expect(component.openClawPosture(openClaw)).toContain('Task execution remains disabled');
+  });
 });
