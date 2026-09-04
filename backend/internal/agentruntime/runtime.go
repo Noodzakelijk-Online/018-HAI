@@ -1132,10 +1132,10 @@ func (a *openClawAdapter) Info() Info {
 	if strings.TrimSpace(a.workspaceRoot) == "" {
 		missing = append(missing, "AGENT_RUNTIME_WORKSPACE_ROOT")
 	}
-	if a.gatewayEnabled && strings.TrimSpace(a.gatewayToken) == "" {
-		missing = append(missing, "OPENCLAW_GATEWAY_TOKEN")
+	gatewayReason := ""
+	if a.gatewayEnabled {
+		gatewayReason = a.validGatewayURL()
 	}
-	gatewayReason := a.validGatewayURL()
 	workspaceReason := a.workspaceBlockedReason()
 	if workspaceReason != "" {
 		missing = append(missing, workspaceReason)
@@ -1639,11 +1639,10 @@ func (a *openClawAdapter) ExecuteTask(parent context.Context, task Task) Result 
 	if reason := a.workspaceBlockedReason(); reason != "" {
 		return Result{RuntimeID: "openclaw", Status: "blocked", Message: reason, ExitCode: -1}
 	}
-	if reason := a.validGatewayURL(); reason != "" {
-		return Result{RuntimeID: "openclaw", Status: "blocked", Message: reason, ExitCode: -1}
-	}
-	if a.gatewayEnabled && a.gatewayToken == "" {
-		return Result{RuntimeID: "openclaw", Status: "blocked", Message: "OPENCLAW_GATEWAY_TOKEN is required when OPENCLAW_GATEWAY_ENABLED=true", ExitCode: -1}
+	if a.gatewayEnabled {
+		if reason := a.validGatewayURL(); reason != "" {
+			return Result{RuntimeID: "openclaw", Status: "blocked", Message: reason, ExitCode: -1}
+		}
 	}
 	if blocked := a.highRiskExecutionBlockers(); len(blocked) > 0 {
 		return Result{RuntimeID: "openclaw", Status: "blocked", Message: strings.Join(blocked, "; "), ExitCode: -1}
@@ -1982,7 +1981,7 @@ func (a *openClawAdapter) controls() []string {
 		controls = append(controls, "OpenClaw sandbox requirement disabled; use only with a disposable local workspace")
 	}
 	if a.gatewayEnabled {
-		controls = append(controls, "OpenClaw Gateway access requires OPENCLAW_GATEWAY_TOKEN and keeps Gateway scopes/pairing authoritative")
+		controls = append(controls, "health-only Gateway discovery is token-free; authenticated operator.read discovery requires OPENCLAW_GATEWAY_TOKEN and keeps Gateway scopes/pairing authoritative")
 	}
 	if a.messagesEnabled || len(a.channelsEnabled) > 0 {
 		controls = append(controls, "messaging surfaces are visible but outbound sends require separate HAI approval workflows")
@@ -2601,7 +2600,7 @@ func (a *openClawAdapter) openClawSetupChecklist(inventory openClawEcosystemInve
 	if inventory.status != "available" {
 		items = append(items, "set OPENCLAW_ECOSYSTEM_PATH to openclaw-main.zip or an extracted OpenClaw checkout for read-only inventory")
 	}
-	if a.gatewayEnabled {
+	if a.gatewayAuthenticatedDiscoveryEnabled || a.gatewayTaskLedgerDiscoveryEnabled {
 		items = append(items, "set scoped OPENCLAW_GATEWAY_TOKEN and constrain OPENCLAW_GATEWAY_URL with AGENT_RUNTIME_ALLOWED_HOSTS")
 	}
 	if !a.enabled {

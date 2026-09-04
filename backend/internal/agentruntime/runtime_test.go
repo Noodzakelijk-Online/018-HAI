@@ -831,6 +831,41 @@ func TestOpenClawCompanionGatewayHealthDoesNotRequireHostCLI(t *testing.T) {
 	}
 }
 
+func TestOpenClawHealthOnlyGatewayDoesNotRequireTokenForControlledCLIExecution(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve native test executable: %v", err)
+	}
+	adapter := &openClawAdapter{
+		enabled:         true,
+		executable:      executable,
+		workspace:       workspace,
+		workspaceRoot:   root,
+		gatewayEnabled:  true,
+		gatewayURL:      "ws://127.0.0.1:18789",
+		allowedHost:     map[string]bool{"127.0.0.1": true},
+		agentCLIEnabled: true,
+		sandboxRequired: true,
+		sandboxMode:     "all",
+		timeout:         time.Second,
+		outputLimit:     defaultOutputLimit,
+	}
+
+	info := adapter.Info()
+	if !info.Configured || !info.ExecutionEnabled {
+		t.Fatalf("health-only gateway should not disable separately governed CLI execution: %#v", info)
+	}
+	result := adapter.ExecuteTask(context.Background(), Task{ID: "task-1", Prompt: "inspect local work"})
+	if result.Status != "completed" {
+		t.Fatalf("health-only gateway should not block CLI execution: %#v", result)
+	}
+}
+
 func TestOpenClawCompanionGatewayHealthRejectsUnexpectedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

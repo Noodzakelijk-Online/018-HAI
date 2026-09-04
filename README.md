@@ -780,7 +780,9 @@ gateway token, and reports `available` rather than executable. The Companion's
 WSL gateway being live does not authorize HAI to run a task, access Companion
 node capabilities, or use a browser, desktop, channel, or host tool. Those
 remain blocked until the existing CLI/workspace, approval-proof, and
-postcondition paths are independently configured and validated.
+postcondition paths are independently configured and validated. A health-only
+Gateway probe does not require or block on `OPENCLAW_GATEWAY_TOKEN`; that token
+is required only for the separate authenticated `operator.read` discovery path.
 
 Set `OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED=true` only when HAI should
 also validate the unauthenticated gateway boundary. It opens the configured
