@@ -1187,6 +1187,16 @@ func (a *openClawAdapter) HealthCheck(ctx context.Context) Health {
 			health.Reason = "OPENCLAW_GATEWAY_URL is required when OPENCLAW_GATEWAY_ENABLED=true"
 			return health
 		}
+		if a.gatewayTaskLedgerDiscoveryEnabled && !a.gatewayAuthenticatedDiscoveryEnabled {
+			health.Status = "blocked"
+			health.Reason = "OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED requires OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED=true"
+			return health
+		}
+		if a.gatewayTaskLedgerDiscoveryEnabled && strings.TrimSpace(a.gatewayToken) == "" {
+			health.Status = "blocked"
+			health.Reason = "OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED requires OPENCLAW_GATEWAY_TOKEN"
+			return health
+		}
 		return a.gatewayHealthCheck(ctx, started)
 	}
 	if !a.agentCLIEnabled {
@@ -1982,6 +1992,9 @@ func (a *openClawAdapter) controls() []string {
 	}
 	if a.gatewayEnabled {
 		controls = append(controls, "health-only Gateway discovery is token-free; authenticated operator.read discovery requires OPENCLAW_GATEWAY_TOKEN and keeps Gateway scopes/pairing authoritative")
+	}
+	if a.gatewayTaskLedgerDiscoveryEnabled && !a.gatewayAuthenticatedDiscoveryEnabled {
+		controls = append(controls, "Gateway task-ledger discovery is blocked until OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED=true")
 	}
 	if a.messagesEnabled || len(a.channelsEnabled) > 0 {
 		controls = append(controls, "messaging surfaces are visible but outbound sends require separate HAI approval workflows")

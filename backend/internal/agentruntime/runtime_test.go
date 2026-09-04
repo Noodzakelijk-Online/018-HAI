@@ -887,6 +887,51 @@ func TestOpenClawCompanionGatewayHealthRejectsUnexpectedResponse(t *testing.T) {
 	}
 }
 
+func TestOpenClawGatewayTaskLedgerDiscoveryRequiresAuthenticatedDiscovery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	}))
+	defer server.Close()
+
+	adapter := &openClawAdapter{
+		enabled:                           true,
+		gatewayEnabled:                    true,
+		gatewayTaskLedgerDiscoveryEnabled: true,
+		gatewayURL:                        "ws" + strings.TrimPrefix(server.URL, "http"),
+		allowedHost:                       map[string]bool{"127.0.0.1": true},
+		timeout:                           time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "blocked" || !strings.Contains(health.Reason, "OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED") {
+		t.Fatalf("task-ledger discovery without authenticated discovery = %#v", health)
+	}
+}
+
+func TestOpenClawGatewayTaskLedgerDiscoveryRequiresToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	}))
+	defer server.Close()
+
+	adapter := &openClawAdapter{
+		enabled:                              true,
+		gatewayEnabled:                       true,
+		gatewayAuthenticatedDiscoveryEnabled: true,
+		gatewayTaskLedgerDiscoveryEnabled:    true,
+		gatewayURL:                           "ws" + strings.TrimPrefix(server.URL, "http"),
+		allowedHost:                          map[string]bool{"127.0.0.1": true},
+		timeout:                              time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "blocked" || !strings.Contains(health.Reason, "OPENCLAW_GATEWAY_TOKEN") {
+		t.Fatalf("task-ledger discovery without token = %#v", health)
+	}
+}
+
 func TestOpenClawCompanionGatewayHealthRejectsCredentialBearingURL(t *testing.T) {
 	adapter := &openClawAdapter{
 		enabled:        true,
