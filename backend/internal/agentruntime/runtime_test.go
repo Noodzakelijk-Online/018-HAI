@@ -361,6 +361,20 @@ func TestRegistryReadAPIsRemainAvailableWithoutFinalEffectVerifier(t *testing.T)
 	}
 }
 
+func TestRegistryHealthForChecksOnlyTheRequestedRuntime(t *testing.T) {
+	openClaw := &fakeAdapter{info: Info{ID: "openclaw"}}
+	hermes := &fakeAdapter{info: Info{ID: "hermes"}}
+	registry := NewRegistry(openClaw, hermes)
+
+	health, ok := registry.HealthFor(context.Background(), "openclaw")
+	if !ok || health.RuntimeID != "openclaw" {
+		t.Fatalf("HealthFor(openclaw) = (%#v, %t)", health, ok)
+	}
+	if openClaw.healthCalls != 1 || hermes.healthCalls != 0 {
+		t.Fatalf("HealthFor must not probe unrelated runtimes: openclaw=%d hermes=%d", openClaw.healthCalls, hermes.healthCalls)
+	}
+}
+
 func TestBindConsumedAuthorizationProofBindsExactTaskAndRejectsMutation(t *testing.T) {
 	adapter := executableFakeAdapter()
 	binder := NewRegistry(adapter)
@@ -2281,8 +2295,9 @@ func (d *capturingHostRuntimeDispatcher) Enqueue(task hostruntime.ApprovedTask) 
 }
 
 type fakeAdapter struct {
-	info   Info
-	called bool
+	info        Info
+	called      bool
+	healthCalls int
 }
 
 func (a *fakeAdapter) Info() Info {
@@ -2290,6 +2305,7 @@ func (a *fakeAdapter) Info() Info {
 }
 
 func (a *fakeAdapter) HealthCheck(context.Context) Health {
+	a.healthCalls++
 	return Health{RuntimeID: a.info.ID, Status: "ready"}
 }
 

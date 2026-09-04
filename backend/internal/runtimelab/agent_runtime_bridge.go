@@ -162,12 +162,7 @@ func (b *agentRuntimeBridge) runtimeHealth(ctx context.Context) (agentruntime.He
 	if b.registry == nil {
 		return agentruntime.Health{}, false
 	}
-	for _, health := range b.registry.Health(ctx) {
-		if health.RuntimeID == b.id {
-			return health, true
-		}
-	}
-	return agentruntime.Health{}, false
+	return b.registry.HealthFor(ctx, b.id)
 }
 
 func labStatusForCanonicalHealth(status string) (executionbroker.RuntimeStatus, executionbroker.ClaimLevel) {

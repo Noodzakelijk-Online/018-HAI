@@ -255,11 +255,23 @@ func (r *Registry) Overview(ctx context.Context) RuntimeOverview {
 func (r *Registry) Health(ctx context.Context) []Health {
 	result := []Health{}
 	for _, id := range []string{"hermes", "deepseek-harness", "odysseus", "openclaw"} {
-		if adapter := r.adapters[id]; adapter != nil {
-			result = append(result, adapter.HealthCheck(ctx))
+		if health, ok := r.HealthFor(ctx, id); ok {
+			result = append(result, health)
 		}
 	}
 	return result
+}
+
+// HealthFor probes exactly one registered runtime. Callers that render a
+// single runtime must use this instead of Health so unrelated provider and
+// local-runtime checks are not started as a side effect.
+func (r *Registry) HealthFor(ctx context.Context, runtimeID string) (Health, bool) {
+	runtimeID = strings.ToLower(strings.TrimSpace(runtimeID))
+	adapter := r.adapters[runtimeID]
+	if adapter == nil {
+		return Health{}, false
+	}
+	return adapter.HealthCheck(ctx), true
 }
 
 func (r *Registry) Skills(ctx context.Context, runtimeID string) ([]Skill, error) {
