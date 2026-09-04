@@ -124,9 +124,21 @@ jobs:
         run: npx ng test --watch=false --browsers=ChromeHeadlessNoSandbox
       # The production dependency graph is currently clean. Keep this as a
       # hard gate so a newly disclosed high-severity runtime advisory cannot
-      # quietly reach a Windows installer or hosted deployment.
+      # quietly reach a Windows installer or hosted deployment. The npm audit
+      # API occasionally returns a transient 5xx; retry it briefly without
+      # converting a confirmed advisory into a passing build.
       - name: Production dependency audit
-        run: npm audit --omit=dev --audit-level=high
+        run: |
+          for attempt in 1 2 3; do
+            if npm audit --omit=dev --audit-level=high; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "npm audit failed; retrying after a short delay ($attempt/3)."
+            sleep $((attempt * 10))
+          done
 
   browser-acceptance:
     name: Browser acceptance (real Compose stack)
