@@ -68,6 +68,7 @@ test.describe('HAI operator acceptance flow', () => {
       sourceName = `E2E local source ${Date.now()}`;
       await page.getByTestId('source-name').fill(sourceName);
       await page.getByTestId('source-target').fill('.');
+      await expect(page.getByTestId('source-connect')).toBeEnabled();
       const createResponse = page.waitForResponse(
         (response) => response.url().includes('/api/v1/sources/')
           && response.request().method() === 'POST'

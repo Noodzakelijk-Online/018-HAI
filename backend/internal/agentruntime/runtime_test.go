@@ -21,6 +21,7 @@ import (
 	"automation-hub-backend/internal/safety"
 
 	"github.com/google/uuid"
+	"golang.org/x/net/websocket"
 )
 
 func TestMain(m *testing.M) {
@@ -848,6 +849,95 @@ func TestOpenClawCompanionGatewayHealthRejectsCredentialBearingURL(t *testing.T)
 	health := adapter.HealthCheck(context.Background())
 	if health.Status != "blocked" || !strings.Contains(health.Reason, "must not include credentials") {
 		t.Fatalf("credential-bearing companion gateway URL health = %#v", health)
+	}
+}
+
+func TestOpenClawCompanionGatewayProtocolChallengeIsReadOnly(t *testing.T) {
+	var receivedFrame string
+	var authorizationHeader string
+	gateway := websocket.Server{
+		Handshake: func(_ *websocket.Config, request *http.Request) error {
+			authorizationHeader = request.Header.Get("Authorization")
+			return nil
+		},
+		Handler: func(connection *websocket.Conn) {
+			if err := websocket.JSON.Send(connection, map[string]any{
+				"type":    "event",
+				"event":   "connect.challenge",
+				"payload": map[string]any{"nonce": "challenge-nonce", "ts": float64(1_737_264_000_000)},
+			}); err != nil {
+				t.Errorf("send protocol challenge: %v", err)
+				return
+			}
+			_ = connection.SetDeadline(time.Now().Add(time.Second))
+			if err := websocket.Message.Receive(connection, &receivedFrame); err != nil && !errors.Is(err, io.EOF) {
+				t.Errorf("receive unexpected client frame: %v", err)
+			}
+		},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	})
+	mux.Handle("/", gateway)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	adapter := &openClawAdapter{
+		enabled:                         true,
+		gatewayEnabled:                  true,
+		gatewayProtocolDiscoveryEnabled: true,
+		gatewayURL:                      "ws" + strings.TrimPrefix(server.URL, "http"),
+		gatewayToken:                    "must-not-be-sent",
+		allowedHost:                     map[string]bool{"127.0.0.1": true},
+		timeout:                         time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "available" || !strings.Contains(health.Reason, "protocol challenge was verified") {
+		t.Fatalf("companion gateway protocol health = %#v", health)
+	}
+	if receivedFrame != "" {
+		t.Fatalf("challenge probe sent a client frame: %q", receivedFrame)
+	}
+	if authorizationHeader != "" {
+		t.Fatalf("challenge probe sent an authorization header: %q", authorizationHeader)
+	}
+}
+
+func TestOpenClawCompanionGatewayProtocolChallengeRejectsMalformedFrame(t *testing.T) {
+	gateway := websocket.Server{
+		Handshake: func(_ *websocket.Config, _ *http.Request) error { return nil },
+		Handler: func(connection *websocket.Conn) {
+			_ = websocket.JSON.Send(connection, map[string]any{
+				"type":    "event",
+				"event":   "unexpected.event",
+				"payload": map[string]any{"nonce": "challenge-nonce", "ts": float64(1)},
+			})
+		},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	})
+	mux.Handle("/", gateway)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	adapter := &openClawAdapter{
+		enabled:                         true,
+		gatewayEnabled:                  true,
+		gatewayProtocolDiscoveryEnabled: true,
+		gatewayURL:                      "ws" + strings.TrimPrefix(server.URL, "http"),
+		allowedHost:                     map[string]bool{"127.0.0.1": true},
+		timeout:                         time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "unavailable" || !strings.Contains(health.Reason, "protocol challenge") {
+		t.Fatalf("malformed companion gateway protocol health = %#v", health)
 	}
 }
 

@@ -104,6 +104,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   private readonly loadTimeoutMs = 6000;
   private readonly operationTimeoutMs = 15000;
   private readonly extractionPageLimit = 100;
+  private lastSelectedConnectorKey = 'local-folder';
   private refreshSubscription?: Subscription;
   private connectionHealthSubscription?: Subscription;
 
@@ -719,7 +720,13 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   }
 
   connectorChanged(connectorKey: string): void {
-    if (connectorKey === 'json-feed') {
+    const selectedConnectorKey = String(connectorKey || '').trim();
+    if (!selectedConnectorKey || selectedConnectorKey === this.lastSelectedConnectorKey) {
+      return;
+    }
+    this.lastSelectedConnectorKey = selectedConnectorKey;
+
+    if (selectedConnectorKey === 'json-feed') {
       this.sourceForm.patchValue({
         name: 'Local account JSON bridge',
         syncFrequency: '15m',
@@ -728,7 +735,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       });
       return;
     }
-    if (connectorKey === 'local-folder') {
+    if (selectedConnectorKey === 'local-folder') {
       this.sourceForm.patchValue({
         name: 'Selected local folder',
         syncFrequency: 'manual',
@@ -737,7 +744,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       });
       return;
     }
-    if (connectorKey === 'email') {
+    if (selectedConnectorKey === 'email') {
       this.sourceForm.patchValue({
         name: 'Email export folder',
         syncFrequency: 'manual',
@@ -747,7 +754,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       });
       return;
     }
-    if (connectorKey === 'calendar') {
+    if (selectedConnectorKey === 'calendar') {
       this.sourceForm.patchValue({
         name: 'Calendar export folder',
         syncFrequency: 'manual',
@@ -757,7 +764,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       });
       return;
     }
-    if (connectorKey === 'cloud-documents') {
+    if (selectedConnectorKey === 'cloud-documents') {
       this.sourceForm.patchValue({
         name: 'Synced document folder',
         syncFrequency: '15m',
@@ -767,7 +774,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       });
       return;
     }
-    if (connectorKey === 'project-board') {
+    if (selectedConnectorKey === 'project-board') {
       this.sourceForm.patchValue({
         name: 'Trello board exports',
         syncFrequency: 'manual',
@@ -777,7 +784,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       });
       return;
     }
-    if (connectorKey === 'trello') {
+    if (selectedConnectorKey === 'trello') {
       this.sourceForm.patchValue({
         name: 'Trello board (read-only)',
         syncFrequency: '1h',
@@ -787,7 +794,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       });
       return;
     }
-    if (connectorKey === 'github') {
+    if (selectedConnectorKey === 'github') {
       this.sourceForm.patchValue({
         name: 'GitHub repository',
         syncFrequency: '1h',
@@ -797,7 +804,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       });
       return;
     }
-    if (connectorKey === 'whatsapp-export') {
+    if (selectedConnectorKey === 'whatsapp-export') {
       this.sourceForm.patchValue({
         name: 'WhatsApp exported chats',
         syncFrequency: 'manual',
@@ -808,7 +815,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       });
       return;
     }
-    if (connectorKey === 'whisper-audio') {
+    if (selectedConnectorKey === 'whisper-audio') {
       this.sourceForm.patchValue({
         name: 'Selected voice-note folder',
         syncFrequency: 'manual',
@@ -819,7 +826,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       });
       return;
     }
-    if (connectorKey === 'docling-documents') {
+    if (selectedConnectorKey === 'docling-documents') {
       this.sourceForm.patchValue({
         name: 'Selected document evidence folder',
         syncFrequency: 'manual',
@@ -830,7 +837,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
       });
       return;
     }
-    if (connectorKey === 'odoo-herp') {
+    if (selectedConnectorKey === 'odoo-herp') {
       this.sourceForm.patchValue({
         name: 'Odoo / HERP workspace',
         syncFrequency: 'manual',

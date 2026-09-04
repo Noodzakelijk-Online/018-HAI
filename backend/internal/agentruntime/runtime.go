@@ -26,6 +26,7 @@ import (
 	"automation-hub-backend/internal/safety"
 
 	"github.com/google/uuid"
+	"golang.org/x/net/websocket"
 )
 
 const (
@@ -988,38 +989,39 @@ type openClawAdapter struct {
 	envAllow       []string
 	allowedHost    map[string]bool
 
-	agentCLIEnabled    bool
-	gatewayEnabled     bool
-	messagesEnabled    bool
-	skillsEnabled      bool
-	pluginsEnabled     bool
-	mcpEnabled         bool
-	memoryEnabled      bool
-	cronEnabled        bool
-	browserEnabled     bool
-	canvasEnabled      bool
-	nodesEnabled       bool
-	voiceEnabled       bool
-	talkEnabled        bool
-	webchatEnabled     bool
-	pairingEnabled     bool
-	execApprovals      bool
-	hostToolsEnabled   bool
-	publicPosting      bool
-	webSearchEnabled   bool
-	multiAgentEnabled  bool
-	appSDKEnabled      bool
-	pluginSDKEnabled   bool
-	localModelsEnabled bool
-	highRiskExecution  bool
-	sandboxRequired    bool
-	sandboxMode        string
-	sandboxDocker      bool
-	sandboxSSH         bool
-	sandboxOpenShell   bool
-	channelsEnabled    []string
-	providersEnabled   []string
-	companionApps      []string
+	agentCLIEnabled                 bool
+	gatewayEnabled                  bool
+	gatewayProtocolDiscoveryEnabled bool
+	messagesEnabled                 bool
+	skillsEnabled                   bool
+	pluginsEnabled                  bool
+	mcpEnabled                      bool
+	memoryEnabled                   bool
+	cronEnabled                     bool
+	browserEnabled                  bool
+	canvasEnabled                   bool
+	nodesEnabled                    bool
+	voiceEnabled                    bool
+	talkEnabled                     bool
+	webchatEnabled                  bool
+	pairingEnabled                  bool
+	execApprovals                   bool
+	hostToolsEnabled                bool
+	publicPosting                   bool
+	webSearchEnabled                bool
+	multiAgentEnabled               bool
+	appSDKEnabled                   bool
+	pluginSDKEnabled                bool
+	localModelsEnabled              bool
+	highRiskExecution               bool
+	sandboxRequired                 bool
+	sandboxMode                     string
+	sandboxDocker                   bool
+	sandboxSSH                      bool
+	sandboxOpenShell                bool
+	channelsEnabled                 []string
+	providersEnabled                []string
+	companionApps                   []string
 
 	inventoryMu        sync.Mutex
 	inventoryLoaded    bool
@@ -1035,40 +1037,41 @@ func (*openClawAdapter) RuntimeID() string { return "openclaw" }
 
 func newOpenClawAdapterFromEnv() *openClawAdapter {
 	return &openClawAdapter{
-		enabled:          envEnabled("OPENCLAW_AGENT_ENABLED"),
-		executable:       firstNonEmpty(os.Getenv("OPENCLAW_EXECUTABLE"), "openclaw"),
-		workspace:        strings.TrimSpace(os.Getenv("OPENCLAW_WORKSPACE")),
-		workspaceRoot:    strings.TrimSpace(os.Getenv("AGENT_RUNTIME_WORKSPACE_ROOT")),
-		ecosystemPath:    strings.TrimSpace(firstNonEmpty(os.Getenv("OPENCLAW_ECOSYSTEM_PATH"), os.Getenv("OPENCLAW_WORKSPACE"))),
-		ecosystemRoots:   csvValues(os.Getenv("OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS")),
-		stateDir:         strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR")),
-		configPath:       strings.TrimSpace(os.Getenv("OPENCLAW_CONFIG_PATH")),
-		gatewayURL:       strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_URL")),
-		gatewayToken:     strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_TOKEN")),
-		thinking:         firstNonEmpty(os.Getenv("OPENCLAW_THINKING"), "high"),
-		timeout:          time.Duration(boundedIntEnv("OPENCLAW_TIMEOUT_SECONDS", defaultTimeoutSeconds, 1, 900)) * time.Second,
-		outputLimit:      int64(boundedIntEnv("AGENT_RUNTIME_OUTPUT_LIMIT_BYTES", defaultOutputLimit, 4096, maxOutputLimit)),
-		envAllow:         csvValues(os.Getenv("OPENCLAW_ENV_ALLOWLIST")),
-		allowedHost:      csvMap(firstNonEmpty(os.Getenv("AGENT_RUNTIME_ALLOWED_HOSTS"), "localhost,127.0.0.1,::1,host.docker.internal,openclaw")),
-		agentCLIEnabled:  envEnabledDefault("OPENCLAW_AGENT_CLI_ENABLED", true),
-		gatewayEnabled:   envEnabled("OPENCLAW_GATEWAY_ENABLED"),
-		messagesEnabled:  envEnabled("OPENCLAW_MESSAGES_ENABLED"),
-		skillsEnabled:    envEnabled("OPENCLAW_SKILLS_ENABLED"),
-		pluginsEnabled:   envEnabled("OPENCLAW_PLUGINS_ENABLED"),
-		mcpEnabled:       envEnabled("OPENCLAW_MCP_ENABLED"),
-		memoryEnabled:    envEnabled("OPENCLAW_MEMORY_ENABLED"),
-		cronEnabled:      envEnabled("OPENCLAW_CRON_ENABLED"),
-		browserEnabled:   envEnabled("OPENCLAW_BROWSER_ENABLED"),
-		canvasEnabled:    envEnabled("OPENCLAW_CANVAS_ENABLED"),
-		nodesEnabled:     envEnabled("OPENCLAW_NODES_ENABLED"),
-		voiceEnabled:     envEnabled("OPENCLAW_VOICE_ENABLED"),
-		talkEnabled:      envEnabled("OPENCLAW_TALK_ENABLED"),
-		webchatEnabled:   envEnabled("OPENCLAW_WEBCHAT_ENABLED"),
-		pairingEnabled:   envEnabled("OPENCLAW_PAIRING_ENABLED"),
-		execApprovals:    envEnabled("OPENCLAW_EXEC_APPROVALS_ENABLED"),
-		hostToolsEnabled: envEnabled("OPENCLAW_HOST_TOOLS_ENABLED"),
-		publicPosting:    envEnabled("OPENCLAW_PUBLIC_POSTING_ENABLED"),
-		webSearchEnabled: envEnabled("OPENCLAW_WEB_SEARCH_ENABLED"),
+		enabled:                         envEnabled("OPENCLAW_AGENT_ENABLED"),
+		executable:                      firstNonEmpty(os.Getenv("OPENCLAW_EXECUTABLE"), "openclaw"),
+		workspace:                       strings.TrimSpace(os.Getenv("OPENCLAW_WORKSPACE")),
+		workspaceRoot:                   strings.TrimSpace(os.Getenv("AGENT_RUNTIME_WORKSPACE_ROOT")),
+		ecosystemPath:                   strings.TrimSpace(firstNonEmpty(os.Getenv("OPENCLAW_ECOSYSTEM_PATH"), os.Getenv("OPENCLAW_WORKSPACE"))),
+		ecosystemRoots:                  csvValues(os.Getenv("OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS")),
+		stateDir:                        strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR")),
+		configPath:                      strings.TrimSpace(os.Getenv("OPENCLAW_CONFIG_PATH")),
+		gatewayURL:                      strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_URL")),
+		gatewayToken:                    strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_TOKEN")),
+		thinking:                        firstNonEmpty(os.Getenv("OPENCLAW_THINKING"), "high"),
+		timeout:                         time.Duration(boundedIntEnv("OPENCLAW_TIMEOUT_SECONDS", defaultTimeoutSeconds, 1, 900)) * time.Second,
+		outputLimit:                     int64(boundedIntEnv("AGENT_RUNTIME_OUTPUT_LIMIT_BYTES", defaultOutputLimit, 4096, maxOutputLimit)),
+		envAllow:                        csvValues(os.Getenv("OPENCLAW_ENV_ALLOWLIST")),
+		allowedHost:                     csvMap(firstNonEmpty(os.Getenv("AGENT_RUNTIME_ALLOWED_HOSTS"), "localhost,127.0.0.1,::1,host.docker.internal,openclaw")),
+		agentCLIEnabled:                 envEnabledDefault("OPENCLAW_AGENT_CLI_ENABLED", true),
+		gatewayEnabled:                  envEnabled("OPENCLAW_GATEWAY_ENABLED"),
+		gatewayProtocolDiscoveryEnabled: envEnabled("OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED"),
+		messagesEnabled:                 envEnabled("OPENCLAW_MESSAGES_ENABLED"),
+		skillsEnabled:                   envEnabled("OPENCLAW_SKILLS_ENABLED"),
+		pluginsEnabled:                  envEnabled("OPENCLAW_PLUGINS_ENABLED"),
+		mcpEnabled:                      envEnabled("OPENCLAW_MCP_ENABLED"),
+		memoryEnabled:                   envEnabled("OPENCLAW_MEMORY_ENABLED"),
+		cronEnabled:                     envEnabled("OPENCLAW_CRON_ENABLED"),
+		browserEnabled:                  envEnabled("OPENCLAW_BROWSER_ENABLED"),
+		canvasEnabled:                   envEnabled("OPENCLAW_CANVAS_ENABLED"),
+		nodesEnabled:                    envEnabled("OPENCLAW_NODES_ENABLED"),
+		voiceEnabled:                    envEnabled("OPENCLAW_VOICE_ENABLED"),
+		talkEnabled:                     envEnabled("OPENCLAW_TALK_ENABLED"),
+		webchatEnabled:                  envEnabled("OPENCLAW_WEBCHAT_ENABLED"),
+		pairingEnabled:                  envEnabled("OPENCLAW_PAIRING_ENABLED"),
+		execApprovals:                   envEnabled("OPENCLAW_EXEC_APPROVALS_ENABLED"),
+		hostToolsEnabled:                envEnabled("OPENCLAW_HOST_TOOLS_ENABLED"),
+		publicPosting:                   envEnabled("OPENCLAW_PUBLIC_POSTING_ENABLED"),
+		webSearchEnabled:                envEnabled("OPENCLAW_WEB_SEARCH_ENABLED"),
 
 		multiAgentEnabled:  envEnabled("OPENCLAW_MULTI_AGENT_ENABLED"),
 		appSDKEnabled:      envEnabled("OPENCLAW_APP_SDK_ENABLED"),
@@ -1241,9 +1244,62 @@ func (a *openClawAdapter) gatewayHealthCheck(ctx context.Context, started time.T
 		return health
 	}
 	health.Status = "available"
-	health.Reason = "OpenClaw Companion gateway health endpoint is live; discovery is read-only and execution still requires HAI's approved OpenClaw CLI/workspace path"
+	if a.gatewayProtocolDiscoveryEnabled {
+		if err := a.gatewayProtocolChallengeCheck(ctx); err != nil {
+			health.Status = "unavailable"
+			health.Reason = "OpenClaw Gateway protocol challenge was unavailable or malformed"
+			return health
+		}
+		health.Reason = "OpenClaw Companion gateway health endpoint is live and its protocol challenge was verified; discovery is read-only and execution still requires HAI's approved OpenClaw CLI/workspace path"
+	} else {
+		health.Reason = "OpenClaw Companion gateway health endpoint is live; discovery is read-only and execution still requires HAI's approved OpenClaw CLI/workspace path"
+	}
 	health.LatencyMs = time.Since(started).Milliseconds()
 	return health
+}
+
+func (a *openClawAdapter) gatewayProtocolChallengeCheck(ctx context.Context) error {
+	endpoint, err := openClawGatewayProtocolURL(a.gatewayURL)
+	if err != nil {
+		return err
+	}
+	config, err := websocket.NewConfig(endpoint, "http://hai.local")
+	if err != nil {
+		return err
+	}
+	timeout := a.timeout
+	if timeout <= 0 {
+		timeout = defaultTimeoutSeconds * time.Second
+	}
+	config.Dialer = &net.Dialer{Timeout: timeout}
+	connection, err := config.DialContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	connection.MaxPayloadBytes = 64 * 1024
+	if err := connection.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
+	var challenge struct {
+		Type    string `json:"type"`
+		Event   string `json:"event"`
+		Payload struct {
+			Nonce string      `json:"nonce"`
+			TS    json.Number `json:"ts"`
+		} `json:"payload"`
+	}
+	if err := websocket.JSON.Receive(connection, &challenge); err != nil {
+		return err
+	}
+	if challenge.Type != "event" || challenge.Event != "connect.challenge" || strings.TrimSpace(challenge.Payload.Nonce) == "" {
+		return fmt.Errorf("unexpected protocol challenge frame")
+	}
+	ts, err := challenge.Payload.TS.Int64()
+	if err != nil || ts < 0 {
+		return fmt.Errorf("invalid protocol challenge timestamp")
+	}
+	return nil
 }
 
 func openClawGatewayHealthURL(rawURL string) (string, error) {
@@ -1261,6 +1317,29 @@ func openClawGatewayHealthURL(rawURL string) (string, error) {
 		return "", fmt.Errorf("unsupported gateway URL scheme")
 	}
 	endpoint.Path = "/health"
+	endpoint.RawPath = ""
+	endpoint.RawQuery = ""
+	endpoint.Fragment = ""
+	return endpoint.String(), nil
+}
+
+func openClawGatewayProtocolURL(rawURL string) (string, error) {
+	endpoint, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" || endpoint.User != nil {
+		return "", fmt.Errorf("invalid gateway URL")
+	}
+	switch strings.ToLower(endpoint.Scheme) {
+	case "http":
+		endpoint.Scheme = "ws"
+	case "https":
+		endpoint.Scheme = "wss"
+	case "ws", "wss":
+	default:
+		return "", fmt.Errorf("unsupported gateway URL scheme")
+	}
+	if endpoint.Path == "" {
+		endpoint.Path = "/"
+	}
 	endpoint.RawPath = ""
 	endpoint.RawQuery = ""
 	endpoint.Fragment = ""

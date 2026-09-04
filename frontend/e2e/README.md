@@ -35,6 +35,7 @@ docker compose --env-file .env.local -f docker-compose.local.yml up -d --build
 
 # Install and run from frontend/e2e.
 npm install
+npm run typecheck
 npx playwright install chromium
 $env:E2E_BASE_URL = 'http://localhost'
 $env:E2E_OPERATOR_EMAIL = 'your-seeded-operator@example.com'

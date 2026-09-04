@@ -223,6 +223,23 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.sourceCanConnect()).toBeFalse();
   });
 
+  it('preserves in-progress source inputs when the selected connector emits a duplicate change event', () => {
+    const { component } = createComponent();
+    component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only' } as any];
+    component.sourceForm.patchValue({
+      name: 'E2E local source',
+      syncTarget: 'e2e',
+    });
+
+    component.connectorChanged('local-folder');
+
+    expect(component.sourceForm.value).toEqual(jasmine.objectContaining({
+      name: 'E2E local source',
+      syncTarget: 'e2e',
+    }));
+    expect(component.sourceCanConnect()).toBeTrue();
+  });
+
   it('does not prefill a manual import with synthetic source content', () => {
     const { component } = createComponent();
 

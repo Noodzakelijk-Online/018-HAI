@@ -63,6 +63,15 @@ evidence is currently in-process and intentionally expires on backend restart;
 durable readiness restoration will require a PostgreSQL ledger record rather
 than configuration inference.
 
+With `OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED=true`, HAI performs a second,
+still unauthenticated and read-only validation step. It opens the configured
+WebSocket, limits the first inbound frame to 64 KiB, requires an `event` frame
+named `connect.challenge` with a non-empty nonce and non-negative integer
+timestamp, then closes the socket. It sends no token, Authorization header,
+`connect` frame, RPC, task, or node command. A malformed or unavailable
+challenge changes the result to `unavailable`; it can never be treated as an
+execution-ready state.
+
 ## Disposition Rules
 
 Every reviewed feature group has exactly one disposition:

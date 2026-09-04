@@ -779,6 +779,14 @@ node capabilities, or use a browser, desktop, channel, or host tool. Those
 remain blocked until the existing CLI/workspace, approval-proof, and
 postcondition paths are independently configured and validated.
 
+Set `OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED=true` only when HAI should
+also validate the unauthenticated gateway boundary. It opens the configured
+WebSocket, accepts one bounded `connect.challenge` event, and closes the socket.
+It does not send an authorization header, gateway token, `connect` frame, RPC,
+or task. An authenticated `operator.read` handshake is intentionally a later,
+separately configured capability because it has a different credential and
+pairing boundary.
+
 DeepSeek Harness remains an upstream developer preview, but it now documents a
 one-shot headless profile: `dsh --profile headless "task"`. HAI integrates only
 that documented process boundary. It is disabled by default and requires both
