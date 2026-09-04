@@ -5,6 +5,7 @@ import (
 	"automation-hub-backend/internal/models"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -53,6 +54,40 @@ func TestHandlerIgnoresForgedOwnerAndScopesMemoryListing(t *testing.T) {
 	}
 	if got := list("bob"); len(got) != 1 || got[0].Content != "private case context" {
 		t.Fatalf("bob memories = %#v, want the private record", got)
+	}
+}
+
+func TestHandlerBoundsRecentMemoryListing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := newOwnerScopedFakeRepository()
+	service := NewService(repo)
+	handler := NewHandler(service)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.POST("/memory", handler.Create)
+	router.GET("/memory", handler.List)
+
+	for index := 0; index < 3; index++ {
+		request := httptest.NewRequest(http.MethodPost, "/memory", bytes.NewBufferString(fmt.Sprintf(`{"kind":"project","content":"private context %d"}`, index)))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("create status=%d body=%s", response.Code, response.Body.String())
+		}
+	}
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/memory?limit=1", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("recent list status=%d body=%s", response.Code, response.Body.String())
+	}
+	var memories []models.ContextMemory
+	if err := json.Unmarshal(response.Body.Bytes(), &memories); err != nil {
+		t.Fatalf("decode recent memories: %v", err)
+	}
+	if len(memories) != 1 {
+		t.Fatalf("recent list returned %d records, want 1", len(memories))
 	}
 }
 

@@ -185,6 +185,7 @@ func TestFrameworkOperatingContractBlocksUnavailableCapacityAndUnassignedTeamExe
 		RiskAssessment{AllowedNow: true},
 		&frameworkregistry.SelectionDecision{
 			MaximumAutonomyLevel: 6,
+			RequiredAgents:       []string{"specialist"},
 			Capacity: frameworkregistry.CapacitySnapshot{
 				Status: "unavailable",
 			},
@@ -203,7 +204,7 @@ func TestFrameworkOperatingContractBlocksUnavailableCapacityAndUnassignedTeamExe
 			}},
 		},
 		IntakeAnalysis{NeedsTools: true},
-		IntakeRequest{ExecuteAllowed: true},
+		IntakeRequest{ExecuteAllowed: true, agentInventoryEvaluated: true},
 	)
 
 	if risk.AllowedNow {
@@ -214,6 +215,38 @@ func TestFrameworkOperatingContractBlocksUnavailableCapacityAndUnassignedTeamExe
 		if !strings.Contains(reasons, fragment) {
 			t.Errorf("risk reasons %v do not contain %q", risk.Reasons, fragment)
 		}
+	}
+}
+
+func TestFrameworkOperatingContractBlocksUnassignedSpecialistInSingleEngineMode(t *testing.T) {
+	risk := applyFrameworkRisk(
+		RiskAssessment{AllowedNow: true},
+		&frameworkregistry.SelectionDecision{
+			MaximumAutonomyLevel: 6,
+			RequiredAgents:       []string{"evidence_reviewer"},
+			Coordination: frameworkregistry.CoordinationPlan{
+				Mode: "single_engine",
+			},
+			Delegations: []frameworkregistry.DelegationContract{
+				{Delegatee: "hai_task_engine", State: "ready"},
+				{Delegatee: "evidence_reviewer", State: "requires_assignment"},
+			},
+			ActionAutonomy: []frameworkregistry.ActionAutonomyDecision{{
+				Action:           "execute_case_approved_action",
+				RequiredLevel:    6,
+				EffectiveCeiling: 6,
+				Allowed:          true,
+			}},
+		},
+		IntakeAnalysis{NeedsTools: true},
+		IntakeRequest{ExecuteAllowed: true, HumanApproved: true, agentInventoryEvaluated: true},
+	)
+
+	if risk.AllowedNow {
+		t.Fatalf("single-engine execution bypassed an unassigned required specialist: %#v", risk)
+	}
+	if !strings.Contains(strings.Join(risk.Reasons, "\n"), "framework-required delegated participant") {
+		t.Fatalf("missing specialist execution block: %#v", risk.Reasons)
 	}
 }
 

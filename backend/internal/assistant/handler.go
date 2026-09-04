@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"automation-hub-backend/internal/apierror"
 	"automation-hub-backend/internal/identity"
 	"errors"
 	"net/http"
@@ -38,7 +39,7 @@ func (h *Handler) Command(c *gin.Context) {
 	}
 	var request CommandRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "assistant command request is invalid"})
 		return
 	}
 	ownerIdentity := verifiedActor(c, "")
@@ -55,10 +56,12 @@ func (h *Handler) Command(c *gin.Context) {
 	result, err := h.service.Command(request)
 	if err != nil {
 		if errors.Is(err, ErrInvalidStandingMandateID) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "standing mandate id is invalid"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "result": result})
+		// A partially assembled command result can contain connector or task
+		// diagnostics. Keep it server-side when the operation failed.
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "assistant command could not be completed")})
 		return
 	}
 	c.JSON(http.StatusOK, result)

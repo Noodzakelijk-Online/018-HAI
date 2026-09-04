@@ -1,5 +1,6 @@
 import { Component, OnInit } from '@angular/core'
 import { Router } from '@angular/router'
+import { timeout } from 'rxjs'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { IMCPPreflightOverview, IMCPPreflightResult, IMCPPreflightServer } from '../../models/mcp-preflight.model.interface'
 import {
@@ -15,10 +16,10 @@ import { MCPPreflightService } from '../../services/mcp-preflight.service'
 import { RuntimeLabService } from '../../services/runtime-lab.service'
 
 @Component({
-  standalone: false,
-  selector: 'app-runtime-lab',
-  templateUrl: './runtime-lab.component.html',
-  styleUrls: ['./runtime-lab.component.scss'],
+    selector: 'app-runtime-lab',
+    templateUrl: './runtime-lab.component.html',
+    styleUrls: ['./runtime-lab.component.scss'],
+    standalone: false
 })
 export class RuntimeLabComponent implements OnInit {
   runtimes: IRuntimeSummary[] = []
@@ -31,6 +32,7 @@ export class RuntimeLabComponent implements OnInit {
   capabilityLoading = false
   busy: Record<string, boolean> = {}
   mcpBusy: Record<string, boolean> = {}
+  private readonly operationTimeoutMs = 30000
 
   constructor(
     private service: RuntimeLabService,
@@ -147,7 +149,7 @@ export class RuntimeLabComponent implements OnInit {
   runMCPPreflight(server: IMCPPreflightServer): void {
     if (this.mcpBusy[server.id] || !server.configured) return
     this.mcpBusy[server.id] = true
-    this.mcpPreflight.run(server.id).subscribe({
+    this.mcpPreflight.run(server.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (result) => {
         this.mcpBusy[server.id] = false
         this.notifyMCPPreflight(server, result)
@@ -181,7 +183,7 @@ export class RuntimeLabComponent implements OnInit {
 
   probe(r: IRuntimeSummary): void {
     this.busy[r.info.id] = true
-    this.service.probe(r.info.id).subscribe({
+    this.service.probe(r.info.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (res) => {
         this.busy[r.info.id] = false
         const title = res.protocolValid ? 'Discovery validated' : 'Discovery did not validate'
@@ -200,7 +202,7 @@ export class RuntimeLabComponent implements OnInit {
 
   selfTest(r: IRuntimeSummary): void {
     this.busy[r.info.id] = true
-    this.service.selfTest(r.info.id).subscribe({
+    this.service.selfTest(r.info.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (attempt) => {
         this.busy[r.info.id] = false
         if (attempt.status === 'succeeded') {

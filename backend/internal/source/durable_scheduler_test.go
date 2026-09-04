@@ -46,6 +46,42 @@ func (f *fakeJobRepo) EnqueueIfNoActive(job *models.DurableJob) (bool, error) {
 	return err == nil, err
 }
 
+func (f *fakeJobRepo) EnqueueIfNoActiveMatchingPayload(job *models.DurableJob) (bool, error) {
+	if job.Queue == "" {
+		job.Queue = "default"
+	}
+	for _, existing := range f.jobs {
+		if existing.Queue == job.Queue && existing.Kind == job.Kind && existing.Payload == job.Payload &&
+			(existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
+			return false, nil
+		}
+	}
+	_, err := f.Enqueue(job)
+	return err == nil, err
+}
+
+func (f *fakeJobRepo) CompleteRecurring(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, terminalStatus string, attempts int, lastErr string, next *models.DurableJob) (bool, bool, error) {
+	job := f.jobs[id]
+	if job == nil || job.Status != models.DurableJobRunning || job.LockedBy != workerID || job.LeaseGeneration != leaseGeneration {
+		return false, false, nil
+	}
+	job.Status = terminalStatus
+	job.CompletedAt = &now
+	job.LockedBy = ""
+	job.LockedAt = nil
+	job.LastError = lastErr
+	if terminalStatus == models.DurableJobDead {
+		job.Attempts = attempts
+	}
+	for _, existing := range f.jobs {
+		if existing.ID != id && existing.Queue == next.Queue && existing.Kind == next.Kind && (existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
+			return true, false, nil
+		}
+	}
+	_, err := f.Enqueue(next)
+	return true, err == nil, err
+}
+
 func (f *fakeJobRepo) ClaimDue(workerID, queue string, now time.Time, limit int) ([]models.DurableJob, error) {
 	if queue == "" {
 		queue = "default"
@@ -83,6 +119,16 @@ func (f *fakeJobRepo) MarkForRetry(id uuid.UUID, workerID string, leaseGeneratio
 		return false, nil
 	}
 	job.Status, job.RunAt, job.Attempts, job.LastError = models.DurableJobPending, runAt, attempts, lastErr
+	return true, nil
+}
+
+func (f *fakeJobRepo) MarkDeferred(id uuid.UUID, workerID string, leaseGeneration int64, runAt time.Time, reason string) (bool, error) {
+	job := f.jobs[id]
+	if !sourceFakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, nil
+	}
+	job.Status, job.RunAt, job.LastError = models.DurableJobPending, runAt, reason
+	job.LockedBy, job.LockedAt = "", nil
 	return true, nil
 }
 
@@ -192,6 +238,47 @@ func TestDurableScanEnqueuesOneSyncPerDueSourceAndReschedulesItself(t *testing.T
 	}
 }
 
+func TestDurableScanDoesNotDuplicateAnActiveSourceSync(t *testing.T) {
+	source, _ := localFolderSource(t, "alice")
+	repo := newFakeSourceRepo(source)
+	service := NewService(repo, &fakeSourceMemoryService{})
+	jobs := newFakeJobRepo()
+	runner := durablejob.NewRunner(jobs, durablejob.Options{WorkerID: "w1"})
+
+	// Invoke the scanner twice before the queued source job can run. A source
+	// retry or a slow remote API must not build an unbounded duplicate backlog.
+	work := scanWork(runner, service)
+	if err := work(context.Background()); err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	if err := work(context.Background()); err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	if got := len(jobs.byKind(JobKindSync)); got != 1 {
+		t.Fatalf("sync jobs after duplicate scan = %d, want 1", got)
+	}
+}
+
+func TestDurableScanDoesNotDuplicateAnActiveSourceSyncAfterRename(t *testing.T) {
+	source, _ := localFolderSource(t, "alice")
+	repo := newFakeSourceRepo(source)
+	service := NewService(repo, &fakeSourceMemoryService{})
+	jobs := newFakeJobRepo()
+	runner := durablejob.NewRunner(jobs, durablejob.Options{WorkerID: "w1"})
+	work := scanWork(runner, service)
+
+	if err := work(context.Background()); err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	repo.sources[source.ID].Name = "alice-renamed"
+	if err := work(context.Background()); err != nil {
+		t.Fatalf("scan after rename: %v", err)
+	}
+	if got := len(jobs.byKind(JobKindSync)); got != 1 {
+		t.Fatalf("sync jobs after rename = %d, want 1", got)
+	}
+}
+
 func TestDurableSyncJobActuallySyncsTheSource(t *testing.T) {
 	source, _ := localFolderSource(t, "alice")
 	repo := newFakeSourceRepo(source)
@@ -219,6 +306,31 @@ func TestDurableSyncJobActuallySyncsTheSource(t *testing.T) {
 		if job.Status != models.DurableJobSucceeded {
 			t.Fatalf("sync job status = %q (%s), want succeeded", job.Status, job.LastError)
 		}
+	}
+}
+
+func TestDurableSchedulerDoesNotProcessQueuedWorkWhenBackgroundIsStopped(t *testing.T) {
+	source, _ := localFolderSource(t, "alice")
+	repo := newFakeSourceRepo(source)
+	service := NewService(repo, &fakeSourceMemoryService{})
+	jobs := newFakeJobRepo()
+	runner := durablejob.NewRunner(jobs, durablejob.Options{WorkerID: "w1"})
+
+	if err := RegisterDurableScheduling(runner, service, time.Minute, func() bool { return false }); err != nil {
+		t.Fatalf("RegisterDurableScheduling: %v", err)
+	}
+	if _, err := runner.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if got := len(jobs.byKind(JobKindSync)); got != 0 {
+		t.Fatalf("queued sync jobs = %d, want none while background is stopped", got)
+	}
+	updated, err := repo.FindSource(source.ID)
+	if err != nil {
+		t.Fatalf("FindSource: %v", err)
+	}
+	if updated.LastSyncedAt != nil {
+		t.Fatal("stopped background scheduler must not sync the source")
 	}
 }
 
@@ -263,5 +375,22 @@ func TestDurableSyncHandlerTreatsInProgressAsSuccess(t *testing.T) {
 	payload := `{"sourceId":"` + src.ID.String() + `"}`
 	if err := syncHandler(svc)(context.Background(), durablejob.Job{Payload: payload}); err != nil {
 		t.Fatalf("in-progress sync should not fail the job (it would retry-storm): %v", err)
+	}
+}
+
+func TestDurablePollIntervalUsesSafeBounds(t *testing.T) {
+	for _, value := range []string{"", "1", "14", "3601", "invalid"} {
+		t.Setenv("SOURCE_WORKER_POLL_SECONDS", value)
+		if got := durablePollInterval(); got != defaultDurablePollInterval {
+			t.Fatalf("durablePollInterval() with %q = %s, want default %s", value, got, defaultDurablePollInterval)
+		}
+	}
+	t.Setenv("SOURCE_WORKER_POLL_SECONDS", "15")
+	if got := durablePollInterval(); got != minDurablePollInterval {
+		t.Fatalf("durablePollInterval() = %s, want %s", got, minDurablePollInterval)
+	}
+	t.Setenv("SOURCE_WORKER_POLL_SECONDS", "3600")
+	if got := durablePollInterval(); got != maxDurablePollInterval {
+		t.Fatalf("durablePollInterval() = %s, want %s", got, maxDurablePollInterval)
 	}
 }

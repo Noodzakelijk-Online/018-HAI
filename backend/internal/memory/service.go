@@ -133,6 +133,12 @@ type MemoryHealthService interface {
 	MemoryHealthForOwner(ownerIdentity, projectKey string) (*MemoryHealthReport, error)
 }
 
+// RecentMemoryService is a bounded, chronological listing for operational
+// surfaces. It intentionally has no search or total count semantics.
+type RecentMemoryService interface {
+	RecentForOwner(ownerIdentity, projectKey string, includeArchived bool, limit int) ([]models.ContextMemory, error)
+}
+
 type service struct {
 	repo            Repository
 	semanticService semantic.Service
@@ -289,7 +295,7 @@ func (s *service) createForOwner(ownerIdentity string, request CreateRequest) (*
 		}
 	}
 
-	memories, err := s.repo.FindAll(projectKey, false)
+	memories, err := s.findAllReadable(ownerIdentity, projectKey, false)
 	if err != nil {
 		return nil, err
 	}
@@ -385,11 +391,25 @@ func (s *service) FindAll(projectKey string, includeArchived bool) ([]models.Con
 }
 
 func (s *service) FindAllForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
-	memories, err := s.repo.FindAll(projectKey, includeArchived)
+	return s.findAllReadable(ownerIdentity, projectKey, includeArchived)
+}
+
+func (s *service) RecentForOwner(ownerIdentity, projectKey string, includeArchived bool, limit int) ([]models.ContextMemory, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if scoped, ok := s.repo.(RecentOwnerScopedRepository); ok && ownerIdentity != "" {
+		return scoped.FindRecentForOwner(ownerIdentity, projectKey, includeArchived, limit)
+	}
+	memories, err := s.findAllReadable(ownerIdentity, projectKey, includeArchived)
 	if err != nil {
 		return nil, err
 	}
-	return filterReadableMemories(memories, ownerIdentity), nil
+	if len(memories) > limit {
+		return memories[:limit], nil
+	}
+	return memories, nil
 }
 
 func (s *service) FindByID(id uuid.UUID) (*models.ContextMemory, error) {
@@ -397,6 +417,10 @@ func (s *service) FindByID(id uuid.UUID) (*models.ContextMemory, error) {
 }
 
 func (s *service) FindByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.ContextMemory, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if scoped, ok := s.repo.(OwnerScopedRepository); ok && ownerIdentity != "" {
+		return scoped.FindByIDForOwner(ownerIdentity, id)
+	}
 	memory, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
@@ -466,15 +490,14 @@ func (s *service) ReindexSemanticForOwner(ownerIdentity string, limit int) (*Sem
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
-	memories, err := s.repo.FindAll("", false)
+	memories, err := s.findAllReadable(ownerIdentity, "", false)
 	if err != nil {
 		return nil, err
 	}
-	visible := filterReadableMemories(memories, ownerIdentity)
 	result := &SemanticReindexResult{Enabled: true}
-	for index, item := range visible {
+	for index, item := range memories {
 		if index >= limit {
-			result.Deferred = len(visible) - index
+			result.Deferred = len(memories) - index
 			break
 		}
 		result.Attempted++
@@ -498,15 +521,12 @@ func (s *service) retrieveForOwner(ownerIdentity string, request RetrieveRequest
 		limit = 8
 	}
 	projectKey := strings.TrimSpace(request.ProjectKey)
-	memories, err := s.repo.FindAll("", false)
+	memories, err := s.findAllReadable(ownerIdentity, "", false)
 	if err != nil {
 		return nil, err
 	}
 	candidates := make([]models.ContextMemory, 0, len(memories))
 	for _, memory := range memories {
-		if !readableByOwner(&memory, ownerIdentity) {
-			continue
-		}
 		if projectKey != "" && memory.ProjectKey != "" && memory.ProjectKey != projectKey {
 			continue
 		}
@@ -558,6 +578,10 @@ func (s *service) retrieveForOwner(ownerIdentity string, request RetrieveRequest
 }
 
 func (s *service) writeableMemoryForOwner(ownerIdentity string, id uuid.UUID) (*models.ContextMemory, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if scoped, ok := s.repo.(OwnerScopedRepository); ok && ownerIdentity != "" {
+		return scoped.FindByIDForOwner(ownerIdentity, id)
+	}
 	memory, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
@@ -566,6 +590,18 @@ func (s *service) writeableMemoryForOwner(ownerIdentity string, id uuid.UUID) (*
 		return nil, gorm.ErrRecordNotFound
 	}
 	return memory, nil
+}
+
+func (s *service) findAllReadable(ownerIdentity, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if scoped, ok := s.repo.(OwnerScopedRepository); ok && ownerIdentity != "" {
+		return scoped.FindAllForOwner(ownerIdentity, projectKey, includeArchived)
+	}
+	memories, err := s.repo.FindAll(projectKey, includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	return filterReadableMemories(memories, ownerIdentity), nil
 }
 
 func readableByOwner(memory *models.ContextMemory, ownerIdentity string) bool {

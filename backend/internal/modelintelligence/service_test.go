@@ -15,9 +15,9 @@ func (f roundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 
 type staticProvider struct{ profile ModelProfile }
 
-func (p staticProvider) ID() string                  { return p.profile.ProviderID }
-func (p staticProvider) DisplayName() string         { return p.profile.DisplayName }
-func (p staticProvider) Profiles() []ModelProfile    { return []ModelProfile{p.profile} }
+func (p staticProvider) ID() string               { return p.profile.ProviderID }
+func (p staticProvider) DisplayName() string      { return p.profile.DisplayName }
+func (p staticProvider) Profiles() []ModelProfile { return []ModelProfile{p.profile} }
 func (p staticProvider) Probe(context.Context, time.Time) ProbeResult {
 	return ProbeResult{ProviderID: p.profile.ProviderID, Status: p.profile.Status}
 }
@@ -43,9 +43,38 @@ func TestDirectModelHTTPClientDoesNotUseEnvironmentProxyOrRedirects(t *testing.T
 	}
 }
 
+func TestModelsProbeRejectsMalformedProviderResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("not-json"))
+	}))
+	defer server.Close()
+
+	probe := probeModelsEndpoint(context.Background(), server.Client(), "test", server.URL, "/models", time.Now().UTC())
+	if probe.Status != ProviderFailed || probe.Detail != "invalid models response" {
+		t.Fatalf("probe = %#v, want malformed provider response to fail", probe)
+	}
+}
+
+func TestChatCompletionRejectsOversizedProviderResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[],"padding":"` + strings.Repeat("x", maxChatCompletionBytes) + `"}`))
+	}))
+	defer server.Close()
+
+	_, err := chatCompletion(context.Background(), server.Client(), "test", "local-model", server.URL, "/chat", InferenceRequest{Prompt: "hello", Lane: LaneFastTriage})
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("chat completion error = %v, want oversized response rejection", err)
+	}
+}
+
 func TestRegistryTruthfulProviderStates(t *testing.T) {
 	s := newTestService()
 	over := s.Overview()
+	if over.Calibration.TotalRuns != over.TelemetryRuns {
+		t.Fatalf("overview calibration runs = %d, telemetry runs = %d", over.Calibration.TotalRuns, over.TelemetryRuns)
+	}
 	byID := map[string]ProviderSummary{}
 	for _, p := range over.Providers {
 		byID[p.ID] = p

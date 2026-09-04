@@ -1,6 +1,7 @@
 package source
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,6 +62,16 @@ type trelloBoard struct {
 	Name     string `json:"name"`
 	URL      string `json:"url"`
 	ShortURL string `json:"shortUrl"`
+}
+
+type trelloTokenPermission struct {
+	ModelType string `json:"modelType"`
+	Read      bool   `json:"read"`
+	Write     bool   `json:"write"`
+}
+
+type trelloTokenInfo struct {
+	Permissions []trelloTokenPermission `json:"permissions"`
 }
 
 type trelloList struct {
@@ -143,7 +154,7 @@ func trelloConfigured() bool {
 
 // fetchTrelloSource pulls read-only card metadata from a live Trello board and
 // returns import items plus the advanced cursor. It never writes to Trello.
-func fetchTrelloSource(source *models.ConnectedSource) ([]ImportItem, string, error) {
+func fetchTrelloSource(ctx context.Context, source *models.ConnectedSource) ([]ImportItem, string, error) {
 	if source == nil {
 		return nil, "", fmt.Errorf("source is required")
 	}
@@ -160,14 +171,17 @@ func fetchTrelloSource(source *models.ConnectedSource) ([]ImportItem, string, er
 	if err != nil {
 		return nil, "", err
 	}
+	if err := validateTrelloReadOnlyToken(ctx, base, key, token); err != nil {
+		return nil, "", err
+	}
 
 	var board trelloBoard
-	if err := trelloGetJSON(base, key, token, "/1/boards/"+boardID, url.Values{"fields": {"name,url,shortUrl"}}, &board); err != nil {
+	if err := trelloGetJSONContext(ctx, base, key, token, "/1/boards/"+boardID, url.Values{"fields": {"name,url,shortUrl"}}, &board); err != nil {
 		return nil, "", fmt.Errorf("fetch trello board: %w", err)
 	}
 
 	var lists []trelloList
-	if err := trelloGetJSON(base, key, token, "/1/boards/"+boardID+"/lists", url.Values{"fields": {"name"}, "filter": {"open"}}, &lists); err != nil {
+	if err := trelloGetJSONContext(ctx, base, key, token, "/1/boards/"+boardID+"/lists", url.Values{"fields": {"name"}, "filter": {"open"}}, &lists); err != nil {
 		return nil, "", fmt.Errorf("fetch trello lists: %w", err)
 	}
 	listNames := make(map[string]string, len(lists))
@@ -191,8 +205,27 @@ func fetchTrelloSource(source *models.ConnectedSource) ([]ImportItem, string, er
 		"checklist_fields":            {trelloChecklistFields},
 		"checkItem_fields":            {trelloCheckItemFields},
 	}
-	if err := trelloGetJSON(base, key, token, "/1/boards/"+boardID+"/cards", cardQuery, &cards); err != nil {
+	if err := trelloGetJSONContext(ctx, base, key, token, "/1/boards/"+boardID+"/cards", cardQuery, &cards); err != nil {
 		return nil, "", fmt.Errorf("fetch trello cards: %w", err)
+	}
+	// Trello caps this endpoint at trelloCardFetchLimit. A response exactly at
+	// that limit might be the complete board, but it might also be silently
+	// truncated. Do not advance the cursor or report a completed sync when HAI
+	// cannot prove it saw every card. The operator can split/archive the board
+	// or reduce the active scope before retrying.
+	if len(cards) >= trelloCardFetchLimit {
+		return nil, "", fmt.Errorf("trello board returned %d cards at the fetch limit of %d; sync is potentially truncated", len(cards), trelloCardFetchLimit)
+	}
+	// The nested card response caps commentCard actions at trelloCommentLimit.
+	// An exactly full response could be complete, but Trello does not provide a
+	// total in this response to prove that. Do not turn a partial conversation
+	// into source evidence or advance the board cursor. Keeping this fail-closed
+	// also makes the recovery path explicit instead of silently dropping older
+	// comments from a card that may drive an operational decision.
+	for _, card := range cards {
+		if len(card.Actions) >= trelloCommentLimit {
+			return nil, "", fmt.Errorf("trello card %q returned %d comments at the per-card limit of %d; sync is potentially truncated", firstNonEmpty(strings.TrimSpace(card.Name), strings.TrimSpace(card.ID)), len(card.Actions), trelloCommentLimit)
+		}
 	}
 
 	boardName := firstNonEmpty(strings.TrimSpace(board.Name), boardID)
@@ -226,10 +259,40 @@ func fetchTrelloSource(source *models.ConnectedSource) ([]ImportItem, string, er
 	return items, nextCursor, nil
 }
 
+// validateTrelloReadOnlyToken verifies the permission boundary reported by
+// Trello before HAI reads a board. HAI itself never writes to Trello, but an
+// over-privileged token must also be rejected instead of being silently used.
+func validateTrelloReadOnlyToken(ctx context.Context, base *url.URL, key, token string) error {
+	var info trelloTokenInfo
+	if err := trelloGetJSONContext(ctx, base, key, token, "/1/tokens/"+url.PathEscape(token), nil, &info); err != nil {
+		return fmt.Errorf("verify Trello token permissions: %w", err)
+	}
+	if len(info.Permissions) == 0 {
+		return fmt.Errorf("Trello token did not report any permissions; a least-privilege read-only token is required")
+	}
+	for _, permission := range info.Permissions {
+		modelType := firstNonEmpty(strings.TrimSpace(permission.ModelType), "an unknown resource")
+		if permission.Write {
+			return fmt.Errorf("Trello token has write permission on %s; configure a least-privilege read-only token", modelType)
+		}
+		if !permission.Read {
+			return fmt.Errorf("Trello token lacks read permission on %s", modelType)
+		}
+	}
+	return nil
+}
+
 func trelloImportItem(card trelloCard, boardName, listName, projectKey string) ImportItem {
 	list := firstNonEmpty(strings.TrimSpace(listName), "(unknown list)")
 	labels := trelloLabelNames(card.Labels)
-	provenance := firstNonEmpty(strings.TrimSpace(card.ShortURL), strings.TrimSpace(card.URL))
+	// Trello normally returns shortUrl, but provenance is mandatory for every
+	// imported source item. Keep a canonical card link even when a partial API
+	// response omits both URL fields.
+	provenance := firstNonEmpty(
+		strings.TrimSpace(card.ShortURL),
+		strings.TrimSpace(card.URL),
+		"https://trello.com/c/"+url.PathEscape(strings.TrimSpace(card.ID)),
+	)
 	lines := []string{
 		"Trello card: " + card.Name,
 		"Board: " + boardName,
@@ -398,6 +461,10 @@ func trelloBaseURL() (*url.URL, error) {
 // out. Credentials are attached as query parameters (Trello's auth scheme) and
 // are never included in returned error messages.
 func trelloGetJSON(base *url.URL, key, token, resourcePath string, query url.Values, out any) error {
+	return trelloGetJSONContext(context.Background(), base, key, token, resourcePath, query, out)
+}
+
+func trelloGetJSONContext(ctx context.Context, base *url.URL, key, token, resourcePath string, query url.Values, out any) error {
 	target := *base
 	target.Path = strings.TrimRight(base.Path, "/") + resourcePath
 	if query == nil {
@@ -407,7 +474,7 @@ func trelloGetJSON(base *url.URL, key, token, resourcePath string, query url.Val
 	query.Set("token", token)
 	target.RawQuery = query.Encode()
 
-	request, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return err
 	}

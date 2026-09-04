@@ -135,6 +135,15 @@ func TestGovernanceMigrationTailPreservesSemanticUpgradeOrder(t *testing.T) {
 		"0057_workflow_reminder_single_delivery_authorization",
 		"0058_workflow_coordination_draft_binding",
 		"0059_agent_team_message_acknowledgments",
+		"0060_connected_source_scheduler_index",
+		"0061_connected_source_owner_activity_indexes",
+		"0062_context_memory_owner_query_indexes",
+		"0063_verification_owner_run_indexes",
+		"0064_connected_source_history_query_indexes",
+		"0065_host_runtime_jobs",
+		"0066_automation_launch_execution_reference",
+		"0067_automation_launch_event_idempotency",
+		"0068_execution_authorization_owner_control_approval",
 	}
 	entries, err := fs.ReadDir(Files, "pre")
 	if err != nil {

@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"automation-hub-backend/internal/apierror"
 	"automation-hub-backend/internal/safety"
 	"net/http"
 	"strconv"
@@ -46,7 +47,7 @@ func (h *Handler) Policy(c *gin.Context) {
 func (h *Handler) ProviderProbes(c *gin.Context) {
 	probes, err := h.service.ProbeAndRecordProviders()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "provider probes are unavailable")})
 		return
 	}
 	c.JSON(http.StatusOK, probes)
@@ -56,7 +57,7 @@ func (h *Handler) ProviderProbeHistory(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
 	probes, err := h.service.ProviderProbeHistory(limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "provider probe history is unavailable")})
 		return
 	}
 	c.JSON(http.StatusOK, probes)
@@ -66,7 +67,7 @@ func (h *Handler) ModelMaintenanceHistory(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
 	records, err := h.service.ModelMaintenanceHistory(limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "model maintenance history is unavailable")})
 		return
 	}
 	c.JSON(http.StatusOK, records)
@@ -87,7 +88,7 @@ func (h *Handler) GenerationHistory(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "30"))
 	records, err := h.service.GenerationHistory(limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "generation history is unavailable")})
 		return
 	}
 	c.JSON(http.StatusOK, records)
@@ -96,12 +97,12 @@ func (h *Handler) GenerationHistory(c *gin.Context) {
 func (h *Handler) Route(c *gin.Context) {
 	var request RouteRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid model-routing request"})
 		return
 	}
 	decision, err := h.service.Route(request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "model routing could not be completed")})
 		return
 	}
 	c.JSON(http.StatusOK, decision)
@@ -110,7 +111,7 @@ func (h *Handler) Route(c *gin.Context) {
 func (h *Handler) Generate(c *gin.Context) {
 	var request GenerateRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid model-generation request"})
 		return
 	}
 	// Public API callers may request generation, but paid-model approval must
@@ -119,14 +120,14 @@ func (h *Handler) Generate(c *gin.Context) {
 	if h.effectContextResolver != nil {
 		effectContext, err := h.effectContextResolver(c)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "an authorized effect context is required"})
 			return
 		}
 		request.EffectContext = &effectContext
 	}
 	result, err := h.service.Generate(request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "model generation could not be completed")})
 		return
 	}
 	c.JSON(http.StatusOK, result)

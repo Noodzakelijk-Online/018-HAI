@@ -2,6 +2,7 @@ package llm
 
 import (
 	"automation-hub-backend/internal/models"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -128,6 +129,17 @@ func TestPaidProviderDisabledByDefault(t *testing.T) {
 		if skipped.ProviderID == "paid-provider" && skipped.Reason == "" {
 			t.Fatalf("paid provider skip should include a reason")
 		}
+	}
+}
+
+func TestDefaultPolicyDoesNotPresentCustomPaidProviderAsImplemented(t *testing.T) {
+	policy := defaultPolicy()
+	provider := policy.Providers[providerIndex(t, policy, "paid-provider")]
+	if provider.Enabled || provider.Configured {
+		t.Fatalf("custom paid provider must remain disabled and unconfigured by default: %#v", provider)
+	}
+	if strings.Contains(strings.ToLower(provider.Name), "placeholder") {
+		t.Fatalf("custom paid provider name must not imply a placeholder integration: %q", provider.Name)
 	}
 }
 
@@ -1042,6 +1054,36 @@ func TestRunDueModelMaintenanceRefreshesEveryEnabledConfiguredLocalModel(t *test
 	second := service.RunDueModelMaintenance()
 	if second.Checked != 0 || second.Reused != 2 || pulls["phi3:mini"] != 1 || pulls["qwen2.5:7b"] != 1 {
 		t.Fatalf("daily cache was not reused: run=%#v pulls=%#v", second, pulls)
+	}
+}
+
+func TestModelMaintenanceSkipsExternalWorkWhenPersistentLeaseIsHeld(t *testing.T) {
+	t.Setenv("LLM_MODEL_MAINTENANCE_ENABLED", "true")
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		http.Error(w, "the competing process owns maintenance", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	policy := testPolicyWithoutEndpoints()
+	policy.Providers[0].EndpointURL = server.URL
+	policy.Providers[0].Models = []Model{{ID: "phi3:mini", Name: "Phi", Tier: TierLocal, Enabled: true}}
+	history := &leasedModelMaintenanceRepository{
+		fakeModelMaintenanceRepository: &fakeModelMaintenanceRepository{},
+		acquired:                       false,
+	}
+	service := &Service{policy: policy, maintenanceHistory: history, maintenanceRunning: map[string]*sync.Mutex{}}
+
+	result := service.ensureModelFresh(policy.Providers[0], policy.Providers[0].Models[0])
+	if result.Status != "in_progress" || !result.BlocksExecution {
+		t.Fatalf("maintenance result = %#v, want blocked in-progress result", result)
+	}
+	if calls != 0 {
+		t.Fatalf("maintenance contacted the provider %d time(s) while another process held its lease", calls)
+	}
+	if len(history.records) != 0 {
+		t.Fatalf("maintenance persisted %#v, want no misleading failure record", history.records)
 	}
 }
 
@@ -2074,6 +2116,17 @@ type fakeProbeHistoryRepository struct {
 
 type fakeModelMaintenanceRepository struct {
 	records []models.LLMModelMaintenance
+}
+
+type leasedModelMaintenanceRepository struct {
+	*fakeModelMaintenanceRepository
+	acquired bool
+	err      error
+	releases int
+}
+
+func (r *leasedModelMaintenanceRepository) AcquireModelMaintenanceLease(_ context.Context, _, _ string) (func(), bool, error) {
+	return func() { r.releases++ }, r.acquired, r.err
 }
 
 type fakeGenerationHistoryRepository struct {

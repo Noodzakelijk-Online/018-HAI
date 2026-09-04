@@ -2,7 +2,6 @@ import { NgModule } from "@angular/core";
 import { RouterModule, Routes } from "@angular/router";
 import { authGuard } from "./services/auth/guards/auth.guard";
 import { RedirectIfLoggedGuard } from "./services/auth/guards/login.guard";
-import { AppShellComponent } from './control-room/app-shell.component';
 
 const authenticatedRoutes: Routes = [
   {
@@ -232,7 +231,7 @@ const routes: Routes = [
   },
   {
     path: '',
-    component: AppShellComponent,
+    loadComponent: () => import('./control-room/app-shell.component').then((m) => m.AppShellComponent),
     children: [
       ...authenticatedRoutes,
       { path: "", redirectTo: "control-center", pathMatch: "full" },

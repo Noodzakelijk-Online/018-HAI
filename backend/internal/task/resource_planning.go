@@ -89,9 +89,14 @@ func (bridge *resourcePlanningBridge) PlanResources(request ResourcePlanningRequ
 
 	tasks := make([]resourceplanner.Task, 0, len(request.Steps))
 	previous := ""
+	automaticRuntime := admittedAutomaticRuntime(request.Risk)
 	for index, step := range request.Steps {
 		optimistic, expected, pessimistic := resourceDuration(request.Difficulty, step)
-		capacityNeedsReview := request.Capacity != nil && request.Capacity.NeedsReview
+		// Personal-capacity uncertainty applies when the plan depends on Robert's
+		// time. A bounded Level 8 deterministic runtime is independently
+		// authorized and must not be converted into a human approval gate merely
+		// because no personal capacity observation has been recorded yet.
+		capacityNeedsReview := request.Capacity != nil && request.Capacity.NeedsReview && !automaticRuntime
 		planned := resourceplanner.Task{
 			ID:       resourceStepID(index),
 			Duration: resourceplanner.DurationEstimate{OptimisticMinutes: optimistic, ExpectedMinutes: expected, PessimisticMinutes: pessimistic, Basis: "bounded task difficulty and step type estimate"},
@@ -157,6 +162,15 @@ func (bridge *resourcePlanningBridge) PlanResources(request ResourcePlanningRequ
 	if ownerIdentity == "" {
 		ownerIdentity = "system:unowned-planning"
 	}
+	uncertaintyThreshold := int64(5000)
+	if automaticRuntime {
+		// The planner's generic duration range is intentionally conservative. It
+		// must not convert that estimate alone into a human-approval requirement
+		// after the task and framework gates have already admitted a bounded,
+		// reversible Level 8 runtime. Capacity, budget, and explicit-risk flags
+		// still flow through unchanged.
+		uncertaintyThreshold = 0
+	}
 	decision, err := bridge.planner.Plan(resourceplanner.Request{
 		OwnerIdentity:  ownerIdentity,
 		WorkspaceID:    workspaceID,
@@ -168,7 +182,7 @@ func (bridge *resourcePlanningBridge) PlanResources(request ResourcePlanningRequ
 		Tasks:          tasks,
 		Availability:   availability,
 		Budget:         budget,
-		ApprovalPolicy: resourceplanner.ApprovalPolicy{SoftDeadlineMiss: true, UncertaintyThreshold: 5000},
+		ApprovalPolicy: resourceplanner.ApprovalPolicy{SoftDeadlineMiss: true, UncertaintyThreshold: uncertaintyThreshold},
 	})
 	if err != nil {
 		return nil, err
@@ -177,6 +191,15 @@ func (bridge *resourcePlanningBridge) PlanResources(request ResourcePlanningRequ
 		return nil, fmt.Errorf("resource planner violated the advisory-only authority boundary")
 	}
 	return &decision, nil
+}
+
+func admittedAutomaticRuntime(risk RiskAssessment) bool {
+	return strings.EqualFold(strings.TrimSpace(risk.Level), "low") &&
+		risk.AllowedNow &&
+		!risk.ApprovalRequired &&
+		!risk.ApprovalGranted &&
+		risk.RequiredFrameworkAutonomy >= 8 &&
+		risk.FrameworkAutonomyCeiling >= risk.RequiredFrameworkAutonomy
 }
 
 func ownerCapacityWindows(start, end time.Time, busy []source.CalendarBusyInterval) []resourceplanner.CapacityWindow {

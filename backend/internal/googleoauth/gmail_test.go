@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -94,6 +95,31 @@ func TestGmailExtractsBodyAndBoundedTextAttachment(t *testing.T) {
 	}
 }
 
+func TestGmailBoundsAttachmentRecordsAndTotalExtractedText(t *testing.T) {
+	attachmentData := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("a", maxGmailAttachmentBytes)))
+	parts := make([]gmailMessagePart, 0, maxGmailAttachmentRecords+1)
+	for index := 0; index < maxGmailAttachmentRecords+1; index++ {
+		part := gmailMessagePart{MimeType: "text/plain", Filename: "attachment-" + strconv.Itoa(index) + ".txt"}
+		part.Body.Size = maxGmailAttachmentBytes
+		part.Body.Data = attachmentData
+		parts = append(parts, part)
+	}
+	attachments := []GmailAttachment{}
+	plain, html := []string{}, []string{}
+	budget := maxGmailAttachmentContentTotalBytes
+	(GmailClient{}).collectPart(context.Background(), "m1", gmailMessagePart{Parts: parts}, &plain, &html, &attachments, &budget)
+	if len(attachments) != maxGmailAttachmentRecords {
+		t.Fatalf("attachment records = %d, want %d", len(attachments), maxGmailAttachmentRecords)
+	}
+	extractedBytes := 0
+	for _, attachment := range attachments {
+		extractedBytes += len(attachment.Content)
+	}
+	if extractedBytes > maxGmailAttachmentContentTotalBytes {
+		t.Fatalf("extracted attachment bytes = %d, exceeds %d", extractedBytes, maxGmailAttachmentContentTotalBytes)
+	}
+}
+
 func TestGmailFetchRecentParsesHeadersAndSnippet(t *testing.T) {
 	srv := mockGmail(t)
 	defer srv.Close()
@@ -135,6 +161,19 @@ func TestGmailSurfacesExpiredToken(t *testing.T) {
 	_, err := client.ListRecentMessageIDs(context.Background(), 5, "")
 	if err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("expected a clear 401/expired error, got %v", err)
+	}
+}
+
+func TestGmailRejectsResponseOverSafetyLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"payload":"` + strings.Repeat("x", maxGmailResponseBytes) + `"}`))
+	}))
+	defer server.Close()
+
+	err := (GmailClient{AccessToken: "token", BaseURL: server.URL}).getJSON(context.Background(), "/users/me/profile", &struct{}{})
+	if err == nil || !strings.Contains(err.Error(), "response exceeded") {
+		t.Fatalf("getJSON error = %v, want explicit response safety limit", err)
 	}
 }
 

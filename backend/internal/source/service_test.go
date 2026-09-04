@@ -4,6 +4,7 @@ import (
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/pursuit"
+	"automation-hub-backend/internal/safety"
 	"automation-hub-backend/internal/semantic"
 	"automation-hub-backend/internal/workflow"
 	"context"
@@ -414,6 +415,26 @@ func TestSyncLocalFolderBlocksTraversalOutsideAllowlistedRoot(t *testing.T) {
 	if !repo.hasAudit("source.sync_failed") {
 		t.Fatalf("expected failed sync audit record")
 	}
+	if strings.Contains(repo.jobs[0].Message, root) {
+		t.Fatalf("job message leaked local root: %q", repo.jobs[0].Message)
+	}
+	for _, audit := range repo.auditLogs {
+		if audit.Action == "source.sync_failed" && (audit.Message != repo.jobs[0].Message || strings.Contains(audit.Message, root)) {
+			t.Fatalf("audit message = %q, want redacted job message", audit.Message)
+		}
+	}
+}
+
+func TestRedactSourceErrorDoesNotRetainSecretsOrFilesystemDetails(t *testing.T) {
+	err := redactSourceError(errors.New(`fetch failed https://provider.example/token?access_token=secret at C:\\private\\records`))
+	if err == nil {
+		t.Fatal("expected redacted error")
+	}
+	for _, forbidden := range []string{"access_token=secret", "C:\\\\private", "records"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("redacted error leaked %q: %s", forbidden, err)
+		}
+	}
 }
 
 func TestSyncLocalFolderSkipsSymlinkEscape(t *testing.T) {
@@ -524,6 +545,9 @@ func TestRunDueScheduledSyncsForOwnerDoesNotTouchAnotherOwnersSources(t *testing
 	if err != nil {
 		t.Fatalf("RunDueScheduledSyncsForOwner: %v", err)
 	}
+	if repo.lastVisibleSourceOwner != "alice" {
+		t.Fatalf("owner scheduler was not filtered by owner in the repository: %q", repo.lastVisibleSourceOwner)
+	}
 	if run.Checked != 1 || run.Due != 1 || run.Completed != 1 || run.Failed != 0 {
 		t.Fatalf("owner run = %#v, want Alice-only successful sync", run)
 	}
@@ -573,6 +597,106 @@ func TestRunDueScheduledSyncsSkipsManualAndNotDueSources(t *testing.T) {
 	}
 }
 
+func TestScheduledSourceDueHonorsSourceLifecycle(t *testing.T) {
+	now := time.Now().UTC()
+	revokedAt := now.Add(-time.Minute)
+	base := models.ConnectedSource{
+		ID:            uuid.New(),
+		ConnectorKey:  "local-folder",
+		Name:          "Lifecycle-controlled source",
+		Category:      "local_folder",
+		Enabled:       true,
+		LocalOnly:     true,
+		Status:        "active",
+		SyncFrequency: "1m",
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(*models.ConnectedSource)
+		reason string
+	}{
+		{
+			name:   "disabled",
+			mutate: func(source *models.ConnectedSource) { source.Enabled = false },
+			reason: "source is disabled",
+		},
+		{
+			name:   "paused",
+			mutate: func(source *models.ConnectedSource) { source.Status = "paused" },
+			reason: "source is paused",
+		},
+		{
+			name:   "revoked status",
+			mutate: func(source *models.ConnectedSource) { source.Status = "revoked" },
+			reason: "source access was revoked",
+		},
+		{
+			name:   "revocation timestamp",
+			mutate: func(source *models.ConnectedSource) { source.RevokedAt = &revokedAt },
+			reason: "source access was revoked",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			source := base
+			testCase.mutate(&source)
+			if due, reason := scheduledSourceDue(source, now); due || reason != testCase.reason {
+				t.Fatalf("scheduledSourceDue() = (%v, %q), want (false, %q)", due, reason, testCase.reason)
+			}
+		})
+	}
+}
+
+func TestRevokedSourceCannotBeReactivatedThroughOrdinaryControls(t *testing.T) {
+	revokedAt := time.Now().UTC()
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: "json-feed", Name: "Revoked feed", Category: "api",
+		Enabled: false, Status: "revoked", RevokedAt: &revokedAt,
+	})
+	service := NewService(repo, nil)
+
+	enabled := true
+	if _, err := service.UpdateSource(sourceID, UpdateSourceRequest{Enabled: &enabled}); !errors.Is(err, ErrSourceRevoked) {
+		t.Fatalf("UpdateSource error = %v, want ErrSourceRevoked", err)
+	}
+	if _, err := service.Pause(sourceID, false); !errors.Is(err, ErrSourceRevoked) {
+		t.Fatalf("Pause resume error = %v, want ErrSourceRevoked", err)
+	}
+	stored, err := repo.FindSource(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Enabled || stored.Status != "revoked" || stored.RevokedAt == nil {
+		t.Fatalf("revoked source was mutated: %#v", stored)
+	}
+}
+
+func TestDueSourcesExcludesPausedSourcesBeforeScheduling(t *testing.T) {
+	now := time.Now().UTC()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{
+			ID: uuid.New(), ConnectorKey: "local-folder", Name: "Active source", Category: "local_folder",
+			Enabled: true, LocalOnly: true, Status: "active", SyncFrequency: "1m",
+		},
+		&models.ConnectedSource{
+			ID: uuid.New(), ConnectorKey: "local-folder", Name: "Paused source", Category: "local_folder",
+			Enabled: true, LocalOnly: true, Status: "paused", SyncFrequency: "1m",
+		},
+	)
+	service := NewService(repo, &fakeSourceMemoryService{})
+
+	due, err := service.DueSources(now)
+	if err != nil {
+		t.Fatalf("DueSources: %v", err)
+	}
+	if len(due) != 1 || due[0].Name != "Active source" {
+		t.Fatalf("DueSources = %#v, want only the active source", due)
+	}
+}
+
 func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	connectors, err := service.Connectors()
@@ -617,6 +741,30 @@ func TestConnectorsExposeOperationalLocalAdapters(t *testing.T) {
 			t.Fatalf("connector %s missing from catalog", key)
 		}
 	}
+}
+
+func TestConnectorsMarkUnconfiguredTrelloAsConfigurationRequired(t *testing.T) {
+	t.Setenv(trelloAPIKeyEnv, "")
+	t.Setenv(trelloReadTokenEnv, "")
+
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	connectors, err := service.Connectors()
+	if err != nil {
+		t.Fatalf("Connectors: %v", err)
+	}
+	for _, connector := range connectors {
+		if connector.ConnectorKey != trelloConnectorKey {
+			continue
+		}
+		if connector.AdapterStatus != AdapterConfigurationRequired {
+			t.Fatalf("Trello AdapterStatus = %q, want %q", connector.AdapterStatus, AdapterConfigurationRequired)
+		}
+		if !strings.Contains(connector.StatusReason, "implemented") {
+			t.Fatalf("Trello StatusReason = %q, want implemented adapter guidance", connector.StatusReason)
+		}
+		return
+	}
+	t.Fatal("Trello connector missing from catalog")
 }
 
 func TestCreateSourceAllowsOperationalEmailExportConnector(t *testing.T) {
@@ -691,6 +839,218 @@ func TestSyncGitHubImportsReadOnlyRepositoryRecords(t *testing.T) {
 	}
 }
 
+func TestGitHubSourcePaginatesBeforeCompletingAnImport(t *testing.T) {
+	var issuePages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/acme/demo":
+			if r.URL.Query().Get("page") != "1" {
+				http.Error(w, "repository page must be one", http.StatusBadRequest)
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":1,"full_name":"acme/demo","updated_at":"2026-07-09T10:00:00Z"}`))
+		case "/repos/acme/demo/issues":
+			page := r.URL.Query().Get("page")
+			issuePages = append(issuePages, page)
+			if page == "1" {
+				records := make([]string, 100)
+				for i := range records {
+					records[i] = fmt.Sprintf(`{"id":%d,"number":%d,"title":"Issue %d","updated_at":"2026-07-09T10:01:00Z"}`, i+10, i+10, i+10)
+				}
+				_, _ = w.Write([]byte("[" + strings.Join(records, ",") + "]"))
+				return
+			}
+			if page == "2" {
+				_, _ = w.Write([]byte(`[{"id":999,"number":999,"title":"Final issue","updated_at":"2026-07-09T10:02:00Z"}]`))
+				return
+			}
+			http.Error(w, "unexpected issue page", http.StatusBadRequest)
+		case "/repos/acme/demo/pulls", "/repos/acme/demo/commits":
+			_, _ = w.Write([]byte(`[]`))
+		case "/repos/acme/demo/actions/runs":
+			_, _ = w.Write([]byte(`{"workflow_runs":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("GITHUB_SOURCE_API_BASE_URL", server.URL)
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+
+	items, cursor, err := fetchGitHubSource(context.Background(), &models.ConnectedSource{ConnectorKey: "github", SyncTarget: "acme/demo"})
+	if err != nil {
+		t.Fatalf("fetchGitHubSource: %v", err)
+	}
+	if len(items) != 102 || cursor != "2026-07-09T10:02:00Z" {
+		t.Fatalf("items/cursor = %d/%q, want 102/latest issue timestamp", len(items), cursor)
+	}
+	if strings.Join(issuePages, ",") != "1,2" {
+		t.Fatalf("issue pages = %v, want [1 2]", issuePages)
+	}
+}
+
+func TestGitHubSourceFailsInsteadOfSilentlyTruncatingAtPageLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/acme/demo":
+			_, _ = w.Write([]byte(`{"id":1,"full_name":"acme/demo","updated_at":"2026-07-09T10:00:00Z"}`))
+		case "/repos/acme/demo/issues":
+			records := make([]string, githubSourcePageSize)
+			for i := range records {
+				records[i] = fmt.Sprintf(`{"id":%d,"number":%d,"title":"Issue %d","updated_at":"2026-07-09T10:01:00Z"}`, i+10, i+10, i+10)
+			}
+			_, _ = w.Write([]byte("[" + strings.Join(records, ",") + "]"))
+		default:
+			_, _ = w.Write([]byte(`[]`))
+		}
+	}))
+	defer server.Close()
+	t.Setenv("GITHUB_SOURCE_API_BASE_URL", server.URL)
+	t.Setenv("GITHUB_SOURCE_MAX_PAGES", "1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+
+	_, _, err := fetchGitHubSource(context.Background(), &models.ConnectedSource{ConnectorKey: "github", SyncTarget: "acme/demo"})
+	if err == nil || !strings.Contains(err.Error(), "safety limit") {
+		t.Fatalf("fetchGitHubSource error = %v, want explicit pagination safety limit", err)
+	}
+}
+
+func TestGitHubIssueRecordsExcludePullRequestsHandledByTheirOwnEndpoint(t *testing.T) {
+	records := githubRecords([]any{
+		map[string]any{"id": float64(1), "title": "Issue"},
+		map[string]any{"id": float64(2), "title": "Pull request", "pull_request": map[string]any{"url": "https://api.github.com/repos/acme/demo/pulls/2"}},
+	}, "issue")
+	if len(records) != 1 || githubString(records[0], "title") != "Issue" {
+		t.Fatalf("issue records = %#v, want only the standalone issue", records)
+	}
+}
+
+func TestGitHubIssuePaginationUsesTheUnfilteredPageSize(t *testing.T) {
+	var issuePages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/acme/demo":
+			_, _ = w.Write([]byte(`{"id":1,"full_name":"acme/demo","updated_at":"2026-07-09T10:00:00Z"}`))
+		case "/repos/acme/demo/issues":
+			page := r.URL.Query().Get("page")
+			issuePages = append(issuePages, page)
+			if page == "1" {
+				records := make([]string, githubSourcePageSize)
+				for i := 0; i < githubSourcePageSize-1; i++ {
+					records[i] = fmt.Sprintf(`{"id":%d,"number":%d,"title":"Issue %d","updated_at":"2026-07-09T10:01:00Z"}`, i+10, i+10, i+10)
+				}
+				records[githubSourcePageSize-1] = `{"id":999,"number":999,"title":"Pull request","pull_request":{"url":"https://api.github.com/repos/acme/demo/pulls/999"},"updated_at":"2026-07-09T10:01:00Z"}`
+				_, _ = w.Write([]byte("[" + strings.Join(records, ",") + "]"))
+				return
+			}
+			if page == "2" {
+				_, _ = w.Write([]byte(`[{"id":1000,"number":1000,"title":"Later issue","updated_at":"2026-07-09T10:02:00Z"}]`))
+				return
+			}
+			http.Error(w, "unexpected issue page", http.StatusBadRequest)
+		case "/repos/acme/demo/pulls", "/repos/acme/demo/commits":
+			_, _ = w.Write([]byte(`[]`))
+		case "/repos/acme/demo/actions/runs":
+			_, _ = w.Write([]byte(`{"workflow_runs":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("GITHUB_SOURCE_API_BASE_URL", server.URL)
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+
+	items, _, err := fetchGitHubSource(context.Background(), &models.ConnectedSource{ConnectorKey: "github", SyncTarget: "acme/demo"})
+	if err != nil {
+		t.Fatalf("fetchGitHubSource: %v", err)
+	}
+	if len(items) != 101 || strings.Join(issuePages, ",") != "1,2" {
+		t.Fatalf("items/pages = %d/%v, want 101 records including page two and issue pages [1 2]", len(items), issuePages)
+	}
+}
+
+func TestSourceHTTPTransportReusesConnectionsOnlyWithinTheSamePolicy(t *testing.T) {
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+	t.Setenv("CONNECTED_SOURCE_HTTP_TIMEOUT_SECONDS", "20")
+	first := sourceHTTPTransport()
+	if next := sourceHTTPTransport(); next != first {
+		t.Fatal("expected the source HTTP transport to be reused for the same policy")
+	}
+
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "api.github.com")
+	if next := sourceHTTPTransport(); next == first {
+		t.Fatal("expected a new transport when the source network policy changes")
+	}
+}
+
+func TestSourceSyncTimeoutUsesBoundedConfiguration(t *testing.T) {
+	t.Setenv("CONNECTED_SOURCE_SYNC_TIMEOUT_SECONDS", "90")
+	if got := sourceSyncTimeout(); got != 90*time.Second {
+		t.Fatalf("sourceSyncTimeout() = %s, want 90s", got)
+	}
+
+	for _, value := range []string{"", "29", "1801", "not-a-number"} {
+		t.Setenv("CONNECTED_SOURCE_SYNC_TIMEOUT_SECONDS", value)
+		if got := sourceSyncTimeout(); got != 10*time.Minute {
+			t.Fatalf("sourceSyncTimeout() with %q = %s, want 10m", value, got)
+		}
+	}
+}
+
+func TestSyncContextStopsBeforeAnyWorkWhenRequestIsCancelled(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: "local-folder", Name: "Selected folder", Enabled: true, LocalOnly: true, Status: "active", SyncTarget: ".",
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	service, ok := NewService(repo, &fakeSourceMemoryService{}).(ContextSyncService)
+	if !ok {
+		t.Fatal("default source service must support context-aware sync")
+	}
+	_, err := service.SyncContext(ctx, sourceID, ImportRequest{Mode: ModeManualImport})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SyncContext error = %v, want context.Canceled", err)
+	}
+}
+
+func TestSyncRedactsAdapterErrorsBeforeReturningAndPersisting(t *testing.T) {
+	sourceID := uuid.New()
+	secret := "token=super-secret-source-value"
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID:           sourceID,
+		ConnectorKey: "json-feed",
+		Name:         "Remote feed",
+		Enabled:      true,
+		LocalOnly:    false,
+		Status:       "active",
+		SyncTarget:   "http://127.0.0.1:1/feed?" + secret,
+	})
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL", "true")
+
+	result, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Mode: ModeIncrementalSync})
+	if err == nil || result != nil {
+		t.Fatalf("Sync result/error = %#v/%v, want nil/redacted error", result, err)
+	}
+	if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "token= [REDACTED]") {
+		t.Fatalf("returned error = %q, want redacted token", err)
+	}
+	if len(repo.jobs) != 1 || strings.Contains(repo.jobs[0].Message, secret) || !strings.Contains(repo.jobs[0].Message, "token= [REDACTED]") {
+		t.Fatalf("sync job = %#v, want redacted token", repo.jobs)
+	}
+	if len(repo.auditLogs) == 0 || strings.Contains(repo.auditLogs[len(repo.auditLogs)-1].Message, secret) || !strings.Contains(repo.auditLogs[len(repo.auditLogs)-1].Message, "token= [REDACTED]") {
+		t.Fatalf("audit logs = %#v, want redacted token", repo.auditLogs)
+	}
+}
+
 func TestCreateSourceAllowsOperationalLocalFolder(t *testing.T) {
 	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
 	source, err := service.CreateSource(CreateSourceRequest{
@@ -706,6 +1066,132 @@ func TestCreateSourceAllowsOperationalLocalFolder(t *testing.T) {
 	}
 	if source.ConnectorKey != "local-folder" || !source.Enabled {
 		t.Fatalf("source = %#v, want enabled local-folder", source)
+	}
+}
+
+func TestCreateSourceRequiresExplicitLocalFolderTarget(t *testing.T) {
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	_, err := service.CreateSource(CreateSourceRequest{
+		ConnectorKey:  "local-folder",
+		Name:          "Local folder",
+		Enabled:       true,
+		LocalOnly:     true,
+		SyncFrequency: "manual",
+	})
+	if err == nil || !strings.Contains(err.Error(), "explicit selected folder") {
+		t.Fatalf("CreateSource error = %v, want explicit folder requirement", err)
+	}
+}
+
+func TestCreateSourceRejectsUnsupportedSyncFrequency(t *testing.T) {
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	_, err := service.CreateSource(CreateSourceRequest{
+		ConnectorKey:  "local-folder",
+		Name:          "Local folder",
+		Enabled:       true,
+		LocalOnly:     true,
+		SyncFrequency: "after-lunch",
+		SyncTarget:    ".",
+	})
+	if err == nil || !strings.Contains(err.Error(), "sync frequency") {
+		t.Fatalf("CreateSource error = %v, want unsupported sync frequency", err)
+	}
+}
+
+func TestCreateSourceNormalizesManualSyncFrequency(t *testing.T) {
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	source, err := service.CreateSource(CreateSourceRequest{
+		ConnectorKey:  "local-folder",
+		Name:          "Local folder",
+		Enabled:       true,
+		LocalOnly:     true,
+		SyncFrequency: "off",
+		SyncTarget:    ".",
+	})
+	if err != nil {
+		t.Fatalf("CreateSource: %v", err)
+	}
+	if source.SyncFrequency != "manual" {
+		t.Fatalf("SyncFrequency = %q, want manual", source.SyncFrequency)
+	}
+}
+
+func TestValidatedSyncFrequencyRejectsSchedulesForManualOnlyConnectors(t *testing.T) {
+	for _, connectorKey := range []string{"whisper-audio", doclingDocumentsConnectorKey} {
+		t.Run(connectorKey, func(t *testing.T) {
+			_, err := validatedSyncFrequency(connectorKey, "hourly")
+			if err == nil || !strings.Contains(err.Error(), "operator-triggered only") {
+				t.Fatalf("validatedSyncFrequency(%q) error = %v, want manual-only rejection", connectorKey, err)
+			}
+			frequency, err := validatedSyncFrequency(connectorKey, "manual")
+			if err != nil || frequency != "manual" {
+				t.Fatalf("manual frequency = %q, %v; want manual, nil", frequency, err)
+			}
+		})
+	}
+}
+
+func TestUpdateSourceRejectsUnsupportedSyncFrequency(t *testing.T) {
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, ConnectorKey: "local-folder", Name: "Local folder", Enabled: true,
+		LocalOnly: true, Status: "active", SyncFrequency: "1h", SyncTarget: ".",
+	})
+	service := NewService(repo, &fakeSourceMemoryService{})
+	_, err := service.UpdateSource(sourceID, UpdateSourceRequest{SyncFrequency: "eventually"})
+	if err == nil || !strings.Contains(err.Error(), "sync frequency") {
+		t.Fatalf("UpdateSource error = %v, want unsupported sync frequency", err)
+	}
+	if got := repo.sources[sourceID].SyncFrequency; got != "1h" {
+		t.Fatalf("stored SyncFrequency = %q, want unchanged 1h", got)
+	}
+}
+
+func TestCreateTrelloSourceRequiresConfiguredRemoteBoard(t *testing.T) {
+	service := NewService(newFakeSourceRepo(), &fakeSourceMemoryService{})
+	request := CreateSourceRequest{
+		OwnerIdentity: "alice",
+		ConnectorKey:  trelloConnectorKey,
+		Name:          "Automation board",
+		Enabled:       true,
+		LocalOnly:     false,
+		SyncFrequency: "1h",
+		SyncTarget:    "https://trello.com/b/abc123XY/automation-board",
+	}
+
+	if _, err := service.CreateSource(request); err == nil || !strings.Contains(err.Error(), trelloAPIKeyEnv) {
+		t.Fatalf("unconfigured Trello source error = %v, want credential guidance", err)
+	}
+
+	t.Setenv(trelloAPIKeyEnv, "test-key")
+	t.Setenv(trelloReadTokenEnv, "test-read-token")
+	created, err := service.CreateSource(request)
+	if err != nil {
+		t.Fatalf("configured Trello source: %v", err)
+	}
+	if created.LocalOnly || created.Category != "project_board" || created.SyncTarget != request.SyncTarget {
+		t.Fatalf("created Trello source = %#v", created)
+	}
+	healthService, ok := service.(ConnectionHealthService)
+	if !ok {
+		t.Fatal("default source service does not expose connection health")
+	}
+	health, err := healthService.ConnectionHealth(created.ID)
+	if err != nil {
+		t.Fatalf("Trello connection health: %v", err)
+	}
+	if health.Status != "configuration_ready" || health.Authorized || !strings.Contains(health.Reason, "run a sync") {
+		t.Fatalf("Trello health = %#v, want configured but unverified", health)
+	}
+
+	request.LocalOnly = true
+	if _, err := service.CreateSource(request); err == nil || !strings.Contains(err.Error(), "localOnly") {
+		t.Fatalf("local-only Trello source error = %v, want remote-only rejection", err)
+	}
+	request.LocalOnly = false
+	request.SyncTarget = "not a board"
+	if _, err := service.CreateSource(request); err == nil || !strings.Contains(err.Error(), "board id") {
+		t.Fatalf("invalid Trello target error = %v, want board target rejection", err)
 	}
 }
 
@@ -1393,6 +1879,61 @@ func TestSyncRejectsOverlappingRunForSameSource(t *testing.T) {
 	}
 }
 
+func TestSyncRejectsUnavailablePersistentLeaseBeforeCreatingJob(t *testing.T) {
+	sourceID := uuid.New()
+	repo := &leasedSourceRepo{
+		fakeSourceRepo: newFakeSourceRepo(&models.ConnectedSource{
+			ID:           sourceID,
+			ConnectorKey: "email",
+			Name:         "Project mailbox",
+			Category:     "email",
+			Enabled:      true,
+			LocalOnly:    true,
+			Status:       "active",
+		}),
+		acquired: false,
+	}
+
+	_, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "message-1",
+		Title:      "A message",
+		Content:    "Follow up on the project plan.",
+	}}})
+	if !errors.Is(err, ErrSyncInProgress) {
+		t.Fatalf("Sync error = %v, want ErrSyncInProgress", err)
+	}
+	if len(repo.jobs) != 0 {
+		t.Fatalf("jobs = %d, want 0 when persistent lease is unavailable", len(repo.jobs))
+	}
+}
+
+func TestSyncReleasesPersistentLeaseAfterCompletion(t *testing.T) {
+	sourceID := uuid.New()
+	repo := &leasedSourceRepo{
+		fakeSourceRepo: newFakeSourceRepo(&models.ConnectedSource{
+			ID:           sourceID,
+			ConnectorKey: "email",
+			Name:         "Project mailbox",
+			Category:     "email",
+			Enabled:      true,
+			LocalOnly:    true,
+			Status:       "active",
+		}),
+		acquired: true,
+	}
+
+	if _, err := NewService(repo, &fakeSourceMemoryService{}).Sync(sourceID, ImportRequest{Items: []ImportItem{{
+		ExternalID: "message-1",
+		Title:      "A message",
+		Content:    "Follow up on the project plan.",
+	}}}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if repo.releases != 1 {
+		t.Fatalf("lease releases = %d, want 1", repo.releases)
+	}
+}
+
 func TestSyncCreatesSeparateWorkflowCandidatesForSharedSourceURI(t *testing.T) {
 	sourceID := uuid.New()
 	repo := newFakeSourceRepo(&models.ConnectedSource{
@@ -1968,16 +2509,38 @@ func writeTestFile(t *testing.T, path, content string) {
 }
 
 type fakeSourceRepo struct {
-	connectors              map[string]models.SourceConnector
-	sources                 map[uuid.UUID]*models.ConnectedSource
-	jobs                    []models.SourceSyncJob
-	rawItems                map[uuid.UUID]*models.SourceRawItem
-	extractions             map[uuid.UUID]*models.SourceExtraction
-	index                   []models.SourceIndexEntry
-	lastExtractionSourceIDs []uuid.UUID
-	auditLogs               []models.SourceAuditLog
-	deleteExtractionErr     error
-	oauthTokens             map[uuid.UUID]*models.SourceOAuthToken
+	connectors                 map[string]models.SourceConnector
+	sources                    map[uuid.UUID]*models.ConnectedSource
+	jobs                       []models.SourceSyncJob
+	rawItems                   map[uuid.UUID]*models.SourceRawItem
+	extractions                map[uuid.UUID]*models.SourceExtraction
+	index                      []models.SourceIndexEntry
+	lastExtractionSourceIDs    []uuid.UUID
+	lastVisibleSourceOwner     string
+	lastMutableSourceID        uuid.UUID
+	lastMutableSourceOwner     string
+	lastMutableExtractionID    uuid.UUID
+	lastMutableExtractionOwner string
+	lastSyncJobSourceIDs       []uuid.UUID
+	lastSyncJobLimit           int
+	lastAuditLogSourceIDs      []uuid.UUID
+	lastAuditLogLimit          int
+	auditLogs                  []models.SourceAuditLog
+	deleteExtractionErr        error
+	oauthTokens                map[uuid.UUID]*models.SourceOAuthToken
+	oauthTokenSingleQueries    int
+	oauthTokenBatchQueries     int
+}
+
+type leasedSourceRepo struct {
+	*fakeSourceRepo
+	acquired bool
+	err      error
+	releases int
+}
+
+func (r *leasedSourceRepo) AcquireSourceSyncLease(_ context.Context, _ uuid.UUID) (func(), bool, error) {
+	return func() { r.releases++ }, r.acquired, r.err
 }
 
 type fakeSemanticService struct {
@@ -2025,11 +2588,23 @@ func (r *fakeSourceRepo) SaveOAuthToken(token *models.SourceOAuthToken) error {
 }
 
 func (r *fakeSourceRepo) FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error) {
+	r.oauthTokenSingleQueries++
 	if token, ok := r.oauthTokens[sourceID]; ok {
 		copy := *token
 		return &copy, nil
 	}
 	return nil, gorm.ErrRecordNotFound
+}
+
+func (r *fakeSourceRepo) FindOAuthTokensForSources(sourceIDs []uuid.UUID) ([]models.SourceOAuthToken, error) {
+	r.oauthTokenBatchQueries++
+	tokens := make([]models.SourceOAuthToken, 0, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		if token, ok := r.oauthTokens[sourceID]; ok {
+			tokens = append(tokens, *token)
+		}
+	}
+	return tokens, nil
 }
 
 func (r *fakeSourceRepo) SaveConnector(connector *models.SourceConnector) (*models.SourceConnector, error) {
@@ -2107,7 +2682,24 @@ func (r *fakeSourceRepo) RevokeSource(
 func (r *fakeSourceRepo) FindSources(includeDisabled bool) ([]models.ConnectedSource, error) {
 	result := []models.ConnectedSource{}
 	for _, source := range r.sources {
-		if includeDisabled || (source.Enabled && source.Status != "revoked") {
+		if includeDisabled || (source.Enabled && source.Status != "paused" && source.Status != "revoked") {
+			result = append(result, *source)
+		}
+	}
+	return result, nil
+}
+
+func (r *fakeSourceRepo) FindSourcesVisibleToOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	r.lastVisibleSourceOwner = strings.TrimSpace(ownerIdentity)
+	if r.lastVisibleSourceOwner == "" {
+		return r.FindSources(includeDisabled)
+	}
+	result := []models.ConnectedSource{}
+	for _, source := range r.sources {
+		if strings.TrimSpace(source.OwnerIdentity) != "" && source.OwnerIdentity != r.lastVisibleSourceOwner {
+			continue
+		}
+		if includeDisabled || (source.Enabled && source.Status != "paused" && source.Status != "revoked") {
 			result = append(result, *source)
 		}
 	}
@@ -2123,6 +2715,16 @@ func (r *fakeSourceRepo) FindSource(id uuid.UUID) (*models.ConnectedSource, erro
 	return &copied, nil
 }
 
+func (r *fakeSourceRepo) FindMutableSourceForOwner(id uuid.UUID, ownerIdentity string) (*models.ConnectedSource, error) {
+	r.lastMutableSourceID = id
+	r.lastMutableSourceOwner = strings.TrimSpace(ownerIdentity)
+	source, err := r.FindSource(id)
+	if err != nil || strings.TrimSpace(ownerIdentity) == "" || source.OwnerIdentity != strings.TrimSpace(ownerIdentity) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return source, nil
+}
+
 func (r *fakeSourceRepo) CreateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error) {
 	if job.ID == uuid.Nil {
 		job.ID = uuid.New()
@@ -2135,6 +2737,7 @@ func (r *fakeSourceRepo) CreateSyncJob(job *models.SourceSyncJob) (*models.Sourc
 }
 
 func (r *fakeSourceRepo) UpdateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error) {
+	job.Message = safety.RedactSecrets(job.Message)
 	job.UpdatedAt = time.Now().UTC()
 	for index := range r.jobs {
 		if r.jobs[index].ID == job.ID {
@@ -2152,6 +2755,25 @@ func (r *fakeSourceRepo) FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJ
 		if sourceID == nil || job.SourceID == *sourceID {
 			result = append(result, job)
 		}
+	}
+	return result, nil
+}
+
+func (r *fakeSourceRepo) FindSyncJobsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceSyncJob, error) {
+	r.lastSyncJobSourceIDs = append([]uuid.UUID(nil), sourceIDs...)
+	r.lastSyncJobLimit = limit
+	allowed := make(map[uuid.UUID]bool, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		allowed[sourceID] = true
+	}
+	result := make([]models.SourceSyncJob, 0, len(r.jobs))
+	for _, job := range r.jobs {
+		if allowed[job.SourceID] {
+			result = append(result, job)
+		}
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
 	}
 	return result, nil
 }
@@ -2228,6 +2850,18 @@ func (r *fakeSourceRepo) FindExtractionsForSources(sourceIDs []uuid.UUID, projec
 	return r.findExtractions(allowed, projectKey, includeArchived)
 }
 
+func (r *fakeSourceRepo) FindExtractionPageForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, int64, error) {
+	items, err := r.FindExtractionsForSources(sourceIDs, projectKey, includeArchived)
+	if err != nil {
+		return nil, 0, err
+	}
+	total := int64(len(items))
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, total, nil
+}
+
 func (r *fakeSourceRepo) findExtractions(sourceIDs map[uuid.UUID]bool, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
 	result := []models.SourceExtraction{}
 	for _, extraction := range r.extractions {
@@ -2252,6 +2886,20 @@ func (r *fakeSourceRepo) FindExtraction(id uuid.UUID) (*models.SourceExtraction,
 	}
 	copied := *extraction
 	return &copied, nil
+}
+
+func (r *fakeSourceRepo) FindMutableExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error) {
+	r.lastMutableExtractionID = id
+	r.lastMutableExtractionOwner = strings.TrimSpace(ownerIdentity)
+	extraction, err := r.FindExtraction(id)
+	if err != nil || strings.TrimSpace(ownerIdentity) == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	source, err := r.FindSource(extraction.SourceID)
+	if err != nil || source.OwnerIdentity != strings.TrimSpace(ownerIdentity) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return extraction, nil
 }
 
 func (r *fakeSourceRepo) DeleteExtractionForOwner(
@@ -2341,6 +2989,25 @@ func (r *fakeSourceRepo) FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAudi
 		if sourceID == nil || log.SourceID == *sourceID {
 			result = append(result, log)
 		}
+	}
+	return result, nil
+}
+
+func (r *fakeSourceRepo) FindAuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error) {
+	r.lastAuditLogSourceIDs = append([]uuid.UUID(nil), sourceIDs...)
+	r.lastAuditLogLimit = limit
+	allowed := make(map[uuid.UUID]bool, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		allowed[sourceID] = true
+	}
+	result := make([]models.SourceAuditLog, 0, len(r.auditLogs))
+	for _, log := range r.auditLogs {
+		if allowed[log.SourceID] {
+			result = append(result, log)
+		}
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
 	}
 	return result, nil
 }

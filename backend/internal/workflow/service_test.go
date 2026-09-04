@@ -213,7 +213,36 @@ func TestIntakeBindsSingleSuitableAutomationBeforeApproval(t *testing.T) {
 	}
 }
 
-func TestAmbiguousAutomationSelectionRequiresReviewedChoiceBeforeExactApproval(t *testing.T) {
+func TestIntakeRequiresExplicitSelectionForNamedSingleRuntime(t *testing.T) {
+	automationID := uuid.NewString()
+	runner := &selectingTaskRunner{
+		bindingTaskRunner: &bindingTaskRunner{fakeTaskRunner: &fakeTaskRunner{}},
+		candidates: []AutomationCandidate{{
+			ID: automationID, Name: "HAI backend readiness probe", RuntimeType: "api", Score: 20, Reason: "read-only readiness capability matched",
+		}},
+	}
+	service := NewServiceWithTaskRunner(newFakeWorkflowRepo(), runner)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "operator@example.com",
+		Input:         "Run the selected HAI backend readiness probe and record its read-only verification result. Do not send anything externally.",
+		SourceType:    "manual",
+		SourceID:      "e2e-readiness-single-runtime",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if record.Item.AutomationID != "" || record.Item.CurrentState != StateNeedsApproval {
+		t.Fatalf("explicit runtime selection was skipped: %#v", record.Item)
+	}
+	for index := range record.Proposals {
+		if isAutomationSelectionProposal(&record.Proposals[index]) {
+			return
+		}
+	}
+	t.Fatalf("selection proposal = %#v, want an explicit runtime selection", record.Proposals)
+}
+
+func TestAmbiguousLowRiskAutomationSelectionDoesNotCreateActionApproval(t *testing.T) {
 	firstID := uuid.NewString()
 	secondID := uuid.NewString()
 	runner := &selectingTaskRunner{
@@ -266,11 +295,63 @@ func TestAmbiguousAutomationSelectionRequiresReviewedChoiceBeforeExactApproval(t
 	if err != nil {
 		t.Fatalf("ResolveProposal: %v", err)
 	}
-	if resolved.Item.AutomationID != secondID || resolved.Item.ApprovalStatus != "approved" {
-		t.Fatalf("resolved item = %#v, want second runtime and approved", resolved.Item)
+	if resolved.Item.AutomationID != secondID || resolved.Item.CurrentState != StateReady || resolved.Item.RequiresApproval || resolved.Item.ApprovalStatus != "not_required" {
+		t.Fatalf("resolved item = %#v, want second runtime ready without action approval", resolved.Item)
 	}
-	if len(runner.bindingRequests) != 2 || runner.bindingRequests[0].AutomationID != secondID || runner.bindingRequests[1].AutomationID != secondID {
-		t.Fatalf("approval binding requests = %#v", runner.bindingRequests)
+	if len(runner.bindingRequests) != 0 {
+		t.Fatalf("selection-only workflow unexpectedly prepared approval bindings: %#v", runner.bindingRequests)
+	}
+}
+
+func TestReadOnlyReadinessSelectionPreservesAutomaticRuntimeAuthority(t *testing.T) {
+	firstID := uuid.NewString()
+	secondID := uuid.NewString()
+	runner := &selectingTaskRunner{
+		bindingTaskRunner: &bindingTaskRunner{fakeTaskRunner: &fakeTaskRunner{}},
+		candidates: []AutomationCandidate{
+			{ID: firstID, Name: "HAI backend readiness probe", Score: 20, Reason: "read-only readiness capability matched"},
+			{ID: secondID, Name: "Other readiness probe", Score: 10, Reason: "read-only readiness capability matched"},
+		},
+	}
+	service := NewServiceWithTaskRunner(newFakeWorkflowRepo(), runner)
+	record, err := service.Intake(IntakeRequest{
+		OwnerIdentity: "operator@example.com",
+		Input:         "Run the selected HAI backend readiness probe-12345 for E2E governed pursuit 12345 (e2e-governed-12345) and record its read-only verification result. Do not send anything externally.",
+		ProjectKey:    "e2e-governed-12345",
+		SourceType:    "manual",
+		SourceID:      "e2e-readiness-12345",
+	})
+	if err != nil {
+		t.Fatalf("Intake: %v", err)
+	}
+	if record.Item.RiskLevel != "low" || !record.Item.RequiresApproval || record.Item.ApprovalStatus != "pending" {
+		t.Fatalf("selection gate should be the only temporary blocker: %#v", record.Item)
+	}
+	var selection *models.WorkflowProposal
+	for index := range record.Proposals {
+		if isAutomationSelectionProposal(&record.Proposals[index]) {
+			selection = &record.Proposals[index]
+			break
+		}
+	}
+	if selection == nil {
+		t.Fatal("runtime-selection proposal was not created")
+	}
+	selectedOption := strings.Split(selection.Options, "\n")[0]
+	resolved, err := service.ResolveProposal(record.Item.ID, selection.ID, ProposalResolutionRequest{
+		Status:         "approved",
+		SelectedOption: selectedOption,
+		Actor:          "operator@example.com",
+		Note:           "Use the read-only readiness probe.",
+	})
+	if err != nil {
+		t.Fatalf("ResolveProposal: %v", err)
+	}
+	if resolved.Item.AutomationID != firstID || resolved.Item.CurrentState != StateReady || resolved.Item.RequiresApproval || resolved.Item.ApprovalStatus != "not_required" {
+		t.Fatalf("readiness selection changed execution authority: %#v", resolved.Item)
+	}
+	if len(runner.bindingRequests) != 0 {
+		t.Fatalf("readiness selection created an approval binding: %#v", runner.bindingRequests)
 	}
 }
 

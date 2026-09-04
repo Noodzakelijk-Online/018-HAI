@@ -4,6 +4,7 @@ import {HomeComponent} from './home.component';
 import { RouterModule, Routes } from '@angular/router';
 import {NzLayoutModule} from "ng-zorro-antd/layout";
 import {NzDropdownModule} from "ng-zorro-antd/dropdown";
+import {NzMenuModule} from "ng-zorro-antd/menu";
 import { NzDrawerModule } from 'ng-zorro-antd/drawer';
 import {NzIconModule} from "ng-zorro-antd/icon";
 import {NzCardModule} from "ng-zorro-antd/card";
@@ -31,6 +32,7 @@ const routes: Routes = [
         RouterModule.forChild(routes),
         NzLayoutModule,
         NzDropdownModule,
+        NzMenuModule,
         NzDrawerModule,
         NzIconModule,
         NzCardModule,

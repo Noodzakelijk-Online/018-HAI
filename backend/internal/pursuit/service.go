@@ -318,6 +318,7 @@ type AmbientOpportunityRouteResult struct {
 
 type Dashboard struct {
 	Counts               map[string]int64           `json:"counts"`
+	Pursuits             []models.Pursuit           `json:"pursuits,omitempty"`
 	DecisionQueue        []PursuitDashboardDecision `json:"decisionQueue"`
 	NeedsRobert          []PursuitListItem          `json:"needsRobert"`
 	VAReady              []PursuitListItem          `json:"vaReady"`
@@ -775,6 +776,7 @@ type workflowOwnerScopedRecordReader interface {
 type service struct {
 	repo                        Repository
 	workflowService             workflowIntakeService
+	lifeDomainLinker            LifeDomainLinker
 	portfolioCapacity           PortfolioCapacityReader
 	portfolioCapacityNow        func() time.Time
 	portfolioWorkflowAuthorizer portfolioWorkflowEffectAuthorizer
@@ -815,6 +817,10 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 		return nil, err
 	}
 	contextText := title + " " + request.Description + " " + request.WhyItMatters + " " + request.DesiredOutcome
+	domain, err := canonicalPursuitDomain(request.Domain, contextText)
+	if err != nil {
+		return nil, err
+	}
 	riskLevel := conservativeRisk(request.RiskLevel, classifyRisk(contextText))
 	autonomyLevel := conservativeAutonomy(request.AutonomyLevel, riskLevel)
 	now := time.Now().UTC()
@@ -830,7 +836,7 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 		WhyItMatters:          strings.TrimSpace(request.WhyItMatters),
 		ProjectKey:            strings.TrimSpace(request.ProjectKey),
 		MandateID:             mandateID,
-		Domain:                firstNonEmpty(request.Domain, classifyDomain(contextText)),
+		Domain:                domain,
 		DesiredOutcome:        strings.TrimSpace(request.DesiredOutcome),
 		CurrentStateSummary:   strings.TrimSpace(request.CurrentStateSummary),
 		Status:                firstNonEmpty(request.Status, StatusActive),
@@ -863,6 +869,7 @@ func (s *service) Create(request CreateRequest) (*models.Pursuit, error) {
 		return nil, err
 	}
 	_, _ = s.recordActivity(created.ID, "pursuit.created", "Pursuit created: "+created.Title, firstNonEmpty(request.Actor, "operator"), "", "", "")
+	_, _ = s.projectLifeDomain(created, firstNonEmpty(request.Actor, "operator"))
 	if policyWasNormalized(request.RiskLevel, request.AutonomyLevel, riskLevel, autonomyLevel) {
 		_, _ = s.recordActivity(created.ID, "pursuit.safety_normalized", "Pursuit safety policy normalized from the goal context: "+riskLevel+" risk / "+autonomyLevel+" autonomy", firstNonEmpty(request.Actor, "operator"), "", "", "")
 	}
@@ -904,13 +911,20 @@ func (s *service) UpdateForOwner(ownerIdentity string, id uuid.UUID, request Upd
 	}
 	priorRiskLevel := pursuit.RiskLevel
 	priorAutonomyLevel := pursuit.AutonomyLevel
+	priorDomain := pursuit.Domain
 	if strings.TrimSpace(request.Title) != "" {
 		pursuit.Title = strings.TrimSpace(request.Title)
 	}
 	assignString(request.Description, &pursuit.Description)
 	assignString(request.WhyItMatters, &pursuit.WhyItMatters)
 	assignString(request.ProjectKey, &pursuit.ProjectKey)
-	assignString(request.Domain, &pursuit.Domain)
+	if request.Domain != nil {
+		domain, err := canonicalPursuitDomain(*request.Domain, pursuit.Title+" "+pursuit.Description+" "+pursuit.WhyItMatters+" "+pursuit.DesiredOutcome)
+		if err != nil {
+			return nil, err
+		}
+		pursuit.Domain = domain
+	}
 	assignString(request.DesiredOutcome, &pursuit.DesiredOutcome)
 	assignString(request.CurrentStateSummary, &pursuit.CurrentStateSummary)
 	assignString(request.NeedCategory, &pursuit.NeedCategory)
@@ -997,6 +1011,9 @@ func (s *service) UpdateForOwner(ownerIdentity string, id uuid.UUID, request Upd
 		return nil, err
 	}
 	_, _ = s.recordActivity(id, "pursuit.updated", "Pursuit details updated", firstNonEmpty(request.Actor, "operator"), "", "", "")
+	if !strings.EqualFold(strings.TrimSpace(priorDomain), strings.TrimSpace(updated.Domain)) {
+		_, _ = s.projectLifeDomain(updated, firstNonEmpty(request.Actor, "operator"))
+	}
 	if !strings.EqualFold(priorRiskLevel, updated.RiskLevel) || !strings.EqualFold(priorAutonomyLevel, updated.AutonomyLevel) {
 		_, _ = s.recordActivity(id, "pursuit.safety_normalized", "Pursuit safety policy recalculated from the current goal context: "+updated.RiskLevel+" risk / "+updated.AutonomyLevel+" autonomy", firstNonEmpty(request.Actor, "operator"), "", "", "")
 	}
@@ -1107,6 +1124,27 @@ func (s *service) DashboardForOwner(ownerIdentity string) (*Dashboard, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.dashboardForPursuits(ownerIdentity, pursuits)
+}
+
+// DashboardWithPursuitsForOwner reuses the active records already loaded for
+// the dashboard projection. The route exposes this only when a client asks for
+// it, avoiding a second owner-scoped list request during the initial Pursuits
+// page load while keeping ordinary dashboard responses compact.
+func (s *service) DashboardWithPursuitsForOwner(ownerIdentity string) (*Dashboard, error) {
+	pursuits, err := s.ListForOwner(ownerIdentity, false)
+	if err != nil {
+		return nil, err
+	}
+	dashboard, err := s.dashboardForPursuits(ownerIdentity, pursuits)
+	if err != nil {
+		return nil, err
+	}
+	dashboard.Pursuits = pursuits
+	return dashboard, nil
+}
+
+func (s *service) dashboardForPursuits(ownerIdentity string, pursuits []models.Pursuit) (*Dashboard, error) {
 	dashboard := &Dashboard{
 		Counts: map[string]int64{
 			"active": 0, "waiting": 0, "blocked": 0, "completed": 0, "needsRobert": 0, "decisionQueue": 0, "stale": 0, "reviewDue": 0, "planningNeeded": 0, "highRisk": 0, "completionCandidates": 0,
@@ -6302,15 +6340,19 @@ func classifyDomain(text string) string {
 	lower := strings.ToLower(text)
 	switch {
 	case containsAny(lower, "legal", "lawyer", "government", "municipality", "insurance", "claim", "dispute"):
-		return "stability"
+		return "legal_government"
 	case containsAny(lower, "automation", "github", "developer", "software", "code", "hai"):
-		return "work"
+		return "work_venture"
 	case containsAny(lower, "health", "doctor", "medical"):
-		return "health"
-	case containsAny(lower, "client", "invoice", "quote", "job"):
-		return "business"
+		return "health_wellbeing"
+	case containsAny(lower, "client", "invoice", "quote", "job", "business"):
+		return "work_venture"
+	case containsAny(lower, "housing", "home", "garden", "repair", "vehicle"):
+		return "home_assets"
+	case containsAny(lower, "money", "payment", "tax", "budget", "debt"):
+		return "financial"
 	default:
-		return "operations"
+		return "personal_productivity"
 	}
 }
 

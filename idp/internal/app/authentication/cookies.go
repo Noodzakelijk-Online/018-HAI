@@ -7,7 +7,10 @@ import (
 	"time"
 )
 
-const googleOAuthStateCookie = "hai_google_oauth_state"
+const (
+	googleOAuthStateCookie     = "hai_google_oauth_state"
+	googleOAuthReturnURLCookie = "hai_google_oauth_return_url"
+)
 
 func setAccessTokenCookie(w http.ResponseWriter, value string, expires time.Time) {
 	setAuthCookie(w, "access_token", value, expires)
@@ -60,6 +63,31 @@ func setGoogleOAuthStateCookie(w http.ResponseWriter, state string, expires time
 func clearGoogleOAuthStateCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     googleOAuthStateCookie,
+		Value:    "",
+		Expires:  time.Unix(1, 0).UTC(),
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   authCookieSecure(),
+		SameSite: http.SameSiteLaxMode,
+		Path:     "/",
+	})
+}
+
+func setGoogleOAuthReturnURLCookie(w http.ResponseWriter, returnURL string, expires time.Time) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     googleOAuthReturnURLCookie,
+		Value:    returnURL,
+		Expires:  expires,
+		HttpOnly: true,
+		Secure:   authCookieSecure(),
+		SameSite: http.SameSiteLaxMode,
+		Path:     "/",
+	})
+}
+
+func clearGoogleOAuthReturnURLCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     googleOAuthReturnURLCookie,
 		Value:    "",
 		Expires:  time.Unix(1, 0).UTC(),
 		MaxAge:   -1,

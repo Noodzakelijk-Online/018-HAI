@@ -6,12 +6,13 @@ services:
     container_name: 018-hai-idp
     hostname: idp
     restart: unless-stopped
+    mem_limit: ${IDP_MEMORY_LIMIT:-256m}
+    cpus: ${IDP_CPU_LIMIT:-0.5}
+    pids_limit: ${IDP_PIDS_LIMIT:-128}
     depends_on:
       postgres-idp:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
     environment:
       BLOCKING_TIME_EXPONENTIATION_BASIS: ${BLOCKING_TIME_EXPONENTIATION_BASIS}
@@ -25,6 +26,7 @@ services:
       ACCOUNT_CREATED_TOPIC: ${ACCOUNT_CREATED_TOPIC}
       JWT_SECRET: ${JWT_SECRET}
       REDIS_ADDR: ${REDIS_ADDR}
+      HAI_EVENT_BUS_ENABLED: ${HAI_EVENT_BUS_ENABLED:-false}
       LOGGER_TOPIC: ${LOGGER_TOPIC}
       MAIL_TOPIC: ${MAIL_TOPIC}
       KAFKA_CLIENT_ID: ${KAFKA_CLIENT_ID}
@@ -75,11 +77,18 @@ services:
     container_name: 018-hai-backend
     hostname: backend
     restart: unless-stopped
+    # The API keeps enough headroom for migrations and bounded ingestion while
+    # preventing an idle local installation from consuming a desktop unchecked.
+    mem_limit: ${BACKEND_MEMORY_LIMIT:-768m}
+    cpus: ${BACKEND_CPU_LIMIT:-1.0}
+    pids_limit: ${BACKEND_PIDS_LIMIT:-256}
     depends_on:
       postgres-automation:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
+      backend-migrate:
+        condition: service_completed_successfully
+      backend-runtime-role:
+        condition: service_completed_successfully
       idp:
         condition: service_started
     environment:
@@ -89,16 +98,23 @@ services:
       BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
       HAI_MEMORY_ENCRYPTION_KEY: ${HAI_MEMORY_ENCRYPTION_KEY}
       HAI_APPROVAL_PROOF_SIGNING_KEY: ${HAI_APPROVAL_PROOF_SIGNING_KEY}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
+      # The API may use a DML-only runtime role. Schema changes are applied
+      # separately with the DB_USER owner account; see docs/migrations.md.
+      DB_USER: ${BACKEND_DB_USER:-hai_runtime}
+      DB_PASSWORD: ${BACKEND_DB_PASSWORD:-${DB_PASSWORD}}
       DB_NAME: ${AUTOMATION_DB_NAME}
       DB_HOST: ${AUTOMATION_DB_HOST}
       DB_PORT: ${DB_PORT}
+      DB_MIGRATIONS_ENABLED: ${DB_MIGRATIONS_ENABLED:-true}
+      # Versioned migrations are authoritative in production. AutoMigrate is
+      # retained only for deliberate development work.
+      DB_AUTOMIGRATE: ${DB_AUTOMIGRATE:-false}
       IMAGE_MAX_SIZE_IN_MB: ${IMAGE_MAX_SIZE_IN_MB}
       IMAGE_EXTENSIONS: ${IMAGE_EXTENSIONS}
       IMAGE_SAVE_DIR: ${IMAGE_SAVE_DIR}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
       KAFKA_TOPIC: ${KAFKA_TOPIC}
+      HAI_EVENT_BUS_ENABLED: ${HAI_EVENT_BUS_ENABLED:-false}
       REDIS_ADDR: ${REDIS_ADDR}
       # Google OAuth (Gmail, Drive, Contacts, and Calendar). Empty by default;
       # when unset all four report unavailable instead of simulating access.
@@ -119,6 +135,7 @@ services:
       LLM_PROVIDERS_JSON: ${LLM_PROVIDERS_JSON}
       LLM_REQUIRE_RECENT_LIVE_PROBE: ${LLM_REQUIRE_RECENT_LIVE_PROBE}
       LLM_PROVIDER_PROBE_MAX_AGE_SECONDS: ${LLM_PROVIDER_PROBE_MAX_AGE_SECONDS}
+      LLM_PROVIDER_PROBE_TIMEOUT_SECONDS: ${LLM_PROVIDER_PROBE_TIMEOUT_SECONDS:-5}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
       OLLAMA_MODEL_IDS: ${OLLAMA_MODEL_IDS:-}
       LLM_MODEL_MAINTENANCE_ENABLED: ${LLM_MODEL_MAINTENANCE_ENABLED:-true}
@@ -128,12 +145,20 @@ services:
       LLM_MODEL_MAINTENANCE_SCHEDULER_ENABLED: ${LLM_MODEL_MAINTENANCE_SCHEDULER_ENABLED:-true}
       LLM_MODEL_MAINTENANCE_SCHEDULER_INTERVAL_MINUTES: ${LLM_MODEL_MAINTENANCE_SCHEDULER_INTERVAL_MINUTES:-60}
       LM_STUDIO_BASE_URL: ${LM_STUDIO_BASE_URL}
+      LM_STUDIO_MODEL_ID: ${LM_STUDIO_MODEL_ID:-local-model}
       LLAMA_CPP_BASE_URL: ${LLAMA_CPP_BASE_URL}
       LLAMA_CPP_MODEL_ID: ${LLAMA_CPP_MODEL_ID}
       LOCALAI_BASE_URL: ${LOCALAI_BASE_URL}
       LOCALAI_MODEL_ID: ${LOCALAI_MODEL_ID}
       VLLM_BASE_URL: ${VLLM_BASE_URL}
       VLLM_MODEL_ID: ${VLLM_MODEL_ID}
+      SGLANG_BASE_URL: ${SGLANG_BASE_URL:-}
+      SGLANG_MODEL_ID: ${SGLANG_MODEL_ID:-sglang-default}
+      DSPARK_ENABLED: ${DSPARK_ENABLED:-false}
+      DSPARK_BASE_URL: ${DSPARK_BASE_URL:-}
+      DSPARK_PROBE_PATH: ${DSPARK_PROBE_PATH:-/v1/models}
+      DSPARK_GENERATION_PATH: ${DSPARK_GENERATION_PATH:-/v1/chat/completions}
+      DSPARK_MODEL_ID: ${DSPARK_MODEL_ID:-dspark-default}
       MISTRAL_RS_BASE_URL: ${MISTRAL_RS_BASE_URL}
       MISTRAL_RS_MODEL_ID: ${MISTRAL_RS_MODEL_ID}
       LITELLM_ENABLED: ${LITELLM_ENABLED}
@@ -191,6 +216,10 @@ services:
       HAI_LARO_BASE_URL: ${HAI_LARO_BASE_URL:-}
       HAI_LARO_CONNECTOR_TOKEN: ${HAI_LARO_CONNECTOR_TOKEN:-}
       HAI_LARO_SYNC_LIMIT: ${HAI_LARO_SYNC_LIMIT:-50}
+      HAI_WORKER_CONTROL_ENABLED: ${HAI_WORKER_CONTROL_ENABLED:-false}
+      HAI_WORKER_CONTROL_BASE_URL: ${HAI_WORKER_CONTROL_BASE_URL:-}
+      HAI_WORKER_CONTROL_CONNECTOR_TOKEN: ${HAI_WORKER_CONTROL_CONNECTOR_TOKEN:-}
+      HAI_WORKER_CONTROL_SYNC_LIMIT: ${HAI_WORKER_CONTROL_SYNC_LIMIT:-50}
       HAI_CLOUDQUERY_SUMMARY_ENABLED: ${HAI_CLOUDQUERY_SUMMARY_ENABLED:-false}
       HAI_CLOUDQUERY_ALLOWED_ROOT: ${HAI_CLOUDQUERY_ALLOWED_ROOT:-/cloudquery-summary}
       HAI_CLOUDQUERY_SUMMARY_PATH: ${HAI_CLOUDQUERY_SUMMARY_PATH:-/cloudquery-summary/summary.jsonl}
@@ -220,7 +249,7 @@ services:
       HAI_A2A_BRIDGE_ENABLED: ${HAI_A2A_BRIDGE_ENABLED:-false}
       HAI_A2A_BRIDGE_TOKEN: ${HAI_A2A_BRIDGE_TOKEN:-}
       HAI_A2A_BRIDGE_OWNER_ID: ${HAI_A2A_BRIDGE_OWNER_ID:-}
-      HAI_A2A_BRIDGE_URL: ${HAI_A2A_BRIDGE_URL:-http://127.0.0.1/api/v1/a2a}
+      HAI_A2A_BRIDGE_URL: ${HAI_A2A_BRIDGE_URL:-http://127.0.0.1:8091/api/v1/a2a}
       HAI_LM_EVAL_ENABLED: ${HAI_LM_EVAL_ENABLED:-false}
       HAI_LM_EVAL_BASE_URL: ${HAI_LM_EVAL_BASE_URL:-http://lm-eval-runner:8080}
       HAI_LM_EVAL_TIMEOUT_SECONDS: ${HAI_LM_EVAL_TIMEOUT_SECONDS:-130}
@@ -360,13 +389,35 @@ services:
       HERMES_ACP_ENABLED: ${HERMES_ACP_ENABLED}
       HERMES_TERMINAL_BACKENDS: ${HERMES_TERMINAL_BACKENDS}
       HERMES_ENV_ALLOWLIST: ${HERMES_ENV_ALLOWLIST}
+      # DeepSeek Harness is intentionally disabled unless both flags are set.
+      # Passing the variables through keeps an operator's explicit local
+      # configuration visible to the Go runtime without bundling the preview
+      # executable into HAI's default backend image.
+      DEEPSEEK_HARNESS_ENABLED: ${DEEPSEEK_HARNESS_ENABLED:-false}
+      DEEPSEEK_HARNESS_EXECUTION_ENABLED: ${DEEPSEEK_HARNESS_EXECUTION_ENABLED:-false}
+      DEEPSEEK_HARNESS_EXECUTABLE: ${DEEPSEEK_HARNESS_EXECUTABLE:-dsh}
+      DEEPSEEK_HARNESS_VERSION: ${DEEPSEEK_HARNESS_VERSION:-}
+      DEEPSEEK_HARNESS_WORKSPACE_KEY: ${DEEPSEEK_HARNESS_WORKSPACE_KEY:-deepseek-harness}
+      DEEPSEEK_HARNESS_WORKSPACE: ${DEEPSEEK_HARNESS_WORKSPACE:-/root/agent-workspaces/deepseek-harness}
+      DEEPSEEK_HARNESS_STATE_DIR: ${DEEPSEEK_HARNESS_STATE_DIR:-/root/agent-workspaces/deepseek-harness/.dsh-state}
+      DEEPSEEK_HARNESS_TIMEOUT_SECONDS: ${DEEPSEEK_HARNESS_TIMEOUT_SECONDS:-120}
+      DEEPSEEK_HARNESS_ENV_ALLOWLIST: ${DEEPSEEK_HARNESS_ENV_ALLOWLIST:-}
+      # The Windows bridge is a separate loopback-only profile. Its token is
+      # intentionally distinct from browser authentication and backend API keys.
+      HAI_HOST_RUNTIME_BRIDGE_ENABLED: ${HAI_HOST_RUNTIME_BRIDGE_ENABLED:-false}
+      HAI_HOST_RUNTIME_BRIDGE_TOKEN: ${HAI_HOST_RUNTIME_BRIDGE_TOKEN:-}
+      HAI_HOST_RUNTIME_BRIDGE_WORKER_ID: ${HAI_HOST_RUNTIME_BRIDGE_WORKER_ID:-windows-dsh}
       OPENCLAW_AGENT_ENABLED: ${OPENCLAW_AGENT_ENABLED}
       OPENCLAW_EXECUTABLE: ${OPENCLAW_EXECUTABLE}
       OPENCLAW_GATEWAY_URL: ${OPENCLAW_GATEWAY_URL}
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+      OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED: ${OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED:-false}
+      OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED: ${OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED:-false}
+      OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED: ${OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED:-false}
       OPENCLAW_STATE_DIR: ${OPENCLAW_STATE_DIR}
       OPENCLAW_CONFIG_PATH: ${OPENCLAW_CONFIG_PATH}
       OPENCLAW_ECOSYSTEM_PATH: ${OPENCLAW_ECOSYSTEM_PATH}
+      OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS: ${OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS:-}
       OPENCLAW_WORKSPACE: ${OPENCLAW_WORKSPACE}
       OPENCLAW_TIMEOUT_SECONDS: ${OPENCLAW_TIMEOUT_SECONDS}
       OPENCLAW_THINKING: ${OPENCLAW_THINKING}
@@ -405,6 +456,14 @@ services:
       OPENCLAW_COMPANION_APPS: ${OPENCLAW_COMPANION_APPS}
       FREE_CLOUD_OPENAI_BASE_URL: ${FREE_CLOUD_OPENAI_BASE_URL}
       FREE_CLOUD_API_KEY: ${FREE_CLOUD_API_KEY}
+      # Optional provider catalogs. These values only make a configured
+      # provider visible to the router; paid usage remains policy-gated.
+      NOUS_PORTAL_BASE_URL: ${NOUS_PORTAL_BASE_URL:-}
+      NOUS_PORTAL_API_KEY: ${NOUS_PORTAL_API_KEY:-}
+      MIXTURE_OF_AGENTS_BASE_URL: ${MIXTURE_OF_AGENTS_BASE_URL:-}
+      MIXTURE_OF_AGENTS_API_KEY: ${MIXTURE_OF_AGENTS_API_KEY:-}
+      OPENAI_CODEX_BASE_URL: ${OPENAI_CODEX_BASE_URL:-}
+      OPENAI_CODEX_API_KEY: ${OPENAI_CODEX_API_KEY:-}
       LLM_GENERATION_TIMEOUT_SECONDS: ${LLM_GENERATION_TIMEOUT_SECONDS}
       HAI_MCP_PREFLIGHT_ENABLED: ${HAI_MCP_PREFLIGHT_ENABLED}
       HAI_MCP_PREFLIGHT_SERVERS: ${HAI_MCP_PREFLIGHT_SERVERS}
@@ -423,6 +482,17 @@ services:
       AUTOMATION_DOCKER_CONTROL_ENABLED: ${AUTOMATION_DOCKER_CONTROL_ENABLED}
       AUTOMATION_DOCKER_SOCKET: ${AUTOMATION_DOCKER_SOCKET}
       AUTOMATION_DOCKER_ALLOWED_CONTAINERS: ${AUTOMATION_DOCKER_ALLOWED_CONTAINERS}
+      # Phase 2 keeps local intake, bounded safe-worker output, and safety
+      # controls separate. Only the control path is a named Docker volume so
+      # emergency-stop and autonomy mode survive a backend container rebuild.
+      HAI_PHASE2_OWNER: ${HAI_PHASE2_OWNER:-local-operator}
+      HAI_PHASE2_WORKSPACE_ID: ${HAI_PHASE2_WORKSPACE_ID:-local}
+      HAI_PHASE2_WORKSPACE_DIR: ${HAI_PHASE2_WORKSPACE_DIR:-/root/agent-workspaces/phase2}
+      HAI_PHASE2_FEEDS_DIR: ${HAI_PHASE2_FEEDS_DIR:-/root/phase2-feeds}
+      HAI_PHASE2_FEED_FILES: ${HAI_PHASE2_FEED_FILES:-}
+      HAI_PHASE2_STATE_DIR: ${HAI_PHASE2_STATE_DIR:-/root/phase2-control-state}
+      HAI_PHASE2_MODE: ${HAI_PHASE2_MODE:-autonomous_safe}
+      HAI_PHASE2_EMERGENCY_STOP: ${HAI_PHASE2_EMERGENCY_STOP:-false}
       CONNECTED_SOURCE_LOCAL_ROOT: ${CONNECTED_SOURCE_LOCAL_ROOT}
       CONNECTED_SOURCE_FILE_LIMIT: ${CONNECTED_SOURCE_FILE_LIMIT}
       CONNECTED_SOURCE_MAX_BYTES: ${CONNECTED_SOURCE_MAX_BYTES}
@@ -430,18 +500,37 @@ services:
       CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL: ${CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL}
       CONNECTED_SOURCE_HTTP_TIMEOUT_SECONDS: ${CONNECTED_SOURCE_HTTP_TIMEOUT_SECONDS}
       CONNECTED_SOURCE_HTTP_MAX_BYTES: ${CONNECTED_SOURCE_HTTP_MAX_BYTES}
+      CONNECTED_SOURCE_SYNC_TIMEOUT_SECONDS: ${CONNECTED_SOURCE_SYNC_TIMEOUT_SECONDS:-600}
       GITHUB_SOURCE_API_BASE_URL: ${GITHUB_SOURCE_API_BASE_URL}
       GITHUB_SOURCE_TOKEN: ${GITHUB_SOURCE_TOKEN}
+      GITHUB_SOURCE_MAX_PAGES: ${GITHUB_SOURCE_MAX_PAGES:-5}
+      TRELLO_API_KEY: ${TRELLO_API_KEY:-}
+      TRELLO_READ_TOKEN: ${TRELLO_READ_TOKEN:-}
+      TRELLO_API_BASE_URL: ${TRELLO_API_BASE_URL:-}
+      WHATSAPP_EXPORT_CHUNK_MESSAGES: ${WHATSAPP_EXPORT_CHUNK_MESSAGES:-40}
       SOURCE_SCHEDULER_ENABLED: ${SOURCE_SCHEDULER_ENABLED}
+      SOURCE_SCHEDULER_DURABLE: ${SOURCE_SCHEDULER_DURABLE:-true}
       SOURCE_SCHEDULER_INTERVAL_SECONDS: ${SOURCE_SCHEDULER_INTERVAL_SECONDS}
       SOURCE_SCHEDULER_RUN_ON_STARTUP: ${SOURCE_SCHEDULER_RUN_ON_STARTUP}
+      SOURCE_WORKER_POLL_SECONDS: ${SOURCE_WORKER_POLL_SECONDS:-300}
       WORKFLOW_SCHEDULER_ENABLED: ${WORKFLOW_SCHEDULER_ENABLED}
+      WORKFLOW_SCHEDULER_DURABLE: ${WORKFLOW_SCHEDULER_DURABLE:-true}
       WORKFLOW_OPEN_LOOP_SCHEDULER_ENABLED: ${WORKFLOW_OPEN_LOOP_SCHEDULER_ENABLED}
       WORKFLOW_SCHEDULER_INTERVAL_SECONDS: ${WORKFLOW_SCHEDULER_INTERVAL_SECONDS}
       WORKFLOW_SCHEDULER_RUN_LIMIT: ${WORKFLOW_SCHEDULER_RUN_LIMIT}
       WORKFLOW_SCHEDULER_RUN_ON_STARTUP: ${WORKFLOW_SCHEDULER_RUN_ON_STARTUP}
       WORKFLOW_CLAIM_LEASE_SECONDS: ${WORKFLOW_CLAIM_LEASE_SECONDS}
+      WORKFLOW_WORKER_POLL_SECONDS: ${WORKFLOW_WORKER_POLL_SECONDS:-300}
+      WORKFLOW_REMINDER_DELIVERY_ENABLED: ${WORKFLOW_REMINDER_DELIVERY_ENABLED:-true}
+      HAI_CATALOG_REVALIDATION_ENABLED: ${HAI_CATALOG_REVALIDATION_ENABLED:-true}
+      HAI_CATALOG_COLLECTION_REVALIDATION_ENABLED: ${HAI_CATALOG_COLLECTION_REVALIDATION_ENABLED:-true}
+      HAI_CATALOG_REPOSITORY_DISCOVERY_REVALIDATION_ENABLED: ${HAI_CATALOG_REPOSITORY_DISCOVERY_REVALIDATION_ENABLED:-true}
+      HAI_CATALOG_REVALIDATION_INTERVAL_HOURS: ${HAI_CATALOG_REVALIDATION_INTERVAL_HOURS:-24}
+      HAI_CATALOG_REVALIDATION_BATCH_SIZE: ${HAI_CATALOG_REVALIDATION_BATCH_SIZE:-8}
+      HAI_CATALOG_REVALIDATION_SCHEDULER_ENABLED: ${HAI_CATALOG_REVALIDATION_SCHEDULER_ENABLED:-true}
+      HAI_CATALOG_REVALIDATION_SCHEDULER_INTERVAL_MINUTES: ${HAI_CATALOG_REVALIDATION_SCHEDULER_INTERVAL_MINUTES:-60}
       AMBIENT_SCHEDULER_ENABLED: ${AMBIENT_SCHEDULER_ENABLED}
+      AMBIENT_SCHEDULER_DURABLE: ${AMBIENT_SCHEDULER_DURABLE:-true}
       AMBIENT_EXECUTION_ENABLED: ${AMBIENT_EXECUTION_ENABLED}
       AMBIENT_RUN_ON_STARTUP: ${AMBIENT_RUN_ON_STARTUP}
       AMBIENT_SCAN_INTERVAL_SECONDS: ${AMBIENT_SCAN_INTERVAL_SECONDS}
@@ -451,9 +540,10 @@ services:
       AMBIENT_EXECUTION_LIMIT: ${AMBIENT_EXECUTION_LIMIT}
       AMBIENT_DISMISS_COOLDOWN_HOURS: ${AMBIENT_DISMISS_COOLDOWN_HOURS}
       AMBIENT_SCAN_RETENTION: ${AMBIENT_SCAN_RETENTION}
+      AMBIENT_WORKER_POLL_SECONDS: ${AMBIENT_WORKER_POLL_SECONDS:-300}
       OUTCOME_MONITOR_SCHEDULER_ENABLED: ${OUTCOME_MONITOR_SCHEDULER_ENABLED:-true}
       OUTCOME_MONITOR_SWEEP_SECONDS: ${OUTCOME_MONITOR_SWEEP_SECONDS:-300}
-      OUTCOME_MONITOR_POLL_SECONDS: ${OUTCOME_MONITOR_POLL_SECONDS:-15}
+      OUTCOME_MONITOR_POLL_SECONDS: ${OUTCOME_MONITOR_POLL_SECONDS:-300}
       OUTCOME_MONITOR_LEASE_SECONDS: ${OUTCOME_MONITOR_LEASE_SECONDS:-120}
       OUTCOME_MONITOR_SCOPE_LIMIT: ${OUTCOME_MONITOR_SCOPE_LIMIT:-50}
       OUTCOME_MONITOR_BATCH_LIMIT: ${OUTCOME_MONITOR_BATCH_LIMIT:-20}
@@ -461,6 +551,13 @@ services:
       AUTONOMY_TELEMETRY_LIMIT: ${AUTONOMY_TELEMETRY_LIMIT}
       LLM_KV_CACHE_LOAD_STRATEGY: ${LLM_KV_CACHE_LOAD_STRATEGY}
       LLM_DUALPATH_INFRASTRUCTURE_VERIFIED: ${LLM_DUALPATH_INFRASTRUCTURE_VERIFIED}
+      # Langfuse is opt-in and can export only the bounded aggregate evidence
+      # defined by its backend adapter; no credential is present by default.
+      HAI_LANGFUSE_ENABLED: ${HAI_LANGFUSE_ENABLED:-false}
+      HAI_LANGFUSE_BASE_URL: ${HAI_LANGFUSE_BASE_URL:-}
+      HAI_LANGFUSE_PUBLIC_KEY: ${HAI_LANGFUSE_PUBLIC_KEY:-}
+      HAI_LANGFUSE_SECRET_KEY: ${HAI_LANGFUSE_SECRET_KEY:-}
+      HAI_LANGFUSE_TIMEOUT_SECONDS: ${HAI_LANGFUSE_TIMEOUT_SECONDS:-8}
     ports:
       - "127.0.0.1:${BACKEND_PORT}:${SERVER_PORT}"
     volumes:
@@ -468,7 +565,19 @@ services:
       - ./automation-scripts:/root/automation-scripts:ro
       - ./connected-sources:/root/connected-sources:ro
       - ./agent-workspaces:/root/agent-workspaces
+      - ./phase2-feeds:/root/phase2-feeds:ro
+      - phase2-control-state:/root/phase2-control-state
       - ${CLOUDQUERY_SUMMARY_HOST_DIR:-./cloudquery-summary}:/cloudquery-summary:ro
+    # The API writes only to the explicit media/workspace/control mounts above.
+    # Keep its image filesystem immutable and remove ambient kernel privileges;
+    # host execution remains separately approval- and allowlist-gated.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     # /readyz, not a TCP probe: an open socket only proves the process is
     # listening. curl -f fails on the 503 that /readyz returns when a critical
     # dependency is unreachable, so `docker ps` stops reporting a backend with a
@@ -499,6 +608,78 @@ services:
       - agent-runners-internal
       - document-runners-internal
       - coding-runners-internal
+      - a2a-local
+      - host-runtime-internal
+
+  # Schema migration is a separate, owner-credentialed one-shot job. The API
+  # process is never the default migration runner.
+  backend-migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: "no"
+    mem_limit: ${BACKEND_MIGRATE_MEMORY_LIMIT:-512m}
+    cpus: ${BACKEND_MIGRATE_CPU_LIMIT:-1.0}
+    pids_limit: ${BACKEND_MIGRATE_PIDS_LIMIT:-128}
+    depends_on:
+      postgres-automation:
+        condition: service_healthy
+    command: ["/root/app", "migrate", "up"]
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${AUTOMATION_DB_NAME}
+      DB_HOST: ${AUTOMATION_DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_AUTOMIGRATE: ${DB_AUTOMIGRATE:-false}
+      DB_MIGRATIONS_ENABLED: "false"
+      # Application configuration validates the image directory before the
+      # migrate command dispatches. The one-shot service has a read-only root,
+      # so keep that harmless bootstrap directory on its private tmpfs.
+      IMAGE_SAVE_DIR: /tmp/images
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - automation-hub-network
+
+  # Runs after migrations so grants cover every current table, and records
+  # default privileges for all future tables created by the schema owner.
+  backend-runtime-role:
+    image: postgres:17-alpine
+    restart: "no"
+    mem_limit: ${BACKEND_RUNTIME_ROLE_MEMORY_LIMIT:-64m}
+    cpus: ${BACKEND_RUNTIME_ROLE_CPU_LIMIT:-0.1}
+    pids_limit: ${BACKEND_RUNTIME_ROLE_PIDS_LIMIT:-32}
+    depends_on:
+      postgres-automation:
+        condition: service_healthy
+      backend-migrate:
+        condition: service_completed_successfully
+    environment:
+      PGHOST: ${AUTOMATION_DB_HOST}
+      PGPORT: ${DB_PORT}
+      PGDATABASE: ${AUTOMATION_DB_NAME}
+      PGUSER: ${DB_USER}
+      PGPASSWORD: ${DB_PASSWORD}
+      HAI_RUNTIME_DB_USER: ${BACKEND_DB_USER:-hai_runtime}
+      HAI_RUNTIME_DB_PASSWORD: ${BACKEND_DB_PASSWORD:-${DB_PASSWORD}}
+    command: ["/bin/sh", "/scripts/provision-runtime-role.sh"]
+    volumes:
+      - ./services/postgres-runtime-role/provision-runtime-role.sh:/scripts/provision-runtime-role.sh:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - automation-hub-network
 
   frontend:
     build:
@@ -507,6 +688,9 @@ services:
     container_name: 018-hai-frontend
     hostname: frontend
     restart: unless-stopped
+    mem_limit: ${FRONTEND_MEMORY_LIMIT:-128m}
+    cpus: ${FRONTEND_CPU_LIMIT:-0.25}
+    pids_limit: ${FRONTEND_PIDS_LIMIT:-64}
     depends_on:
       backend:
         condition: service_started
@@ -827,6 +1011,9 @@ services:
     container_name: gateway
     hostname: gateway
     restart: unless-stopped
+    mem_limit: ${GATEWAY_MEMORY_LIMIT:-128m}
+    cpus: ${GATEWAY_CPU_LIMIT:-0.25}
+    pids_limit: ${GATEWAY_PIDS_LIMIT:-64}
     environment:
       BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
     command:
@@ -837,9 +1024,9 @@ services:
       frontend:
         condition: service_healthy
       backend:
-        condition: service_started
+        condition: service_healthy
       idp:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "${GATEWAY_HOST_BIND:-127.0.0.1}:${GATEWAY_HOST_PORT:-8088}:80"
     volumes:
@@ -854,10 +1041,89 @@ services:
     networks:
       - service-hub
 
-  # Explicit opt-in public HTTPS tunnel. Start it only through
-  # scripts/start-ngrok.ps1, whose preflight rejects local-login bypass,
-  # insecure cookies, placeholder secrets, and mismatched OAuth callbacks.
-  # The inspector/API is reachable only inside this container.
+  # Local A2A is deliberately isolated from the browser gateway and the ngrok
+  # tunnel. It only exposes the Agent Card and planning JSON-RPC route through
+  # a loopback host port when an operator explicitly enables this profile.
+  a2a-gateway:
+    image: nginx:alpine
+    profiles: ["local-a2a"]
+    container_name: 018-hai-a2a-gateway
+    restart: unless-stopped
+    # The Go API listens for SIGINT and uses it to drain HTTP requests and stop
+    # bounded background schedulers before Docker replaces the container.
+    stop_signal: SIGINT
+    stop_grace_period: 25s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 64m
+    cpus: 0.10
+    pids_limit: 32
+    environment:
+      BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
+    command:
+      - /bin/sh
+      - -c
+      - envsubst '$$BACKEND_API_SHARED_KEY' < /etc/nginx/a2a-local.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${HAI_A2A_LOCAL_PORT:-8091}:80"
+    volumes:
+      - ./nginx-config/a2a-local.conf.template:/etc/nginx/a2a-local.conf.template:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/.well-known/agent-card.json || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    networks:
+      - a2a-local
+
+  # This gateway is deliberately separate from the browser and ngrok gateway.
+  # The native Windows DSH bridge polls it through a loopback host port and it
+  # forwards only the host-runtime lease lifecycle endpoints to the backend.
+  host-runtime-gateway:
+    image: nginx:alpine
+    profiles: ["local-host-runtime"]
+    container_name: 018-hai-host-runtime-gateway
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 64m
+    cpus: 0.10
+    pids_limit: 32
+    environment:
+      BACKEND_API_SHARED_KEY: ${BACKEND_API_SHARED_KEY}
+    command:
+      - /bin/sh
+      - -c
+      - envsubst '$$BACKEND_API_SHARED_KEY' < /etc/nginx/host-runtime.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${HAI_HOST_RUNTIME_BRIDGE_PORT:-8092}:80"
+    volumes:
+      - ./nginx-config/host-runtime.conf.template:/etc/nginx/host-runtime.conf.template:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    networks:
+      - host-runtime-internal
+
+  # Disabled by default. This service is the only public-access mechanism and
+  # fails closed unless the production guardrails and a reserved HTTPS origin
+  # are configured. The gateway itself remains bound to host loopback.
   ngrok:
     image: ngrok/ngrok:alpine@sha256:85bea0e9c697bdad142b09cd9704420812cc44b5ae417ec4c7ac74d0a49d72f2
     profiles: ["cloud-tunnel"]
@@ -873,6 +1139,10 @@ services:
       LOCAL_LOGIN_BYPASS_ENABLED: ${LOCAL_LOGIN_BYPASS_ENABLED:-false}
       IDP_COOKIE_SECURE: ${IDP_COOKIE_SECURE:-false}
       GATEWAY_HOST_BIND: ${GATEWAY_HOST_BIND:-127.0.0.1}
+      HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED: ${HAI_A2A_BRIDGE_PUBLIC_NGROK_ENABLED:-false}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-0}
+      GOOGLE_LOGIN_REDIRECT_URL: ${GOOGLE_LOGIN_REDIRECT_URL:-}
+      GOOGLE_OAUTH_REDIRECT_URL: ${GOOGLE_OAUTH_REDIRECT_URL:-}
     entrypoint: ["/bin/sh", "/etc/hai/start-ngrok.sh"]
     volumes:
       - ./deploy/ngrok/ngrok.yml:/etc/ngrok.yml:ro
@@ -900,8 +1170,12 @@ services:
     build:
       context: ./nginx-config-manager
       dockerfile: Dockerfile
+    profiles: ["event-bus"]
     container_name: 018-hai-nginx-config-manager
     restart: unless-stopped
+    mem_limit: ${NGINX_CONFIG_MANAGER_MEMORY_LIMIT:-256m}
+    cpus: ${NGINX_CONFIG_MANAGER_CPU_LIMIT:-0.5}
+    pids_limit: ${NGINX_CONFIG_MANAGER_PIDS_LIMIT:-128}
     environment:
       BROKERS_ADDR: ${BROKERS_ADDR}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
@@ -1390,6 +1664,9 @@ services:
     container_name: 018-hai-postgres-idp
     hostname: postgres-idp
     restart: unless-stopped
+    mem_limit: ${POSTGRES_IDP_MEMORY_LIMIT:-512m}
+    cpus: ${POSTGRES_IDP_CPU_LIMIT:-0.75}
+    pids_limit: ${POSTGRES_IDP_PIDS_LIMIT:-128}
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -1415,6 +1692,9 @@ services:
     container_name: 018-hai-postgres-automation
     hostname: postgres-automation
     restart: unless-stopped
+    mem_limit: ${POSTGRES_AUTOMATION_MEMORY_LIMIT:-768m}
+    cpus: ${POSTGRES_AUTOMATION_CPU_LIMIT:-1.0}
+    pids_limit: ${POSTGRES_AUTOMATION_PIDS_LIMIT:-192}
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -1438,6 +1718,9 @@ services:
     container_name: 018-hai-redis
     hostname: redis
     restart: unless-stopped
+    mem_limit: ${REDIS_MEMORY_LIMIT:-128m}
+    cpus: ${REDIS_CPU_LIMIT:-0.25}
+    pids_limit: ${REDIS_PIDS_LIMIT:-64}
     command: ["redis-server", "--port", "${REDIS_PORT}"]
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6380}:${REDIS_PORT}"
@@ -1454,52 +1737,58 @@ services:
       - idp-network
       - automation-hub-network
 
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.1
-    container_name: 018-hai-zookeeper
-    restart: unless-stopped
-    environment:
-      ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_PORT}
-      ZOOKEEPER_TICK_TIME: 2000
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 ${ZOOKEEPER_PORT}"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
-    networks:
-      - kafka-network
-
   kafka:
-    image: confluentinc/cp-kafka:7.6.1
+    # Redpanda implements Kafka's protocol without the separate ZooKeeper or
+    # Java broker footprint. Existing clients keep the kafka:9092 contract.
+    image: docker.redpanda.com/redpandadata/redpanda:v26.2.1@sha256:9a47c1f8d6736f98fa2616f0b715c051cb0bdac1a1176e38321bf45a5b572d
+    profiles: ["event-bus"]
     container_name: 018-hai-kafka
     hostname: kafka
     restart: unless-stopped
-    depends_on:
-      zookeeper:
-        condition: service_healthy
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:${ZOOKEEPER_PORT}
-      KAFKA_LISTENERS: INTERNAL://:9092
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    mem_limit: ${KAFKA_MEMORY_LIMIT:-256m}
+    mem_reservation: ${KAFKA_MEMORY_RESERVATION:-64m}
+    cpus: ${KAFKA_CPU_LIMIT:-0.5}
+    pids_limit: ${KAFKA_PIDS_LIMIT:-96}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command:
+      - redpanda
+      - start
+      - --kafka-addr
+      - internal://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - internal://kafka:9092
+      - --rpc-addr
+      - 0.0.0.0:33145
+      - --advertise-rpc-addr
+      - kafka:33145
+      - --smp
+      - "1"
+      - --overprovisioned=true
+      - --unsafe-bypass-fsync=false
+      - --lock-memory=false
+      - --reserve-memory
+      - 0M
+      - --check=false
+      - --default-log-level
+      - warn
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server 127.0.0.1:9092 >/dev/null 2>&1"]
-      interval: 10s
-      timeout: 10s
+      test: ["CMD", "rpk", "cluster", "info", "-X", "brokers=127.0.0.1:9092"]
+      interval: 30s
+      timeout: 5s
       retries: 18
-      start_period: 30s
+      start_period: 15s
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
     networks:
-      - kafka-network
       - service-hub
 
   generic-auto:
+    # Legacy compatibility service. It is not part of the operational HAI
+    # path, so keep it opt-in instead of spending local resources at startup.
+    profiles: ["compatibility"]
     build:
       context: ./generic-auto
       dockerfile: dockerfile
@@ -1514,12 +1803,42 @@ services:
     networks:
       - service-hub
 
+  # Local HTTP compatibility fixture for the LLM probe and generation contract.
+  # It is not an LLM, downloads no models, makes no external requests, and is
+  # excluded from the default Windows stack. Run it only with the
+  # `provider-fixture` profile and explicitly point a test-only HAI provider at
+  # http://provider-fixture:11434.
+  provider-fixture:
+    profiles: ["provider-fixture"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: provider-fixture
+    container_name: 018-hai-provider-fixture
+    hostname: provider-fixture
+    restart: "no"
+    read_only: true
+    mem_limit: 32m
+    cpus: 0.10
+    pids_limit: 32
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    expose:
+      - "11434"
+    healthcheck:
+      test: ["CMD", "/provider-fixture", "--healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 2s
+    networks:
+      - service-hub
+
 networks:
   idp-network:
     name: 018-hai-idp-network
-    driver: bridge
-  kafka-network:
-    name: 018-hai-kafka-network
     driver: bridge
   automation-hub-network:
     name: 018-hai-automation-hub-network
@@ -1527,6 +1846,14 @@ networks:
   service-hub:
     name: 018-hai-service-hub
     driver: bridge
+  a2a-local:
+    name: 018-hai-a2a-local
+    driver: bridge
+    internal: true
+  host-runtime-internal:
+    name: 018-hai-host-runtime-internal
+    driver: bridge
+    internal: true
   evidently-internal:
     name: 018-hai-evidently-internal
     driver: bridge
@@ -1593,3 +1920,7 @@ volumes:
     name: 018-hai-temporal-postgres-data
   runner-ollama-data:
     name: 018-hai-runner-ollama-data
+  redpanda-data:
+    name: 018-hai-redpanda-data
+  phase2-control-state:
+    name: 018-hai-phase2-control-state

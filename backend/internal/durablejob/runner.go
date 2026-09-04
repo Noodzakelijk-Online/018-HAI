@@ -2,7 +2,9 @@ package durablejob
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -23,6 +25,28 @@ type Handler func(ctx context.Context, job Job) error
 // allowed to assume the holder died and reclaim it.
 const DefaultLease = 5 * time.Minute
 
+// DefaultDeferDelay prevents a paused policy gate from repeatedly claiming the
+// same job while retaining it for the next permitted worker pass.
+const DefaultDeferDelay = time.Minute
+
+// DeferredError tells the runner that work was deliberately postponed by a
+// safety or availability gate. It is neither a success nor a retryable failure:
+// attempts remain unchanged and the job stays pending for a later pass.
+type DeferredError struct {
+	Reason string
+}
+
+func (e *DeferredError) Error() string {
+	if e == nil || e.Reason == "" {
+		return "job deferred"
+	}
+	return "job deferred: " + e.Reason
+}
+
+// Defer returns a typed handler result for work that must wait without
+// consuming the job retry budget, such as an emergency stop or paused mode.
+func Defer(reason string) error { return &DeferredError{Reason: reason} }
+
 // Runner claims due jobs, executes their handler, and applies the retry policy.
 // It is safe to run several Runners (in one process or many) against the same
 // queue: claiming uses FOR UPDATE SKIP LOCKED.
@@ -36,8 +60,28 @@ type Runner struct {
 	// now is injectable so retry scheduling is deterministic in tests.
 	now func() time.Time
 
-	mu       sync.RWMutex
-	handlers map[string]Handler
+	mu        sync.RWMutex
+	handlers  map[string]Handler
+	recurring map[string]recurringSchedule
+	statusMu  sync.RWMutex
+	status    RunnerStatus
+}
+
+type recurringSchedule struct {
+	interval    time.Duration
+	maxAttempts int
+	payload     string
+}
+
+// RunnerStatus provides bounded in-process lifecycle telemetry for a durable
+// queue worker. It deliberately excludes job payloads and handler output.
+type RunnerStatus struct {
+	Running           bool
+	StartedAt         time.Time
+	LastPollAt        time.Time
+	LastSuccessfulAt  time.Time
+	LastError         string
+	ConsecutiveErrors int
 }
 
 // Options configures a Runner. Zero values fall back to sane defaults.
@@ -71,14 +115,15 @@ func NewRunner(repo Repository, opts Options) *Runner {
 		opts.Now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Runner{
-		repo:     repo,
-		policy:   opts.Policy,
-		workerID: opts.WorkerID,
-		queue:    opts.Queue,
-		lease:    opts.Lease,
-		batch:    opts.Batch,
-		now:      opts.Now,
-		handlers: map[string]Handler{},
+		repo:      repo,
+		policy:    opts.Policy,
+		workerID:  opts.WorkerID,
+		queue:     opts.Queue,
+		lease:     opts.Lease,
+		batch:     opts.Batch,
+		now:       opts.Now,
+		handlers:  map[string]Handler{},
+		recurring: map[string]recurringSchedule{},
 	}
 }
 
@@ -94,6 +139,21 @@ func (r *Runner) handlerFor(kind string) (Handler, bool) {
 	defer r.mu.RUnlock()
 	handler, ok := r.handlers[kind]
 	return handler, ok
+}
+
+func (r *Runner) recurringFor(kind string) (recurringSchedule, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	schedule, ok := r.recurring[kind]
+	return schedule, ok
+}
+
+// Status returns a snapshot suitable for diagnostics. It is intentionally
+// separate from persisted job state: jobs remain the audit source of truth.
+func (r *Runner) Status() RunnerStatus {
+	r.statusMu.RLock()
+	defer r.statusMu.RUnlock()
+	return r.status
 }
 
 // Enqueue schedules a job. runAt zero means "run as soon as possible".
@@ -116,19 +176,40 @@ func (r *Runner) Enqueue(kind, payload string, runAt time.Time, maxAttempts int)
 // uses this at startup so restarts do not pile up duplicate schedules.
 // It reports whether a new job was created.
 func (r *Runner) EnsureScheduled(kind, payload string, runAt time.Time, maxAttempts int) (bool, error) {
+	return r.ensureScheduled(kind, payload, runAt, maxAttempts, false)
+}
+
+// EnsureScheduledForPayload is the per-work-item counterpart to
+// EnsureScheduled. It permits different payloads of one kind to run in
+// parallel, while ensuring a periodic producer cannot enqueue duplicates for
+// the same work item.
+func (r *Runner) EnsureScheduledForPayload(kind, payload string, runAt time.Time, maxAttempts int) (bool, error) {
+	return r.ensureScheduled(kind, payload, runAt, maxAttempts, true)
+}
+
+func (r *Runner) ensureScheduled(kind, payload string, runAt time.Time, maxAttempts int, matchPayload bool) (bool, error) {
 	if runAt.IsZero() {
 		runAt = r.now()
 	}
-	created, err := r.repo.EnqueueIfNoActive(&models.DurableJob{
+	job := &models.DurableJob{
 		Queue:       r.queue,
 		Kind:        kind,
 		Payload:     payload,
 		RunAt:       runAt.UTC(),
 		MaxAttempts: maxAttempts,
 		Status:      models.DurableJobPending,
-	})
+	}
+	var (
+		created bool
+		err     error
+	)
+	if matchPayload {
+		created, err = r.repo.EnqueueIfNoActiveMatchingPayload(job)
+	} else {
+		created, err = r.repo.EnqueueIfNoActive(job)
+	}
 	if err != nil {
-		return false, fmt.Errorf("ensure singleton %s job: %w", kind, err)
+		return false, fmt.Errorf("ensure active %s job: %w", kind, err)
 	}
 	return created, nil
 }
@@ -149,16 +230,12 @@ func (r *Runner) RegisterRecurring(kind string, interval time.Duration, maxAttem
 	if maxAttempts <= 0 {
 		maxAttempts = 3
 	}
-	r.Register(kind, func(ctx context.Context, job Job) error {
-		err := work(ctx)
-		finalAttempt := job.Attempts+1 >= job.MaxAttempts
-		if err == nil || finalAttempt {
-			if _, scheduleErr := r.Enqueue(kind, "{}", r.now().Add(interval), maxAttempts); scheduleErr != nil {
-				return fmt.Errorf("reschedule %s: %w", kind, scheduleErr)
-			}
-		}
-		return err
+	r.Register(kind, func(ctx context.Context, _ Job) error {
+		return work(ctx)
 	})
+	r.mu.Lock()
+	r.recurring[kind] = recurringSchedule{interval: interval, maxAttempts: maxAttempts, payload: "{}"}
+	r.mu.Unlock()
 	if _, err := r.EnsureScheduled(kind, "{}", r.now(), maxAttempts); err != nil {
 		return fmt.Errorf("schedule %s: %w", kind, err)
 	}
@@ -209,8 +286,33 @@ func (r *Runner) execute(ctx context.Context, job models.DurableJob) error {
 		// discarded; handlers remain responsible for idempotent side effects.
 		return nil
 	}
+	if schedule, recurring := r.recurringFor(job.Kind); recurring && (err == nil || attempt >= job.MaxAttempts) {
+		terminalStatus, lastErr := models.DurableJobSucceeded, ""
+		if err != nil {
+			terminalStatus, lastErr = models.DurableJobDead, err.Error()
+		}
+		_, _, markErr := r.repo.CompleteRecurring(
+			job.ID,
+			r.workerID,
+			job.LeaseGeneration,
+			r.now(),
+			terminalStatus,
+			attempt,
+			lastErr,
+			&models.DurableJob{
+				Queue: r.queue, Kind: job.Kind, Payload: schedule.payload,
+				RunAt: r.now().Add(schedule.interval), MaxAttempts: schedule.maxAttempts,
+			},
+		)
+		return markErr
+	}
 	if err == nil {
 		_, markErr := r.repo.MarkSucceeded(job.ID, r.workerID, job.LeaseGeneration, r.now())
+		return markErr
+	}
+	var deferred *DeferredError
+	if errors.As(err, &deferred) {
+		_, markErr := r.repo.MarkDeferred(job.ID, r.workerID, job.LeaseGeneration, r.now().Add(DefaultDeferDelay), deferred.Error())
 		return markErr
 	}
 	if attempt >= job.MaxAttempts {
@@ -268,12 +370,18 @@ func (r *Runner) safeInvoke(ctx context.Context, handler Handler, job models.Dur
 	return handler(ctx, job)
 }
 
-// Start polls the queue until the context is cancelled. This is the long-running
-// worker loop; call it from a goroutine at startup.
+// Start polls the queue until the context is cancelled. It performs one pass
+// immediately because RegisterRecurring may have recovered work that is already
+// due at process startup. Waiting for the idle interval here makes restart
+// recovery unnecessarily slow and pressures callers to use wasteful short
+// polling intervals.
 func (r *Runner) Start(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
+	r.markStarted(r.now())
+	defer r.markStopped()
+	r.runAndReport(ctx)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -281,10 +389,52 @@ func (r *Runner) Start(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := r.RunOnce(ctx); err != nil {
-				// A repository error is transient (e.g. DB blip); the next tick retries.
-				continue
-			}
+			r.runAndReport(ctx)
 		}
 	}
+}
+
+func (r *Runner) runAndReport(ctx context.Context) {
+	_, err := r.RunOnce(ctx)
+	now := r.now()
+	becameUnhealthy, recovered := r.recordPollResult(now, err)
+	if becameUnhealthy {
+		log.Printf("durablejob: queue %q worker %q poll failed: %v", r.queue, r.workerID, err)
+	}
+	if recovered {
+		log.Printf("durablejob: queue %q worker %q recovered", r.queue, r.workerID)
+	}
+}
+
+func (r *Runner) markStarted(now time.Time) {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.status.Running = true
+	if r.status.StartedAt.IsZero() {
+		r.status.StartedAt = now.UTC()
+	}
+}
+
+func (r *Runner) markStopped() {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.status.Running = false
+}
+
+func (r *Runner) recordPollResult(now time.Time, err error) (becameUnhealthy, recovered bool) {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.status.LastPollAt = now.UTC()
+	if err == nil {
+		recovered = r.status.LastError != ""
+		r.status.LastSuccessfulAt = now.UTC()
+		r.status.LastError = ""
+		r.status.ConsecutiveErrors = 0
+		return false, recovered
+	}
+	message := err.Error()
+	becameUnhealthy = r.status.LastError != message
+	r.status.LastError = message
+	r.status.ConsecutiveErrors++
+	return becameUnhealthy, false
 }

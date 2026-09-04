@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit, ViewEncapsulation } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
@@ -20,6 +20,7 @@ import {
   IPursuitDetail,
   IPursuitEvidenceResolution,
   IPursuitLink,
+	IPursuitLifeDomainReconciliationResult,
   IPursuitListItem,
   IPursuitDependency,
   IPursuitPortfolioPlanningRequest,
@@ -80,10 +81,13 @@ interface PortfolioPursuitDraft {
 }
 
 @Component({
-  standalone: false,
-  selector: 'app-pursuits',
-  templateUrl: './pursuits.component.html',
-  styleUrls: ['./pursuits.component.scss'],
+    selector: 'app-pursuits',
+    templateUrl: './pursuits.component.html',
+    styleUrls: ['./pursuits.component.scss'],
+    // This route owns generic operational selectors such as .page-header.
+    // Keep them scoped so visiting Pursuits cannot restyle another lazy page.
+    encapsulation: ViewEncapsulation.Emulated,
+    standalone: false
 })
 export class PursuitsComponent implements OnInit, OnDestroy {
   dashboard?: IPursuitDashboard;
@@ -92,6 +96,8 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   loading = false;
   detailLoading = false;
   creating = false;
+	lifeDomainReconciliationRunning = false;
+	lifeDomainReconciliation?: IPursuitLifeDomainReconciliationResult;
   intakeRunning = false;
   routedIntakeRunning = false;
   reviewing = false;
@@ -114,6 +120,10 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   private requestedEvidenceUri = '';
   highlightedDecisionId = '';
   private routeSub?: Subscription;
+  private dashboardSub?: Subscription;
+  private pursuitsSub?: Subscription;
+  private pursuitDetailSub?: Subscription;
+  private decisionDetailSub?: Subscription;
   private resourceEventsSub?: Subscription;
   private portfolioAllocationHistorySub?: Subscription;
   private portfolioExecutionProposalHistoryReadSub?: Subscription;
@@ -222,14 +232,18 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   ];
 
   readonly domains = [
-    'operations',
-    'legal',
-    'financial',
-    'client',
-    'software',
-    'content',
-    'personal',
-    'unknown',
+    ['legal_government', 'Legal and government'], ['emergency_continuity', 'Emergency and continuity'],
+    ['health_wellbeing', 'Health and wellbeing'], ['financial', 'Financial'],
+    ['work_venture', 'Work and ventures'], ['home_assets', 'Home and assets'],
+    ['relationships_care', 'Relationships and care'], ['learning_growth', 'Learning and growth'],
+    ['travel_mobility', 'Travel and mobility'], ['personal_productivity', 'Personal productivity'],
+    ['identity_roles', 'Identity and roles'], ['family_household', 'Family and household'],
+    ['food_nutrition', 'Food and nutrition'], ['communication_correspondence', 'Communication and correspondence'],
+    ['digital_accounts', 'Digital accounts'], ['possessions_inventory', 'Possessions and inventory'],
+    ['animals_dependants', 'Animals and dependants'], ['community_civic', 'Community and civic life'],
+    ['leisure_recreation', 'Leisure and recreation'], ['creativity_expression', 'Creativity and expression'],
+    ['meaning_values', 'Meaning and values'], ['environment_sustainability', 'Environment and sustainability'],
+    ['legacy_long_term', 'Legacy and long term'], ['safety_security', 'Safety and security'],
   ];
 
   readonly linkTypes = [
@@ -249,7 +263,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
     title: ['', [Validators.required]],
     description: [''],
     projectKey: [''],
-    domain: ['operations'],
+    domain: ['personal_productivity'],
     whyItMatters: [''],
     desiredOutcome: [''],
     currentStateSummary: [''],
@@ -351,6 +365,10 @@ export class PursuitsComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.routeSub?.unsubscribe();
+    this.dashboardSub?.unsubscribe();
+    this.pursuitsSub?.unsubscribe();
+    this.pursuitDetailSub?.unsubscribe();
+    this.decisionDetailSub?.unsubscribe();
     this.resourceEventsSub?.unsubscribe();
     this.portfolioAllocationHistorySub?.unsubscribe();
     this.portfolioExecutionProposalHistoryReadSub?.unsubscribe();
@@ -367,10 +385,15 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   }
 
   load(): void {
+    this.dashboardSub?.unsubscribe();
     this.loading = true;
-    this.pursuitsService.dashboard().subscribe({
+    this.dashboardSub = this.pursuitsService.dashboard(!this.includeArchived).subscribe({
       next: (dashboard) => {
         this.dashboard = dashboard;
+        if (!this.includeArchived && Array.isArray(dashboard.pursuits)) {
+          this.applyPursuits(dashboard.pursuits);
+          return;
+        }
         this.loadPursuits();
       },
       error: (error) => {
@@ -381,30 +404,60 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   }
 
   loadPursuits(): void {
-    this.pursuitsService.list(this.includeArchived).subscribe({
+    this.pursuitsSub?.unsubscribe();
+    this.pursuitsSub = this.pursuitsService.list(this.includeArchived).subscribe({
       next: (pursuits) => {
-        this.pursuits = pursuits || [];
-        this.loading = false;
-        if (this.requestedPursuitId) {
-          this.selectPursuitById(this.requestedPursuitId, false);
-          return;
-        }
-        if (!this.selected && this.pursuits.length) {
-          this.selectPursuit(this.pursuits[0]);
-          return;
-        }
-        if (this.selected) {
-          const refreshed = this.pursuits.find((item) => item.id === this.selected?.pursuit.id);
-          if (refreshed) {
-            this.selectPursuit(refreshed);
-          }
-        }
+        this.applyPursuits(pursuits || []);
       },
       error: (error) => {
         this.loading = false;
         this.notification.error('Pursuits unavailable', error?.error?.error || 'Failed to load pursuits.');
       },
     });
+  }
+
+  reconcileLifeDomains(): void {
+    if (this.lifeDomainReconciliationRunning) {
+      return;
+    }
+    this.lifeDomainReconciliationRunning = true;
+    this.pursuitsService.reconcileLifeDomains().subscribe({
+      next: (result) => {
+        this.lifeDomainReconciliationRunning = false;
+        this.lifeDomainReconciliation = result;
+        const detail = result.failed
+          ? `${result.projected} indexed, ${result.failed} need review.`
+          : `${result.projected} indexed; ${result.skipped} unchanged.`;
+        this.notification.success('Life domains updated', detail);
+        this.load();
+      },
+      error: (error) => {
+        this.lifeDomainReconciliationRunning = false;
+        this.notification.error(
+          'Life-domain update unavailable',
+          error?.error?.error || 'HAI could not update the life-domain index.',
+        );
+      },
+    });
+  }
+
+  private applyPursuits(pursuits: IPursuit[]): void {
+    this.pursuits = pursuits;
+    this.loading = false;
+    if (this.requestedPursuitId) {
+      this.selectPursuitById(this.requestedPursuitId, false);
+      return;
+    }
+    if (!this.selected && this.pursuits.length) {
+      this.selectPursuit(this.pursuits[0]);
+      return;
+    }
+    if (this.selected) {
+      const refreshed = this.pursuits.find((item) => item.id === this.selected?.pursuit.id);
+      if (refreshed) {
+        this.selectPursuit(refreshed);
+      }
+    }
   }
 
   openPortfolioPlanner(): void {
@@ -2499,7 +2552,8 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       return;
     }
     this.detailLoading = true;
-    this.pursuitsService.get(card.pursuit.id).subscribe({
+    this.decisionDetailSub?.unsubscribe();
+    this.decisionDetailSub = this.pursuitsService.get(card.pursuit.id).subscribe({
       next: (detail) => {
         this.selected = detail;
         this.detailLoading = false;
@@ -2531,11 +2585,12 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   }
 
   private loadPursuitDetail(id: string, updateRoute: boolean): void {
+    this.pursuitDetailSub?.unsubscribe();
     this.detailLoading = true;
     this.delegationPackage = undefined;
     this.showContextEditor = false;
     this.resetResourceLedger(id);
-    this.pursuitsService.get(id).subscribe({
+    this.pursuitDetailSub = this.pursuitsService.get(id).subscribe({
       next: (detail) => {
         this.selected = detail;
         this.detailLoading = false;
@@ -2756,11 +2811,16 @@ export class PursuitsComponent implements OnInit, OnDestroy {
       sourceOfCreation: 'dashboard',
     }).subscribe({
       next: (pursuit) => {
+        // The create response is authoritative. Do not let an earlier dashboard
+        // request overwrite it before the new pursuit is rendered.
+        this.dashboardSub?.unsubscribe();
+        this.pursuitsSub?.unsubscribe();
+        this.pursuits = [pursuit, ...this.pursuits.filter((item) => item.id !== pursuit.id)];
+        this.loading = false;
         this.creating = false;
         this.showCreate = false;
-        this.createForm.reset({ domain: 'operations', reviewCadenceDays: 7, maxEffortHours: 0, maxSpendEur: 0, maxParallelWorkflows: 0 });
+        this.createForm.reset({ domain: 'personal_productivity', reviewCadenceDays: 7, maxEffortHours: 0, maxSpendEur: 0, maxParallelWorkflows: 0 });
         this.notification.success('Pursuit created', 'HAI can now link workflows, memory, sources, and approvals to it.');
-        this.load();
         this.selectPursuit(pursuit);
       },
       error: (error) => {
@@ -3208,7 +3268,7 @@ export class PursuitsComponent implements OnInit, OnDestroy {
   canStopAutomation(automation: IPursuitAutomation): boolean {
     return automation.launchType === 'agent_runtime' &&
       !!automation.id &&
-      ['hermes', 'odysseus', 'openclaw'].includes((automation.runtimeType || '').toLowerCase());
+      ['deepseek-harness', 'hermes', 'odysseus', 'openclaw'].includes((automation.runtimeType || '').toLowerCase());
   }
 
   stopRuntimeAutomation(automation: IPursuitAutomation): void {

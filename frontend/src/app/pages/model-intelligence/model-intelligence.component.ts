@@ -13,10 +13,10 @@ import {
 import { ModelIntelligenceService } from '../../services/model-intelligence.service'
 
 @Component({
-  standalone: false,
-  selector: 'app-model-intelligence',
-  templateUrl: './model-intelligence.component.html',
-  styleUrls: ['./model-intelligence.component.scss'],
+    selector: 'app-model-intelligence',
+    templateUrl: './model-intelligence.component.html',
+    styleUrls: ['./model-intelligence.component.scss'],
+    standalone: false
 })
 export class ModelIntelligenceComponent implements OnInit {
   overview?: IModelIntelligenceOverview
@@ -46,13 +46,10 @@ export class ModelIntelligenceComponent implements OnInit {
   refresh(): void {
     this.loading = true
     this.errorMessage = ''
-    forkJoin({
-      overview: this.service.overview(),
-      calibration: this.service.calibration(),
-    }).subscribe({
-      next: ({ overview, calibration }) => {
+    this.service.overview().subscribe({
+      next: (overview) => {
         this.overview = overview
-        this.calibration = calibration
+        this.calibration = overview.calibration
         this.loading = false
         if (this.profilesLoaded) this.loadProfiles()
         if (this.runtimeLoaded) this.loadRuntimeDetails()

@@ -1,8 +1,8 @@
-import { Component, Inject, OnInit } from '@angular/core';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { ChangeDetectorRef, Component, Inject, OnDestroy, OnInit } from '@angular/core';
+import { AbstractControl, FormBuilder, FormGroup, ValidationErrors, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
-import { forkJoin, of } from 'rxjs';
+import { forkJoin, of, Subscription } from 'rxjs';
 import { catchError, finalize, timeout } from 'rxjs/operators';
 import {
   IConnectedSource,
@@ -10,6 +10,7 @@ import {
   ISourceConnector,
   ISourceConnectionHealth,
   ISourceExtraction,
+  ISourceExtractionPage,
   IKnowledgeGraphResult,
   IKnowledgeGraphSourceRef,
   ISourcePursuitRoutingOutcome,
@@ -41,19 +42,50 @@ interface SourceActionCard {
   tone: 'blue' | 'green' | 'gold';
 }
 
+const manualSyncValues = new Set(['', 'manual', 'off', 'disabled', 'none']);
+const syncDurationPart = /(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g;
+
+function syncFrequencyValidator(control: AbstractControl): ValidationErrors | null {
+  const value = String(control.value || '').trim().toLowerCase();
+  if (manualSyncValues.has(value) || value === 'hourly' || value === 'daily' || value === 'weekly') {
+    return null;
+  }
+  let totalMilliseconds = 0;
+  let consumed = '';
+  syncDurationPart.lastIndex = 0;
+  for (let match = syncDurationPart.exec(value); match; match = syncDurationPart.exec(value)) {
+    const amount = Number(match[1]);
+    const multiplier = ({
+      ns: 0.000001, us: 0.001, 'µs': 0.001, ms: 1, s: 1000, m: 60000, h: 3600000,
+    } as Record<string, number>)[match[2]];
+    if (!Number.isFinite(amount) || multiplier === undefined) {
+      return { syncFrequency: true };
+    }
+    totalMilliseconds += amount * multiplier;
+    consumed += match[0];
+  }
+  return consumed === value && totalMilliseconds >= 60000 && Number.isFinite(totalMilliseconds)
+    ? null
+    : { syncFrequency: true };
+}
+
 @Component({
-  standalone: false,
-  selector: 'app-connected-sources',
-  templateUrl: './connected-sources.component.html',
-  styleUrls: ['./connected-sources.component.scss'],
+    selector: 'app-connected-sources',
+    templateUrl: './connected-sources.component.html',
+    styleUrls: ['./connected-sources.component.scss'],
+    standalone: false
 })
-export class ConnectedSourcesComponent implements OnInit {
+export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   connectors: ISourceConnector[] = [];
   sources: IConnectedSource[] = [];
   extractions: ISourceExtraction[] = [];
+  extractionTotalCount = 0;
   auditLogs: ISourceAuditLog[] = [];
   syncJobs: ISourceSyncJob[] = [];
+  sourceExtractionCounts: Record<string, number> = {};
+  latestJobsBySource: Record<string, ISourceSyncJob> = {};
   connectionHealth: Record<string, ISourceConnectionHealth> = {};
+  connectionHealthUnavailable: Record<string, boolean> = {};
   searchResult?: ISourceSearchResult;
   knowledgeGraph?: IKnowledgeGraphResult;
   graphLoading = false;
@@ -64,19 +96,26 @@ export class ConnectedSourcesComponent implements OnInit {
   loading = false;
   connecting = false;
   syncing = false;
+  loadWarnings: string[] = [];
   selectedAction: SourceAction = 'connect';
   sourceActions: SourceActionCard[] = [];
   selectedSourceId = '';
   themeMode: ThemeMode = 'light';
   private readonly loadTimeoutMs = 6000;
   private readonly operationTimeoutMs = 15000;
+  private readonly extractionPageLimit = 100;
+  private lastSelectedConnectorKey = 'local-folder';
+  private refreshSubscription?: Subscription;
+  private connectorSubscription?: Subscription;
+  private connectorChangeSubscription?: Subscription;
+  private connectionHealthSubscription?: Subscription;
 
   sourceForm: FormGroup = this.fb.group({
     connectorKey: ['local-folder', [Validators.required]],
     name: ['Selected local folder', [Validators.required]],
     localOnly: [true],
-    syncFrequency: ['manual'],
-    syncTarget: ['.'],
+    syncFrequency: ['manual', [syncFrequencyValidator]],
+    syncTarget: [''],
     defaultProjectKey: ['018-HAI'],
     excludePatterns: ['spam,trash'],
   });
@@ -85,10 +124,10 @@ export class ConnectedSourcesComponent implements OnInit {
     sourceId: ['', [Validators.required]],
     mode: ['manual_import'],
     projectKey: ['018-HAI'],
-    externalId: ['sample-1'],
-    title: ['Sample connected source item'],
-    sourceUri: ['local://sample/source-item'],
-    content: ['Decision: use connected sources as structured context. Follow up: verify extracted context before task planning.', [Validators.required]],
+    externalId: ['', [Validators.required]],
+    title: ['', [Validators.required]],
+    sourceUri: ['', [Validators.required]],
+    content: ['', [Validators.required]],
   });
 
   folderForm: FormGroup = this.fb.group({
@@ -101,14 +140,12 @@ export class ConnectedSourcesComponent implements OnInit {
   });
 
   whatsappForm: FormGroup = this.fb.group({
-    sourceId: [''],
+    sourceId: ['', [Validators.required]],
     name: ['WhatsApp exports for Robert'],
-    projectKey: ['Robert-life-os'],
+    projectKey: ['Robert-life-os', [Validators.required]],
     folderPath: ['whatsapp'],
-    chatTitle: ['WhatsApp selected chat'],
-    pastedExport: [
-      '31/05/2026, 09:10 - Robert Velhorst: Kun jij morgen de offerte opvolgen?\n31/05/2026, 09:11 - Contact: Ja, ik moet eerst de documenten controleren.',
-    ],
+    chatTitle: ['', [Validators.required]],
+    pastedExport: ['', [Validators.required]],
     chunkMessages: [40],
     maxBytes: [2097152],
   });
@@ -120,7 +157,7 @@ export class ConnectedSourcesComponent implements OnInit {
     apps: ['CRM, Sales, Invoicing and Accounting, Project, Helpdesk, Documents and Sign, Calendar and Appointments'],
     projectKey: ['Robert-life-os'],
     localOnly: [true],
-    syncFrequency: ['manual'],
+    syncFrequency: ['manual', [syncFrequencyValidator]],
   });
 
   searchForm: FormGroup = this.fb.group({
@@ -136,65 +173,129 @@ export class ConnectedSourcesComponent implements OnInit {
     private sourceService: IConnectedSourceService,
     private notification: NzNotificationService,
     private router: Router,
-    private themeService: ThemeService
+    private themeService: ThemeService,
+    private changeDetector: ChangeDetectorRef,
   ) {}
 
   ngOnInit(): void {
     this.themeMode = this.themeService.mode();
+    this.connectorChangeSubscription = this.sourceForm.get('connectorKey')?.valueChanges.subscribe(
+      (connectorKey) => this.connectorChanged(String(connectorKey || ''))
+    );
     this.updateSourceActions();
     this.refresh();
   }
 
+  ngOnDestroy(): void {
+    this.refreshSubscription?.unsubscribe();
+    this.connectorSubscription?.unsubscribe();
+    this.connectorChangeSubscription?.unsubscribe();
+    this.connectionHealthSubscription?.unsubscribe();
+  }
+
   refresh(): void {
+    this.refreshSubscription?.unsubscribe();
+    this.connectorSubscription?.unsubscribe();
+    this.connectionHealthSubscription?.unsubscribe();
     this.loading = true;
-    forkJoin({
-      connectors: this.sourceService.connectors().pipe(
-        timeout(this.loadTimeoutMs),
-        catchError(() => {
-          this.notification.error('Connectors unavailable', 'Connector status did not load in time.');
-          return of([] as ISourceConnector[]);
-        })
-      ),
+    this.loadWarnings = [];
+    // The connector catalog controls whether the primary source action is safe
+    // to enable. It must not wait for unrelated historical panels to finish.
+    this.connectorSubscription = this.sourceService.connectors().pipe(
+      timeout(this.loadTimeoutMs),
+      catchError(() => {
+        this.recordLoadWarning('Connector catalog');
+        this.notification.error('Connectors unavailable', 'Connector status did not load in time.');
+        return of([] as ISourceConnector[]);
+      })
+    ).subscribe((connectors) => {
+      this.connectors = connectors;
+      this.updateSourceActions();
+    });
+    this.refreshSubscription = forkJoin({
       sources: this.sourceService.sources(this.includeDisabled).pipe(
         timeout(this.loadTimeoutMs),
         catchError(() => {
+          this.recordLoadWarning('Connected sources');
           this.notification.error('Sources unavailable', 'Connected sources did not load in time.');
           return of([] as IConnectedSource[]);
         })
       ),
-      extractions: this.sourceService.extractions(this.searchForm.value.projectKey, this.includeArchived).pipe(
+      extractions: this.sourceService.extractions(this.searchForm.value.projectKey, this.includeArchived, this.extractionPageLimit).pipe(
         timeout(this.loadTimeoutMs),
-        catchError(() => of([] as ISourceExtraction[]))
+        catchError(() => {
+          this.recordLoadWarning('Extracted records');
+          return of({ items: [], totalCount: 0, limit: this.extractionPageLimit } as ISourceExtractionPage);
+        })
       ),
       auditLogs: this.sourceService.auditLogs().pipe(
         timeout(this.loadTimeoutMs),
-        catchError(() => of([] as ISourceAuditLog[]))
+        catchError(() => {
+          this.recordLoadWarning('Audit history');
+          return of([] as ISourceAuditLog[]);
+        })
       ),
       syncJobs: this.sourceService.syncJobs().pipe(
         timeout(this.loadTimeoutMs),
-        catchError(() => of([] as ISourceSyncJob[]))
+        catchError(() => {
+          this.recordLoadWarning('Sync jobs');
+          return of([] as ISourceSyncJob[]);
+        })
       ),
     })
       .pipe(finalize(() => (this.loading = false)))
-      .subscribe(({ connectors, sources, extractions, auditLogs, syncJobs }) => {
-        this.connectors = connectors;
+      .subscribe(({ sources, extractions, auditLogs, syncJobs }) => {
         this.sources = sources;
-        this.extractions = extractions;
+        this.setExtractionPage(extractions);
         this.auditLogs = auditLogs;
         this.syncJobs = syncJobs || [];
-        this.applySourceDefaults(sources);
-        this.loadConnectionHealth(sources);
+        this.rebuildSourceIndexes();
+        this.applySourceDefaults(this.sources);
+        this.loadConnectionHealth(this.sources);
         this.updateSourceActions();
       });
   }
 
+  hasLoadWarnings(): boolean {
+    return this.loadWarnings.length > 0;
+  }
+
+  private recordLoadWarning(label: string): void {
+    if (!this.loadWarnings.includes(label)) {
+      this.loadWarnings = [...this.loadWarnings, label];
+    }
+  }
+
+  private operationErrorMessage(error: unknown, fallback: string): string {
+    const candidate = (error as { error?: { error?: unknown } })?.error?.error;
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.replace(/[\r\n\t]+/g, ' ').trim().slice(0, 280);
+    }
+    if ((error as { name?: unknown })?.name === 'TimeoutError') {
+      return `No response within ${Math.round(this.operationTimeoutMs / 1000)} seconds. Check system status and retry.`;
+    }
+    return fallback;
+  }
+
   connectSource(): void {
-    if (this.sourceForm.invalid || this.connecting) {
+    if (!this.sourceCanConnect() || this.connecting) {
       return;
     }
     const connector = this.connectors.find(
       (item) => item.connectorKey === this.sourceForm.value.connectorKey
     );
+	if (!connector) {
+		this.notification.warning('Connector unavailable', 'Refresh the connector catalog and select an available connector.');
+		return;
+	}
+	if (!this.connectorCanConnect(connector)) {
+		this.notification.warning(
+		  'Connector setup required',
+		  connector?.statusReason || 'This connector is not available until its required configuration is complete.'
+		);
+		return;
+	}
+	this.connecting = true;
     this.sourceService
       .createSource({
         connectorKey: this.sourceForm.value.connectorKey,
@@ -215,18 +316,29 @@ export class ConnectedSourcesComponent implements OnInit {
           .map((item) => item.trim())
           .filter(Boolean),
       })
-      .pipe(timeout(this.operationTimeoutMs))
+		.pipe(
+		  timeout(this.operationTimeoutMs),
+		  finalize(() => (this.connecting = false))
+      )
       .subscribe({
-        next: () => {
+        next: (created) => {
+          // The create response is authoritative. Cancel an initial broad refresh so a
+          // slower pre-create response cannot overwrite the newly connected source.
+          this.refreshSubscription?.unsubscribe();
+          this.sources = [created, ...this.sources.filter((source) => source.id !== created.id)];
+          this.selectedSourceId = created.id;
+          this.rebuildSourceIndexes();
+          this.applySourceDefaults(this.sources);
+          this.updateSourceActions();
+          this.changeDetector.detectChanges();
           this.notification.success('Source connected', 'The source is ready for controlled sync.');
-          this.refresh();
         },
-        error: (error) => this.notification.error('Error', error?.error?.error || 'Failed to connect source.'),
+        error: (error) => this.notification.error('Error', this.operationErrorMessage(error, 'Failed to connect source.')),
       });
   }
 
   sync(): void {
-    if (this.importForm.invalid) {
+    if (this.importForm.invalid || this.syncing) {
       return;
     }
     this.syncing = true;
@@ -250,9 +362,9 @@ export class ConnectedSourcesComponent implements OnInit {
           this.notifySyncResult('Item sync', result);
           this.refresh();
         },
-        error: () => {
+        error: (error) => {
           this.syncing = false;
-          this.notification.error('Error', 'Sync failed.');
+          this.notification.error('Source sync failed', this.operationErrorMessage(error, 'The source could not be synchronized.'));
         },
       });
   }
@@ -346,6 +458,10 @@ export class ConnectedSourcesComponent implements OnInit {
     return source ? this.connectionHealth[source.id] : undefined;
   }
 
+  sourceHealthUnavailable(source?: IConnectedSource): boolean {
+    return Boolean(source && this.connectionHealthUnavailable[source.id]);
+  }
+
   isGoogleSource(source?: IConnectedSource): boolean {
     return source?.connectorKey === 'gmail'
       || source?.connectorKey === 'google-drive'
@@ -408,8 +524,10 @@ export class ConnectedSourcesComponent implements OnInit {
         return 'local files only';
       case 'modeled':
         return 'built-in model';
+	  case 'configuration_required':
+		return 'setup required';
       case 'not_implemented':
-        return 'not implemented';
+		return 'unavailable';
       default:
         return this.statusText(status);
     }
@@ -469,7 +587,7 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   latestJobFor(source: IConnectedSource): ISourceSyncJob | undefined {
-    return this.syncJobs.find((job) => job.sourceId === source.id);
+    return this.latestJobsBySource[source.id];
   }
 
   statusText(status?: string): string {
@@ -485,6 +603,7 @@ export class ConnectedSourcesComponent implements OnInit {
       case 'paused':
       case 'running':
       case 'pending':
+	  case 'configuration_ready':
       case 'not_configured':
       case 'local_only':
       case 'modeled':
@@ -505,7 +624,7 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   sourceExtractionCount(source: IConnectedSource): number {
-    return this.extractions.filter((extraction) => extraction.sourceId === source.id).length;
+    return this.sourceExtractionCounts[source.id] || 0;
   }
 
   connectorFor(source?: IConnectedSource): ISourceConnector | undefined {
@@ -552,8 +671,74 @@ export class ConnectedSourcesComponent implements OnInit {
     return `${connector.name} — ${this.adapterStatusLabel(status)}`;
   }
 
+	connectorCanConnect(connector?: ISourceConnector): boolean {
+		if (!connector?.enabled) {
+			return false;
+		}
+		switch ((connector.adapterStatus || 'operational').toLowerCase()) {
+		  case 'operational':
+		  case 'local_only':
+		  case 'modeled':
+			return true;
+		  default:
+			return false;
+		}
+	}
+
+  googleConnectorCanConnect(connectorKey: 'gmail' | 'google-drive' | 'google-contacts' | 'google-calendar'): boolean {
+    return this.connectorCanConnect(this.connectors.find((connector) => connector.connectorKey === connectorKey));
+  }
+
+	selectedConnectorCanConnect(): boolean {
+		return this.connectorCanConnect(this.connectors.find(
+		  (connector) => connector.connectorKey === this.sourceForm.value.connectorKey
+		));
+	}
+
+  sourceCanConnect(): boolean {
+    const connectorKey = String(this.sourceForm.value.connectorKey || '').trim();
+    const syncTarget = String(this.sourceForm.value.syncTarget || '').trim();
+    return this.sourceForm.valid
+      && this.selectedConnectorCanConnect()
+      && (this.syncFrequencyIsManual() || this.selectedConnectorSupportsScheduledSync())
+      && (!this.connectorRequiresSelectedFolder(connectorKey) || syncTarget.length > 0);
+  }
+
+  selectedConnectorSupportsScheduledSync(): boolean {
+    return this.connectorSupportsScheduledSync(
+      this.connectors.find((connector) => connector.connectorKey === this.sourceForm.value.connectorKey)
+    );
+  }
+
+  private connectorSupportsScheduledSync(connector?: ISourceConnector): boolean {
+    const supportedModes = String(connector?.supportedModes || '')
+      .split(',')
+      .map((mode) => mode.trim());
+    // Older gateways did not expose supportedModes. Keep the form compatible
+    // with them; the API remains the authority and rejects unsafe schedules.
+    return supportedModes.length === 1 && !supportedModes[0]
+      ? true
+      : supportedModes.includes('scheduled_sync');
+  }
+
+  private syncFrequencyIsManual(): boolean {
+    return ['', 'manual', 'off', 'disabled', 'none'].includes(
+      String(this.sourceForm.value.syncFrequency || '').trim().toLowerCase()
+    );
+  }
+
+  private connectorRequiresSelectedFolder(connectorKey: string): boolean {
+    return ['local-folder', 'email', 'calendar', 'cloud-documents', 'project-board'].includes(connectorKey);
+  }
+
   connectorChanged(connectorKey: string): void {
-    if (connectorKey === 'json-feed') {
+    const selectedConnectorKey = String(connectorKey || '').trim();
+    if (!selectedConnectorKey || selectedConnectorKey === this.lastSelectedConnectorKey) {
+      return;
+    }
+    this.lastSelectedConnectorKey = selectedConnectorKey;
+
+    if (selectedConnectorKey === 'json-feed') {
       this.sourceForm.patchValue({
         name: 'Local account JSON bridge',
         syncFrequency: '15m',
@@ -562,16 +747,16 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
-    if (connectorKey === 'local-folder') {
+    if (selectedConnectorKey === 'local-folder') {
       this.sourceForm.patchValue({
         name: 'Selected local folder',
         syncFrequency: 'manual',
-        syncTarget: '.',
+        syncTarget: '',
         localOnly: true,
       });
       return;
     }
-    if (connectorKey === 'email') {
+    if (selectedConnectorKey === 'email') {
       this.sourceForm.patchValue({
         name: 'Email export folder',
         syncFrequency: 'manual',
@@ -581,7 +766,7 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
-    if (connectorKey === 'calendar') {
+    if (selectedConnectorKey === 'calendar') {
       this.sourceForm.patchValue({
         name: 'Calendar export folder',
         syncFrequency: 'manual',
@@ -591,7 +776,7 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
-    if (connectorKey === 'cloud-documents') {
+    if (selectedConnectorKey === 'cloud-documents') {
       this.sourceForm.patchValue({
         name: 'Synced document folder',
         syncFrequency: '15m',
@@ -601,7 +786,7 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
-    if (connectorKey === 'project-board') {
+    if (selectedConnectorKey === 'project-board') {
       this.sourceForm.patchValue({
         name: 'Trello board exports',
         syncFrequency: 'manual',
@@ -611,7 +796,17 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
-    if (connectorKey === 'github') {
+    if (selectedConnectorKey === 'trello') {
+      this.sourceForm.patchValue({
+        name: 'Trello board (read-only)',
+        syncFrequency: '1h',
+        syncTarget: '',
+        localOnly: false,
+        excludePatterns: 'archive,template',
+      });
+      return;
+    }
+    if (selectedConnectorKey === 'github') {
       this.sourceForm.patchValue({
         name: 'GitHub repository',
         syncFrequency: '1h',
@@ -621,7 +816,7 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
-    if (connectorKey === 'whatsapp-export') {
+    if (selectedConnectorKey === 'whatsapp-export') {
       this.sourceForm.patchValue({
         name: 'WhatsApp exported chats',
         syncFrequency: 'manual',
@@ -632,7 +827,7 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
-    if (connectorKey === 'whisper-audio') {
+    if (selectedConnectorKey === 'whisper-audio') {
       this.sourceForm.patchValue({
         name: 'Selected voice-note folder',
         syncFrequency: 'manual',
@@ -643,7 +838,7 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
-    if (connectorKey === 'docling-documents') {
+    if (selectedConnectorKey === 'docling-documents') {
       this.sourceForm.patchValue({
         name: 'Selected document evidence folder',
         syncFrequency: 'manual',
@@ -654,7 +849,7 @@ export class ConnectedSourcesComponent implements OnInit {
       });
       return;
     }
-    if (connectorKey === 'odoo-herp') {
+    if (selectedConnectorKey === 'odoo-herp') {
       this.sourceForm.patchValue({
         name: 'Odoo / HERP workspace',
         syncFrequency: 'manual',
@@ -694,13 +889,19 @@ export class ConnectedSourcesComponent implements OnInit {
     if (this.sourceForm.value.connectorKey === 'github') {
       return 'GitHub owner/repository, e.g. Noodzakelijk-Online/018-HAI';
     }
+    if (this.sourceForm.value.connectorKey === 'trello') {
+      return 'Trello board URL or ID, e.g. https://trello.com/b/abc12345/board-name';
+    }
     if (this.sourceForm.value.connectorKey === 'odoo-herp') {
       return 'Odoo URL or app list, e.g. https://.../odoo?apps=CRM,Sales';
     }
-    return 'Folder target, e.g. .';
+    return 'Selected folder under connected-source root, e.g. projects/018-hai';
   }
 
   syncSource(source: IConnectedSource): void {
+    if (this.syncing) {
+      return;
+    }
     if (source.connectorKey === 'whisper-audio') {
       this.transcribeSource(source);
       return;
@@ -725,12 +926,15 @@ export class ConnectedSourcesComponent implements OnInit {
         },
         error: (error) => {
           this.syncing = false;
-          this.notification.error('Source sync failed', error?.error?.error || 'The connector could not retrieve records.');
+          this.notification.error('Source sync failed', this.operationErrorMessage(error, 'The connector could not retrieve records.'));
         },
       });
   }
 
   transcribeSource(source: IConnectedSource): void {
+    if (this.syncing) {
+      return;
+    }
     this.syncing = true;
     this.sourceService
       .transcribe(source.id)
@@ -752,6 +956,9 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   extractDocuments(source: IConnectedSource): void {
+    if (this.syncing) {
+      return;
+    }
     this.syncing = true;
     this.sourceService
       .extractDocuments(source.id)
@@ -794,7 +1001,7 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   syncFolder(): void {
-    if (this.folderForm.invalid) {
+    if (this.folderForm.invalid || this.syncing) {
       return;
     }
     this.syncing = true;
@@ -814,14 +1021,17 @@ export class ConnectedSourcesComponent implements OnInit {
           this.notifySyncResult('Folder sync', result);
           this.refresh();
         },
-        error: () => {
+        error: (error) => {
           this.syncing = false;
-          this.notification.error('Error', 'Folder sync failed.');
+          this.notification.error('Folder sync failed', this.operationErrorMessage(error, 'The selected folder could not be synchronized.'));
         },
       });
   }
 
   runDueScheduledSyncs(): void {
+    if (this.syncing) {
+      return;
+    }
     this.syncing = true;
     this.sourceService.runDueScheduledSyncs().pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (result) => {
@@ -834,9 +1044,9 @@ export class ConnectedSourcesComponent implements OnInit {
         }
         this.refresh();
       },
-      error: () => {
+      error: (error) => {
         this.syncing = false;
-        this.notification.error('Error', 'Scheduled sync check failed.');
+        this.notification.error('Scheduled sync check failed', this.operationErrorMessage(error, 'Due sources could not be checked.'));
       },
     });
   }
@@ -873,12 +1083,19 @@ export class ConnectedSourcesComponent implements OnInit {
   authorizeGoogleSource(source: IConnectedSource): void {
     this.sourceService.startGoogleOAuth(source.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: ({ authorizeUrl }) => {
-        this.notification.info('Google authorization opened', 'Approve read-only access, then return here and refresh.');
-        window.open(authorizeUrl, '_blank', 'noopener,noreferrer');
+        this.notification.info('Continue with Google', 'Approve read-only access. HAI will return to this source after Google redirects back.');
+        this.navigateToGoogleAuthorization(authorizeUrl);
       },
       error: (error) =>
         this.notification.error('Authorization failed', error?.error?.error || 'Could not start Google authorization.'),
     });
+  }
+
+  // OAuth begins after the consent URL is returned, so opening a new window at
+  // this point is commonly blocked as an asynchronous popup. A same-tab
+  // navigation is deterministic and the signed callback restores this route.
+  private navigateToGoogleAuthorization(authorizeUrl: string): void {
+    window.location.assign(authorizeUrl);
   }
 
   private connectGoogleSource(connectorKey: 'gmail' | 'google-drive' | 'google-contacts' | 'google-calendar'): void {
@@ -889,14 +1106,20 @@ export class ConnectedSourcesComponent implements OnInit {
       'google-contacts': 'Google Contacts',
       'google-calendar': 'Google Calendar',
     };
-    const scopes: Record<typeof connectorKey, string> = {
-      gmail: 'gmail.readonly',
-      'google-drive': 'drive.readonly',
-      'google-contacts': 'contacts.readonly',
-      'google-calendar': 'calendar.readonly',
+    // These are HAI's normalized permissions. The backend owns the provider
+    // OAuth scope selection and never trusts client-supplied Google scopes.
+    const permissions: Record<typeof connectorKey, string> = {
+      gmail: 'email:read',
+      'google-drive': 'cloud_document:read',
+      'google-contacts': 'contact:read',
+      'google-calendar': 'calendar:read',
     };
     const label = labels[connectorKey];
-    if (!connector?.enabled || connector.adapterStatus === 'not_implemented') {
+	if (!connector) {
+		this.notification.warning(`${label} unavailable`, 'Refresh the connector catalog and try again.');
+		return;
+	}
+	if (!this.connectorCanConnect(connector)) {
       this.notification.warning(
         `${label} not configured`,
         'Configure the Google OAuth client, redirect URL, token encryption key, and state signing key first.'
@@ -912,7 +1135,7 @@ export class ConnectedSourcesComponent implements OnInit {
         enabled: true,
         localOnly: false,
         syncFrequency: '15m',
-        permissions: ['metadata:read', scopes[connectorKey]],
+        permissions: ['metadata:read', permissions[connectorKey]],
       })
       .pipe(
         timeout(this.operationTimeoutMs),
@@ -928,12 +1151,16 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   connectWhatsAppSource(): void {
+	if (this.connecting) {
+		return;
+	}
     const connector = this.connectors.find((item) => item.connectorKey === 'whatsapp-export');
     if (!connector?.enabled) {
       this.notification.warning('WhatsApp connector unavailable', 'Refresh connectors and verify the backend exposes whatsapp-export as enabled.');
       return;
     }
-    this.sourceService
+	this.connecting = true;
+	this.sourceService
       .createSource({
         connectorKey: 'whatsapp-export',
         name: this.whatsappForm.value.name || 'WhatsApp exported chats',
@@ -946,7 +1173,7 @@ export class ConnectedSourcesComponent implements OnInit {
         permissions: ['metadata:read', 'chat:read', 'selected-chat-export-read'],
         excludePatterns: ['media omitted', 'omitted', 'spam'],
       })
-      .pipe(timeout(this.operationTimeoutMs))
+	  .pipe(timeout(this.operationTimeoutMs), finalize(() => (this.connecting = false)))
       .subscribe({
         next: (source) => {
           this.whatsappForm.patchValue({ sourceId: source.id });
@@ -958,12 +1185,17 @@ export class ConnectedSourcesComponent implements OnInit {
   }
 
   connectOdooSource(): void {
+	if (this.odooForm.invalid || this.connecting) {
+		this.odooForm.markAllAsTouched();
+		return;
+	}
     const connector = this.connectors.find((item) => item.connectorKey === 'odoo-herp');
     if (!connector?.enabled) {
       this.notification.warning('Odoo connector unavailable', 'Refresh connectors and verify the backend exposes odoo-herp as enabled.');
       return;
     }
-    this.sourceService
+	this.connecting = true;
+	this.sourceService
       .createSource({
         connectorKey: 'odoo-herp',
         name: this.odooForm.value.name || 'Odoo / HERP workspace',
@@ -976,7 +1208,7 @@ export class ConnectedSourcesComponent implements OnInit {
         permissions: ['metadata:read', 'herp:read', 'odoo:read'],
         excludePatterns: ['password', 'secret', 'token', 'private'],
       })
-      .pipe(timeout(this.operationTimeoutMs))
+	  .pipe(timeout(this.operationTimeoutMs), finalize(() => (this.connecting = false)))
       .subscribe({
         next: (source) => {
           this.odooForm.patchValue({ sourceId: source.id });
@@ -1018,8 +1250,8 @@ export class ConnectedSourcesComponent implements OnInit {
   importWhatsAppPaste(): void {
     const sourceId = this.selectedWhatsAppSourceId();
     const content = String(this.whatsappForm.value.pastedExport || '').trim();
-    if (!sourceId || !content) {
-      this.notification.warning('WhatsApp import missing input', 'Connect a WhatsApp source and paste an exported chat first.');
+    if (this.whatsappForm.invalid || !sourceId || !content) {
+      this.notification.warning('WhatsApp import missing input', 'Select a source, add a chat label and project, then paste an exported chat.');
       return;
     }
     this.syncing = true;
@@ -1031,7 +1263,7 @@ export class ConnectedSourcesComponent implements OnInit {
         items: [
           {
             externalId: `whatsapp-manual-${Date.now()}`,
-            title: this.whatsappForm.value.chatTitle || 'WhatsApp selected chat',
+            title: this.whatsappForm.value.chatTitle,
             content,
             sourceUri: `whatsapp-export://manual/${Date.now()}`,
             itemType: 'whatsapp_export',
@@ -1141,7 +1373,7 @@ export class ConnectedSourcesComponent implements OnInit {
         this.searchResult = result;
         this.updateSourceActions();
       },
-      error: () => this.notification.error('Error', 'Search failed.'),
+      error: (error) => this.notification.error('Search failed', this.operationErrorMessage(error, 'Search did not complete.')),
     });
   }
 
@@ -1242,24 +1474,34 @@ export class ConnectedSourcesComponent implements OnInit {
 
   private loadExtractions(): void {
     this.sourceService
-      .extractions(this.searchForm.value.projectKey, this.includeArchived)
+      .extractions(this.searchForm.value.projectKey, this.includeArchived, this.extractionPageLimit)
       .pipe(timeout(this.loadTimeoutMs))
       .subscribe({
-        next: (items) => {
-          this.extractions = items;
+        next: (page) => {
+          this.setExtractionPage(page);
+          this.rebuildSourceIndexes();
           this.updateSourceActions();
         },
         error: () => {
-          this.extractions = [];
+          this.recordLoadWarning('Extracted records');
           this.updateSourceActions();
         },
       });
   }
 
+  extractionPageIsTruncated(): boolean {
+    return this.extractionTotalCount > this.extractions.length;
+  }
+
+  private setExtractionPage(page: ISourceExtractionPage): void {
+    this.extractions = page.items || [];
+    this.extractionTotalCount = page.totalCount;
+  }
+
   private loadAuditLogs(): void {
     this.sourceService.auditLogs().pipe(timeout(this.loadTimeoutMs)).subscribe({
       next: (logs) => (this.auditLogs = logs),
-      error: () => (this.auditLogs = []),
+      error: () => this.recordLoadWarning('Audit history'),
     });
   }
 
@@ -1267,39 +1509,68 @@ export class ConnectedSourcesComponent implements OnInit {
     this.sourceService.syncJobs().pipe(timeout(this.loadTimeoutMs)).subscribe({
       next: (jobs) => {
         this.syncJobs = jobs || [];
+        this.rebuildSourceIndexes();
         this.updateSourceActions();
       },
       error: () => {
-        this.syncJobs = [];
+        this.recordLoadWarning('Sync jobs');
         this.updateSourceActions();
       },
     });
   }
 
+  private rebuildSourceIndexes(): void {
+    this.sourceExtractionCounts = this.extractions.reduce<Record<string, number>>((counts, extraction) => {
+      counts[extraction.sourceId] = (counts[extraction.sourceId] || 0) + 1;
+      return counts;
+    }, {});
+    this.latestJobsBySource = this.syncJobs.reduce<Record<string, ISourceSyncJob>>((jobs, job) => {
+      if (!jobs[job.sourceId]) {
+        jobs[job.sourceId] = job;
+      }
+      return jobs;
+    }, {});
+  }
+
   private loadConnectionHealth(sources: IConnectedSource[]): void {
+    this.connectionHealthSubscription?.unsubscribe();
     if (!sources.length) {
       this.connectionHealth = {};
+      this.connectionHealthUnavailable = {};
       return;
     }
-    forkJoin(
-      sources.map((source) =>
-        this.sourceService.connectionHealth(source.id).pipe(catchError(() => of(undefined)))
-      )
+    this.connectionHealthUnavailable = {};
+    this.connectionHealthSubscription = this.sourceService.connectionHealths().pipe(
+      timeout(this.loadTimeoutMs),
+      catchError(() => {
+        this.connectionHealthUnavailable = sources.reduce<Record<string, boolean>>((unavailable, source) => {
+          unavailable[source.id] = true;
+          return unavailable;
+        }, {});
+        return of([] as ISourceConnectionHealth[]);
+      })
     ).subscribe((results) => {
       this.connectionHealth = results.reduce<Record<string, ISourceConnectionHealth>>((health, item) => {
-        if (item) {
-          health[item.sourceId] = item;
-        }
+        health[item.sourceId] = item;
         return health;
       }, {});
     });
   }
 
   private refreshConnectionHealth(source: IConnectedSource): void {
-    this.sourceService.connectionHealth(source.id).pipe(catchError(() => of(undefined))).subscribe((health) => {
-      if (health) {
-        this.connectionHealth = { ...this.connectionHealth, [source.id]: health };
+    this.sourceService.connectionHealth(source.id).pipe(
+      timeout(this.loadTimeoutMs),
+      catchError(() => {
+        this.connectionHealthUnavailable = { ...this.connectionHealthUnavailable, [source.id]: true };
+        return of(undefined);
+      })
+    ).subscribe((health) => {
+      if (!health) {
+        return;
       }
+      const { [source.id]: _unavailable, ...remainingUnavailable } = this.connectionHealthUnavailable;
+      this.connectionHealthUnavailable = remainingUnavailable;
+      this.connectionHealth = { ...this.connectionHealth, [source.id]: health };
     });
   }
 

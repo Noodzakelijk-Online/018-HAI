@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -557,6 +558,47 @@ func TestSafetyWeakeningRejectsMissingOwnerIdentity(t *testing.T) {
 	}
 	if !service.Control().EmergencyStop() {
 		t.Fatal("missing owner must leave emergency stop engaged")
+	}
+}
+
+func TestControlExecutionAuthorizationCodeIsBoundedAndActionable(t *testing.T) {
+	denied := executionauth.Receipt{
+		Outcome: executionauth.OutcomeDenied,
+		Evidence: executionauth.DecisionEvidence{
+			ReasonCodes: []string{"approval.invalid"},
+		},
+	}
+	if got := controlExecutionAuthorizationCode(denied, executionauth.ErrNotAuthorized); got != "control.execution.approval.invalid" {
+		t.Fatalf("approval failure code = %q", got)
+	}
+
+	unknown := denied
+	unknown.Evidence.ReasonCodes = []string{"provider.response.secret-leaked"}
+	if got := controlExecutionAuthorizationCode(unknown, executionauth.ErrNotAuthorized); got != "control.execution.not_authorized" {
+		t.Fatalf("unknown failure code = %q", got)
+	}
+	if got := controlExecutionAuthorizationCode(executionauth.Receipt{}, executionauth.ErrAuthorizationChanged); got != "control.execution.policy_changed" {
+		t.Fatalf("changed policy code = %q", got)
+	}
+}
+
+func TestControlAuthorizationDiagnosticRedactsOwnerApprovalCapability(t *testing.T) {
+	err := errors.New(
+		"authorization rejected source=opscontrol-owner:1756540800000000000:0123456789abcdef0123456789abcdef:signed-proof token=top-secret",
+	)
+	got := controlAuthorizationDiagnostic(err)
+	for _, forbidden := range []string{
+		"1756540800000000000",
+		"0123456789abcdef0123456789abcdef",
+		"signed-proof",
+		"top-secret",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("diagnostic leaked %q: %s", forbidden, got)
+		}
+	}
+	if !strings.Contains(got, "opscontrol-owner:[REDACTED]") {
+		t.Fatalf("diagnostic did not retain redacted source type: %s", got)
 	}
 }
 

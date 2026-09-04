@@ -29,10 +29,10 @@ const GROUP_TITLES: Record<string, string> = {
 };
 
 @Component({
-  standalone: false,
-  selector: 'app-system-status',
-  templateUrl: './system-status.component.html',
-  styleUrls: ['./system-status.component.scss'],
+    selector: 'app-system-status',
+    templateUrl: './system-status.component.html',
+    styleUrls: ['./system-status.component.scss'],
+    standalone: false
 })
 export class SystemStatusComponent implements OnInit, OnDestroy {
   readiness?: ISystemReadiness;
@@ -43,6 +43,14 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
   lastUpdated?: Date;
 
   private pollSub?: Subscription;
+  private refreshInFlight = false;
+  private readonly onVisibilityChange = (): void => {
+    // A hidden dashboard cannot be acted on. Avoid probing dependencies while
+    // it is in the background, then immediately catch up when it is visible.
+    if (!document.hidden) {
+      this.refresh(true);
+    }
+  };
 
   constructor(
     @Inject(SYSTEM_STATUS_SERVICE_TOKEN)
@@ -54,17 +62,27 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
     this.refresh();
     // Readiness is a live signal; poll it so the page reflects a dependency
     // going down without the operator reloading.
-    this.pollSub = interval(15000).subscribe(() => this.refresh(true));
+    this.pollSub = interval(15000).subscribe(() => {
+      if (!document.hidden) {
+        this.refresh(true);
+      }
+    });
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
   }
 
   ngOnDestroy(): void {
     this.pollSub?.unsubscribe();
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
   }
 
   refresh(silent = false): void {
+    if (silent && this.refreshInFlight) {
+      return;
+    }
     if (!silent) {
       this.loading = true;
     }
+    this.refreshInFlight = true;
     this.systemStatusService.readiness().subscribe({
       next: (readiness) => {
         this.readiness = readiness;
@@ -73,10 +91,12 @@ export class SystemStatusComponent implements OnInit, OnDestroy {
         this.lastUpdated = new Date();
         this.loading = false;
         this.loadError = false;
+        this.refreshInFlight = false;
       },
       error: () => {
         this.loading = false;
         this.loadError = true;
+        this.refreshInFlight = false;
         if (!silent) {
           this.notification.error(
             'System status unavailable',

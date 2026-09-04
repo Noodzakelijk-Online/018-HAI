@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -142,10 +143,24 @@ func (r *Registry) Patch(id uuid.UUID, enabled *bool, name, operationType *strin
 
 // Health returns truthful health for every feed.
 func (r *Registry) Health() []FeedHealth {
+	return r.healthFor(func(Feed) bool { return true })
+}
+
+// HealthForOwner returns health only for feeds owned by owner. The account-feed
+// registry is in-memory today, so ownership must be applied while holding the
+// same lock that reads feed state rather than after a broad list is returned.
+func (r *Registry) HealthForOwner(owner string) []FeedHealth {
+	return r.healthFor(func(feed Feed) bool { return feed.OwnerUserID == owner })
+}
+
+func (r *Registry) healthFor(visible func(Feed) bool) []FeedHealth {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]FeedHealth, 0, len(r.feeds))
 	for id, f := range r.feeds {
+		if !visible(f) {
+			continue
+		}
 		status := ConnAvailable
 		if p, err := ParseProvider(f.Provider); err == nil {
 			if b, ok := Bridge(p); ok {
@@ -156,6 +171,37 @@ func (r *Registry) Health() []FeedHealth {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Feed.Name < out[j].Feed.Name })
 	return out
+}
+
+// GetForOwner looks up a feed without revealing whether another owner has the
+// requested identifier.
+func (r *Registry) GetForOwner(id uuid.UUID, owner string) (Feed, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	feed, ok := r.feeds[id]
+	return feed, ok && feed.OwnerUserID == owner
+}
+
+// PatchForOwner updates only a feed owned by owner.
+func (r *Registry) PatchForOwner(id uuid.UUID, owner string, enabled *bool, name, operationType *string) (Feed, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	feed, ok := r.feeds[id]
+	if !ok || feed.OwnerUserID != owner {
+		return Feed{}, false
+	}
+	if enabled != nil {
+		feed.Enabled = *enabled
+	}
+	if name != nil && *name != "" {
+		feed.Name = *name
+	}
+	if operationType != nil {
+		feed.OperationType = *operationType
+	}
+	r.feeds[id] = feed
+	r.appendAudit(id, "updated", "feed updated")
+	return feed, true
 }
 
 // Sync fetches a feed, privacy-scans each item, and ingests operations.
@@ -169,12 +215,33 @@ func (r *Registry) Sync(ctx context.Context, id uuid.UUID) (SyncReport, bool) {
 	return r.syncFeed(ctx, feed), true
 }
 
+// SyncForOwner runs only a feed owned by owner. A foreign identifier is
+// indistinguishable from a missing one to callers.
+func (r *Registry) SyncForOwner(ctx context.Context, id uuid.UUID, owner string) (SyncReport, bool) {
+	r.mu.Lock()
+	feed, ok := r.feeds[id]
+	r.mu.Unlock()
+	if !ok || feed.OwnerUserID != owner {
+		return SyncReport{}, false
+	}
+	return r.syncFeed(ctx, feed), true
+}
+
 // SyncDue syncs all enabled feeds.
 func (r *Registry) SyncDue(ctx context.Context) []SyncReport {
+	return r.syncDueFor(ctx, func(Feed) bool { return true })
+}
+
+// SyncDueForOwner runs enabled feeds only for one authenticated owner.
+func (r *Registry) SyncDueForOwner(ctx context.Context, owner string) []SyncReport {
+	return r.syncDueFor(ctx, func(feed Feed) bool { return feed.OwnerUserID == owner })
+}
+
+func (r *Registry) syncDueFor(ctx context.Context, visible func(Feed) bool) []SyncReport {
 	r.mu.Lock()
 	var due []Feed
 	for _, f := range r.feeds {
-		if f.Enabled {
+		if f.Enabled && visible(f) {
 			due = append(due, f)
 		}
 	}
@@ -190,14 +257,16 @@ func (r *Registry) syncFeed(ctx context.Context, feed Feed) SyncReport {
 	rep := SyncReport{FeedID: feed.ID.String()}
 	data, err := fetchFeedBytes(ctx, feed, r.opts)
 	if err != nil {
-		rep.Errors = append(rep.Errors, err.Error())
-		r.recordSync(feed.ID, 0, "sync_failed", err.Error())
+		message := publicSyncError(err)
+		rep.Errors = append(rep.Errors, message)
+		r.recordSync(feed.ID, 0, "sync_failed", message)
 		return rep
 	}
 	parsed, err := ParseGenericFeed(data, r.maxC, r.maxM)
 	if err != nil {
-		rep.Errors = append(rep.Errors, err.Error())
-		r.recordSync(feed.ID, 0, "sync_failed", err.Error())
+		message := publicSyncError(err)
+		rep.Errors = append(rep.Errors, message)
+		r.recordSync(feed.ID, 0, "sync_failed", message)
 		return rep
 	}
 	rep.Cursor = parsed.Cursor
@@ -212,12 +281,12 @@ func (r *Registry) syncFeed(ctx context.Context, feed Feed) SyncReport {
 		}
 		in, err := feed.ToOperationInput(item.ToFeedItem())
 		if err != nil {
-			rep.Errors = append(rep.Errors, fmt.Sprintf("item %s: %v", item.ExternalID, err))
+			rep.Errors = append(rep.Errors, "a feed item was rejected during bounded validation")
 			continue
 		}
 		res, err := r.ops.Ingest(in)
 		if err != nil {
-			rep.Errors = append(rep.Errors, fmt.Sprintf("ingest %s: %v", item.ExternalID, err))
+			rep.Errors = append(rep.Errors, "a feed item could not be recorded")
 			continue
 		}
 		if res.Created {
@@ -230,6 +299,25 @@ func (r *Registry) syncFeed(ctx context.Context, feed Feed) SyncReport {
 	return rep
 }
 
+// publicSyncError keeps browser and audit responses useful without exposing
+// local filesystem locations, upstream URLs, parser payloads, or transport
+// internals. Detailed runner diagnostics stay at the local operator boundary.
+func publicSyncError(err error) string {
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(message, "http feeds are disabled"):
+		return "HTTP feed sync is disabled by policy"
+	case strings.Contains(message, "unsafe feed path"):
+		return "feed path is not approved"
+	case strings.Contains(message, "exceeds"):
+		return "feed content exceeds the configured size limit"
+	case strings.Contains(message, "must be a json") || strings.Contains(message, "invalid character"):
+		return "feed content is not valid JSON"
+	default:
+		return "feed sync failed; inspect local operator diagnostics"
+	}
+}
+
 // Audit returns a feed's audit trail (newest first).
 func (r *Registry) Audit(id uuid.UUID) []AuditEvent {
 	r.mu.Lock()
@@ -240,6 +328,23 @@ func (r *Registry) Audit(id uuid.UUID) []AuditEvent {
 		out[i] = events[len(events)-1-i]
 	}
 	return out
+}
+
+// AuditForOwner returns an immutable audit view only when the feed belongs to
+// owner. It deliberately uses the same not-found result for foreign feeds.
+func (r *Registry) AuditForOwner(id uuid.UUID, owner string) ([]AuditEvent, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	feed, ok := r.feeds[id]
+	if !ok || feed.OwnerUserID != owner {
+		return nil, false
+	}
+	events := r.audits[id]
+	out := make([]AuditEvent, len(events))
+	for i := range events {
+		out[i] = events[len(events)-1-i]
+	}
+	return out, true
 }
 
 func (r *Registry) recordSync(id uuid.UUID, items int, eventType, msg string) {

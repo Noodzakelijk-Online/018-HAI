@@ -40,6 +40,8 @@ class SmokeAuthContractTest(unittest.TestCase):
             'out="$("${ROOT}/scripts/${s}.sh" 2>&1)"',
             aggregator,
         )
+        self.assertIn('echo "==> ${s} failure detail"', aggregator)
+        self.assertIn("printf '%s\\n' \"${out}\"", aggregator)
 
     def test_signed_session_helper_uses_expiring_hmac_sha256_jwts(self) -> None:
         helper = (ROOT / "scripts" / "smoke-auth.sh").read_text(encoding="utf-8")

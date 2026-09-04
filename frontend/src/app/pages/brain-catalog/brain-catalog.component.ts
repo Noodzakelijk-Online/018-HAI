@@ -64,10 +64,10 @@ interface BoundedCatalogStatus {
 }
 
 @Component({
-  standalone: false,
-  selector: 'app-brain-catalog',
-  templateUrl: './brain-catalog.component.html',
-  styleUrls: ['./brain-catalog.component.scss'],
+    selector: 'app-brain-catalog',
+    templateUrl: './brain-catalog.component.html',
+    styleUrls: ['./brain-catalog.component.scss'],
+    standalone: false
 })
 export class BrainCatalogComponent implements OnInit {
   catalog?: IBrainCatalogResponse
@@ -763,7 +763,6 @@ export class BrainCatalogComponent implements OnInit {
     this.service.collectionRevalidationHistory().subscribe({
       next: (history) => (this.collectionMaintenanceHistory = history || []),
       error: () => {
-        this.collectionMaintenanceHistory = []
         this.collectionMaintenanceHistoryUnavailable = true
       },
     })
@@ -774,7 +773,6 @@ export class BrainCatalogComponent implements OnInit {
     this.service.repositoryDiscoveryRevalidationHistory().subscribe({
       next: (history) => (this.repositoryDiscoveryMaintenanceHistory = history || []),
       error: () => {
-        this.repositoryDiscoveryMaintenanceHistory = []
         this.repositoryDiscoveryMaintenanceHistoryUnavailable = true
       },
     })

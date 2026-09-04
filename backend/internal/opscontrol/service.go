@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"automation-hub-backend/internal/autonomypolicy"
 	"automation-hub-backend/internal/executionbroker"
 	"automation-hub-backend/internal/operations"
+
+	"github.com/google/uuid"
 )
 
 var ErrControlPersistence = errors.New("opscontrol state persistence failed")
@@ -29,6 +32,7 @@ type Service struct {
 	ops           *operations.Service
 	runner        BackgroundRunner
 	authorization ExecutionAuthorizer
+	approvals     OwnerControlApprovalIssuer
 	owner         string
 	space         string
 	now           func() time.Time
@@ -49,6 +53,16 @@ func NewService(stateDir string, broker *executionbroker.Broker, ops *operations
 // Control returns the controller (implements the background worker's Control).
 func (s *Service) Control() *Controller { return s.control }
 
+// SeedInitialState applies configured controls only to an empty state
+// directory. Persisted operator choices always win on every subsequent boot.
+func (s *Service) SeedInitialState(
+	mode autonomypolicy.Mode,
+	emergencyStop bool,
+	actor string,
+) error {
+	return s.control.SeedInitialState(mode, emergencyStop, actor, s.now().UTC())
+}
+
 // SetBackgroundRunner wires the background pass used by emergency-stop
 // verification.
 func (s *Service) SetBackgroundRunner(r BackgroundRunner) { s.runner = r }
@@ -58,6 +72,109 @@ func (s *Service) SetBackgroundRunner(r BackgroundRunner) { s.runner = r }
 func (s *Service) WithExecutionAuthorizer(authorizer ExecutionAuthorizer) *Service {
 	s.authorization = authorizer
 	return s
+}
+
+// WithOwnerControlApprovalIssuer installs the owner-confirmation source used
+// for short-lived, exact-bound resume and autonomy-escalation requests.
+func (s *Service) WithOwnerControlApprovalIssuer(issuer OwnerControlApprovalIssuer) *Service {
+	s.approvals = issuer
+	return s
+}
+
+// PrepareEmergencyStopResume records an owner-confirmed, short-lived approval
+// for clearing the current emergency-stop revision. It does not change state;
+// the returned authorization must be consumed immediately by Resume.
+func (s *Service) PrepareEmergencyStopResume(actorIdentity string) (ControlAuthorization, error) {
+	actorIdentity = strings.TrimSpace(actorIdentity)
+	if actorIdentity == "" {
+		return ControlAuthorization{}, ErrUnauthenticated
+	}
+	if strings.TrimSpace(s.owner) == "" || actorIdentity != s.owner {
+		return ControlAuthorization{}, ErrAuthorizationDenied
+	}
+	if s.approvals == nil {
+		return ControlAuthorization{}, ErrAuthorizationUnavailable
+	}
+	state, err := s.control.emergency.Status()
+	if err != nil {
+		return ControlAuthorization{}, fmt.Errorf("%w: %v", ErrControlPersistence, err)
+	}
+	if !state.Engaged {
+		return ControlAuthorization{}, fmt.Errorf("%w: emergency stop is not engaged", ErrEmergencyStopStateChanged)
+	}
+	resourceID := emergencyStopResourceID(state.Revision)
+	bindingDigest, err := controlEffectDigest(controlEffect{
+		Version:       1,
+		OwnerIdentity: s.owner,
+		Action:        clearEmergencyStopAction,
+		ResourceType:  emergencyStopResourceType,
+		ResourceID:    resourceID,
+		Target:        "disengaged",
+	})
+	if err != nil {
+		return ControlAuthorization{}, fmt.Errorf("derive resume effect: %w", err)
+	}
+	approval, err := s.approvals.Prepare(s.owner, bindingDigest)
+	if err != nil {
+		return ControlAuthorization{}, fmt.Errorf("prepare owner control approval: %w", err)
+	}
+	return ControlAuthorization{
+		ActorIdentity:         actorIdentity,
+		IdempotencyKey:        uuid.NewString(),
+		TaskID:                "opscontrol-emergency-stop-" + strconv.FormatUint(state.Revision, 10),
+		ApprovalSourceID:      approval.SourceID,
+		ApprovalBindingDigest: approval.BindingDigest,
+	}, nil
+}
+
+// PrepareAutonomyModeChange prepares an owner approval only when the requested
+// mode grants more autonomy than the persisted mode. Restrictive changes stay
+// immediately available and return an empty authorization.
+func (s *Service) PrepareAutonomyModeChange(actorIdentity, mode string) (ControlAuthorization, error) {
+	actorIdentity = strings.TrimSpace(actorIdentity)
+	if actorIdentity == "" {
+		return ControlAuthorization{}, ErrUnauthenticated
+	}
+	if strings.TrimSpace(s.owner) == "" || actorIdentity != s.owner {
+		return ControlAuthorization{}, ErrAuthorizationDenied
+	}
+	target, err := autonomypolicy.ParseMode(mode)
+	if err != nil {
+		return ControlAuthorization{}, err
+	}
+	current, err := s.control.ModePersistenceStatus()
+	if err != nil {
+		return ControlAuthorization{}, fmt.Errorf("%w: %v", ErrControlPersistence, err)
+	}
+	if modeAuthorityRank(target) <= modeAuthorityRank(current) {
+		return ControlAuthorization{}, nil
+	}
+	if s.approvals == nil {
+		return ControlAuthorization{}, ErrAuthorizationUnavailable
+	}
+	resourceID := autonomyModeResourceID(string(current), string(target))
+	bindingDigest, err := controlEffectDigest(controlEffect{
+		Version:       1,
+		OwnerIdentity: s.owner,
+		Action:        escalateAutonomyAction,
+		ResourceType:  autonomyModeResourceType,
+		ResourceID:    resourceID,
+		Target:        string(target),
+	})
+	if err != nil {
+		return ControlAuthorization{}, fmt.Errorf("derive autonomy-mode effect: %w", err)
+	}
+	approval, err := s.approvals.Prepare(s.owner, bindingDigest)
+	if err != nil {
+		return ControlAuthorization{}, fmt.Errorf("prepare owner control approval: %w", err)
+	}
+	return ControlAuthorization{
+		ActorIdentity:         actorIdentity,
+		IdempotencyKey:        uuid.NewString(),
+		TaskID:                "opscontrol-autonomy-mode-" + string(current) + "-to-" + string(target),
+		ApprovalSourceID:      approval.SourceID,
+		ApprovalBindingDigest: approval.BindingDigest,
+	}, nil
 }
 
 // EngageEmergencyStop halts all background processing (persisted).
@@ -192,7 +309,7 @@ func (s *Service) Status(ctx context.Context) Status {
 	storedMode, modeErr := s.control.ModePersistenceStatus()
 	modeError := ""
 	if modeErr != nil {
-		modeError = modeErr.Error()
+		modeError = "persisted autonomy mode is unavailable"
 	}
 	return Status{
 		Mode:         string(mode),

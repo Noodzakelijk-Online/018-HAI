@@ -158,6 +158,14 @@ export interface IPursuit {
   updatedAt: string;
 }
 
+export interface IPursuitLifeDomainReconciliationResult {
+  scanned: number;
+  projected: number;
+  skipped: number;
+  failed: number;
+  failures?: string[];
+}
+
 export interface IPursuitLink {
   id: string;
   pursuitId: string;
@@ -217,6 +225,7 @@ export interface IPursuitListItem {
 
 export interface IPursuitDashboard {
   counts: Record<string, number>;
+  pursuits?: IPursuit[];
   decisionQueue: IPursuitDashboardDecision[];
   needsRobert: IPursuitListItem[];
   vaReady: IPursuitListItem[];

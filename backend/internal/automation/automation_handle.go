@@ -1,17 +1,25 @@
 package automation
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 
+	"automation-hub-backend/internal/apierror"
+	"automation-hub-backend/internal/config"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+)
+
+const (
+	maxAutomationUpdateBodyBytes = 1 << 20
+	automationImageFormOverhead  = 1 << 20
 )
 
 type Handler struct {
@@ -56,7 +64,7 @@ func (h *Handler) ImageHandler(c *gin.Context) {
 	imageName := c.Param("imageName")
 	imagePath, err := resolveImagePath(imageName)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": apierror.PublicMessage(err, "automation image name is invalid")})
 		return
 	}
 	if _, err := os.Stat(imagePath); err != nil {
@@ -64,7 +72,7 @@ func (h *Handler) ImageHandler(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Image not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "automation image is unavailable"})
 		return
 	}
 
@@ -90,6 +98,12 @@ func (h *Handler) ImageHandler(c *gin.Context) {
 // @Router /automations [post]
 func (h *Handler) Create(c *gin.Context) {
 	var automation models.Automation
+	maxBodyBytes := maxAutomationCreateBodyBytes()
+	if c.Request.ContentLength > maxBodyBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "automation image upload is too large"})
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
 
 	automation.Name = c.PostForm("name")
 	automation.Host = c.PostForm("host")
@@ -112,17 +126,32 @@ func (h *Handler) Create(c *gin.Context) {
 	removeImage, _ := strconv.ParseBool(c.PostForm("removeImage"))
 	automation.RemoveImage = removeImage
 
-	file, _ := c.FormFile("imageFile")
+	file, err := c.FormFile("imageFile")
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "automation image upload is too large"})
+			return
+		}
+	}
 	if file != nil {
 		automation.ImageFile = file
 	}
 
 	newAutomation, err := h.service.Create(&automation)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation could not be created")})
 		return
 	}
 	c.JSON(http.StatusCreated, newAutomation)
+}
+
+func maxAutomationCreateBodyBytes() int64 {
+	imageMaxSize := config.AppConfig.ImageMaxSize
+	if imageMaxSize <= 0 {
+		imageMaxSize = 5 << 20
+	}
+	return imageMaxSize + automationImageFormOverhead
 }
 
 // GetAll
@@ -137,7 +166,7 @@ func (h *Handler) Create(c *gin.Context) {
 func (h *Handler) GetAll(c *gin.Context) {
 	automations, err := h.service.FindAll()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automations are unavailable")})
 		return
 	}
 
@@ -166,7 +195,7 @@ func (h *Handler) GetByID(c *gin.Context) {
 
 	automation, err := h.service.FindByID(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation is unavailable")})
 		return
 	}
 
@@ -200,7 +229,7 @@ func (h *Handler) DeleteByID(c *gin.Context) {
 
 	err = h.service.Delete(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation could not be deleted")})
 		return
 	}
 
@@ -238,7 +267,7 @@ func (h *Handler) SwapPosition(c *gin.Context) {
 
 	err = h.service.SwapOrder(id1, id2)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation order could not be changed")})
 		return
 	}
 
@@ -260,21 +289,26 @@ func (h *Handler) SwapPosition(c *gin.Context) {
 func (h *Handler) Update(c *gin.Context) {
 	var automation models.Automation
 
-	body, err := io.ReadAll(c.Request.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, maxAutomationUpdateBodyBytes))
 	defer c.Request.Body.Close()
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "automation update exceeds maximum request size"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read request body"})
 		return
 	}
 
 	if err := models.JSON.Unmarshal(body, &automation); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "automation update request is invalid"})
 		return
 	}
 
 	updatedAutomation, err := h.service.Update(&automation)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "automation could not be updated")})
 		return
 	}
 

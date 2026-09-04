@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -100,6 +101,13 @@ type LocalModelMaintenanceGate interface {
 // one Compose-internal endpoint and persists the same daily pull evidence.
 type IsolatedOllamaMaintenanceGate interface {
 	EnsureMiniSWEOllamaModel(endpointURL, modelID string) error
+}
+
+// modelMaintenanceLeaseRepository is optional so policy-only and focused-test
+// services remain dependency-light. The production GORM history repository
+// supplies a PostgreSQL-backed lease for each provider/model pair.
+type modelMaintenanceLeaseRepository interface {
+	AcquireModelMaintenanceLease(ctx context.Context, providerID, modelID string) (release func(), acquired bool, err error)
 }
 
 // EnsureConfiguredLocalModel verifies that an optional local planning runner
@@ -323,6 +331,37 @@ func (s *Service) ensureModelFresh(
 	} else if err != nil {
 		return s.recordMaintenance(ModelMaintenanceResult{ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.Name, Status: "failed", Reason: "could not re-read daily model maintenance history after waiting for the model refresh lock", ConfigurationFingerprint: fingerprint, BlocksExecution: true, CheckedAt: now})
 	}
+	if leaseRepository, ok := s.maintenanceHistory.(modelMaintenanceLeaseRepository); ok {
+		leaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		release, acquired, err := leaseRepository.AcquireModelMaintenanceLease(leaseCtx, provider.ID, model.ID)
+		cancel()
+		if err != nil {
+			return s.recordMaintenance(ModelMaintenanceResult{ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.Name, Status: "failed", Reason: "could not acquire the daily model maintenance lease", ConfigurationFingerprint: fingerprint, BlocksExecution: true, CheckedAt: time.Now().UTC()})
+		}
+		if !acquired {
+			return ModelMaintenanceResult{ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.Name, Status: "in_progress", Reason: "daily model maintenance is already running on another backend process", ConfigurationFingerprint: fingerprint, BlocksExecution: true, CheckedAt: time.Now().UTC()}
+		}
+		if release != nil {
+			defer release()
+		}
+
+		// A different process may have completed maintenance between the local
+		// re-check and our successful lease acquisition. Reuse its durable record
+		// instead of probing or pulling a model a second time.
+		now = time.Now().UTC()
+		latest, err := s.maintenanceHistory.FindLatestModelMaintenance(provider.ID, model.ID)
+		if err != nil {
+			return s.recordMaintenance(ModelMaintenanceResult{ProviderID: provider.ID, ProviderName: provider.Name, ModelID: model.ID, ModelName: model.Name, Status: "failed", Reason: "could not read daily model maintenance history after acquiring the model lease", ConfigurationFingerprint: fingerprint, BlocksExecution: true, CheckedAt: now})
+		}
+		if latest != nil && latest.ConfigurationFingerprint == fingerprint && maintenanceRecordReusable(*latest, now, interval) {
+			result := modelMaintenanceResult(*latest)
+			result.Reused = true
+			return result
+		}
+		if latest != nil && latest.ConfigurationFingerprint != fingerprint {
+			configurationChanged = true
+		}
+	}
 
 	var effectContext *EffectContext
 	if len(effectContexts) > 0 {
@@ -503,9 +542,20 @@ func (s *Service) refreshOllamaModel(
 	}
 
 	payload, _ := json.Marshal(map[string]any{"name": model.ID, "stream": false})
+	// A model pull is a final effect. Scheduled maintenance therefore gets a
+	// fresh, server-derived task identity for each actual pull attempt instead
+	// of reusing the long-lived scheduler identity whose authority was already
+	// consumed by a prior successful run.
+	attemptContext := modelMaintenanceAttemptEffectContext(
+		effectContext,
+		provider.ID,
+		model.ID,
+		result.CheckedAt,
+		atomic.AddUint64(&s.maintenanceAttemptSequence, 1),
+	)
 	authorization, err := buildFinalEffectAuthorizationRequest(
 		EffectOperationModelPull,
-		effectContext,
+		attemptContext,
 		provider,
 		model,
 		endpoint,
@@ -548,6 +598,22 @@ func (s *Service) refreshOllamaModel(
 		result.Reason = "Ollama refreshed the configured model tag before this model was used"
 	}
 	return s.recordMaintenance(result)
+}
+
+func modelMaintenanceAttemptEffectContext(
+	base *EffectContext,
+	providerID string,
+	modelID string,
+	checkedAt time.Time,
+	sequence uint64,
+) *EffectContext {
+	if base == nil {
+		return nil
+	}
+	attempt := normalizeEffectContext(*base)
+	identityDigest := sha256.Sum256([]byte(strings.TrimSpace(providerID) + "\x00" + strings.TrimSpace(modelID)))
+	attempt.TaskID = "system:model-maintenance:" + checkedAt.UTC().Format("20060102T150405.000000000Z") + ":" + fmt.Sprintf("%x", identityDigest[:8]) + ":" + strconv.FormatUint(sequence, 10)
+	return &attempt
 }
 
 func (s *Service) recordMaintenance(result ModelMaintenanceResult) ModelMaintenanceResult {

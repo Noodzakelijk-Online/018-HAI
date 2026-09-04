@@ -32,4 +32,10 @@ describe('OnboardingComponent', () => {
     expect(router.navigate).toHaveBeenCalledWith(['/control-center']);
     expect(OnboardingComponent.isOnboarded()).toBeTrue();
   });
+
+  it('uses the shared theme token for its explanatory text', () => {
+    const styles = (OnboardingComponent as any).ɵcmp.styles.join('\n');
+    // Angular 22 namespaces CSS custom properties in compiled component styles.
+    expect(styles).toMatch(/color:\s*var\(--(?:%NS%)?hai-muted\)/);
+  });
 });

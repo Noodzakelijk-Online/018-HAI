@@ -1,7 +1,6 @@
 import { Component, OnInit } from '@angular/core'
 import { HttpErrorResponse } from '@angular/common/http'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
-import { forkJoin } from 'rxjs'
 import {
   CapacitySignals,
   CapacitySnapshot,
@@ -49,10 +48,10 @@ interface PriorityField {
 }
 
 @Component({
-  standalone: false,
-  selector: 'app-life-ops',
-  templateUrl: './life-ops.component.html',
-  styleUrls: ['./life-ops.component.scss'],
+    selector: 'app-life-ops',
+    templateUrl: './life-ops.component.html',
+    styleUrls: ['./life-ops.component.scss'],
+    standalone: false
 })
 export class LifeOpsComponent implements OnInit {
   readonly moduleId = 'life-ops'
@@ -156,13 +155,7 @@ export class LifeOpsComponent implements OnInit {
     if (this.loading && this.domains.length) return
     this.loading = true
     this.errorMessage = ''
-    forkJoin({
-      domains: this.service.domains(),
-      needs: this.service.needs(undefined, 100),
-      capacity: this.service.latestCapacity(),
-      goals: this.service.goals(),
-      forest: this.service.goalForest(),
-    }).subscribe({
+    this.service.overview().subscribe({
       next: ({ domains, needs, capacity, goals, forest }) => {
         this.domains = domains
         this.needs = needs

@@ -346,6 +346,11 @@ func (r *Runner) RunWorkflowTask(request workflow.TaskRunRequest) (*workflow.Tas
 	}
 	previewRequest := intake
 	previewRequest.ExecutionRequested = true
+	// Keep the approval state in the selector input so the preview's framework
+	// authority contract is comparable to the eventual approved run. The
+	// preview still clears HumanApproved and every approval proof, so it cannot
+	// cross the execution boundary.
+	previewRequest.FrameworkSelectionHumanApproved = request.HumanApproved
 	previewRequest.ExecuteAllowed = false
 	previewRequest.HumanApproved = false
 	previewRequest.ApprovalNote = ""
@@ -632,8 +637,13 @@ func workflowFrameworkRiskRank(value string) (string, int, error) {
 		return normalized, 2, nil
 	case "high":
 		return normalized, 3, nil
+	case "critical":
+		// The framework catalog currently has three selectable risk bands. This
+		// adapter only compares that catalog contract; workflow and task state
+		// retain the original critical classification and its approval gates.
+		return "high", 3, nil
 	default:
-		return "", 0, fmt.Errorf("must be one of low, medium, or high")
+		return "", 0, fmt.Errorf("must be one of low, medium, high, or critical")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -64,6 +65,29 @@ func TestLocalFileReaderRejectsInvalidItem(t *testing.T) {
 	r, _ := NewLocalFileReader(testFeed("feed.json"), dir)
 	if _, err := r.Read(context.Background()); err == nil {
 		t.Fatalf("invalid item must be rejected")
+	}
+}
+
+func TestLocalFileReaderRejectsOversizedFeed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "feed.json")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(int64(maxFeedBytes + 1)); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewLocalFileReader(testFeed("feed.json"), dir)
+	if err != nil {
+		t.Fatalf("new reader: %v", err)
+	}
+	if _, err := r.Read(context.Background()); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("Read error = %v, want explicit size-limit rejection", err)
 	}
 }
 

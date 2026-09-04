@@ -2,8 +2,12 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
+	"os/signal"
 	"strings"
 	"time"
 
@@ -16,7 +20,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	maxRequestReadDuration   = 15 * time.Minute
+	maxUploadWriteDuration   = 15 * time.Minute
+	defaultIdleConnectionTTL = 60 * time.Second
+)
+
 func Initialize() error {
+	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals()...)
+	defer stop()
+	return initializeWithContext(ctx)
+}
+
+func initializeWithContext(ctx context.Context) error {
 	// Startup config guard: refuse to serve with a broken configuration so a
 	// misconfigured deployment fails fast and loudly rather than half-working.
 	// Warnings (e.g. empty optional keys) do not block startup.
@@ -40,6 +56,7 @@ func Initialize() error {
 	router.Use(securityHeadersMiddleware())
 	router.Use(rateLimitMiddleware(newRateLimitEnforcer()))
 	router.Use(idempotencyMiddleware(idempotency.New(10 * time.Minute)))
+	router.Use(jsonRequestBodyLimitMiddleware(maxJSONAPIRequestBytes))
 	router.Use(localCaptureCORSMiddleware())
 	metricsExporter, err := metrics.NewFromEnv()
 	if err != nil {
@@ -48,7 +65,7 @@ func Initialize() error {
 	router.Use(metricsExporter.Middleware())
 
 	// initialize routes
-	err = initializeRoutes(router)
+	err = initializeRoutesWithContext(router, ctx)
 	if err != nil {
 		return err
 	}
@@ -56,14 +73,56 @@ func Initialize() error {
 		router.GET("/metrics", metricsExporter.RequireBearerToken(), gin.WrapH(metricsExporter.Handler()))
 	}
 
-	// run server
-	port := config.AppConfig.ServerPort
-	err = router.Run(port)
-	if err != nil {
-		return err
+	server := newHTTPServer(config.AppConfig.ServerPort, router)
+	return serveWithContext(ctx, server, nil)
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       maxRequestReadDuration,
+		IdleTimeout:       defaultIdleConnectionTTL,
+		WriteTimeout:      maxUploadWriteDuration,
+	}
+}
+
+// serveWithContext gives the API and the schedulers that derive from its
+// lifecycle one termination signal. It supports a listener in tests and uses
+// the configured server address in production.
+func serveWithContext(ctx context.Context, server *http.Server, listener net.Listener) error {
+	if server == nil {
+		return errors.New("HTTP server is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	return nil
+	shutdownDone := make(chan struct{})
+	defer close(shutdownDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("server shutdown: %v", err)
+			}
+		case <-shutdownDone:
+		}
+	}()
+
+	var err error
+	if listener != nil {
+		err = server.Serve(listener)
+	} else {
+		err = server.ListenAndServe()
+	}
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
 }
 
 // newRateLimitEnforcer selects where rate-limit counters live. When REDIS_ADDR

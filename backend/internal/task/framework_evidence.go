@@ -121,6 +121,14 @@ func evaluateTypedFrameworkEvidence(
 		contractEvidence := []string{}
 		switch contract.Phase {
 		case EvidencePhasePreAuthorization:
+			if plan.FrameworkEvidencePreflight == nil || !plan.FrameworkEvidencePreflight.Passed {
+				// The dedicated preflight criterion carries the actionable cause.
+				// Do not turn the same blocked precondition into one failure for
+				// every typed requirement.
+				return validationCriterionNotRun,
+					frameworkEvidencePreflightSummary(plan.FrameworkEvidencePreflight),
+					"framework evidence preconditions were not verified before execution"
+			}
 			contractEvidence = verifiedFrameworkPreflightEvidence(plan.FrameworkEvidencePreflight, contract)
 		case EvidencePhaseExecution:
 			contractEvidence = exactFrameworkExecutionEvidence(plan, contract)
@@ -407,13 +415,16 @@ func compileFrameworkEvidenceContracts(
 		}
 		seen[key] = struct{}{}
 		phase := frameworkEvidencePhase(requirement)
+		validator := frameworkEvidenceValidator(requirement, phase)
 		contracts = append(contracts, FrameworkEvidenceContract{
-			ID:            frameworkEvidenceRequirementID(frameworkID, requirement),
-			FrameworkID:   frameworkID,
-			Requirement:   requirement,
-			Phase:         phase,
-			Validator:     frameworkEvidenceValidator(requirement, phase),
-			Required:      true,
+			ID:          frameworkEvidenceRequirementID(frameworkID, requirement),
+			FrameworkID: frameworkID,
+			Requirement: requirement,
+			Phase:       phase,
+			Validator:   validator,
+			// Catalog prose without a concrete validator remains visible in the
+			// plan, but cannot become an unsatisfiable execution precondition.
+			Required:      validator != "explicit_evidence",
 			MaxAgeSeconds: frameworkEvidenceMaxAge(requirement),
 		})
 	}

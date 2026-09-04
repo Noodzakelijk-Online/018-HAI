@@ -1,6 +1,6 @@
 import {Injectable} from '@angular/core';
-import {HttpClient, HttpHeaders, HttpParams} from '@angular/common/http';
-import {catchError, map} from 'rxjs/operators';
+import { HttpClient, HttpHeaders, HttpParams } from '@angular/common/http';
+import {catchError, map, timeout} from 'rxjs/operators';
 import {IAuthCapabilities, IAuthService} from "../auth.service.interface";
 import {Observable, of} from "rxjs";
 import {IUserModel} from "../../models/user.model.interface";
@@ -10,6 +10,10 @@ import {IUserModel} from "../../models/user.model.interface";
     providedIn: 'root'
 })
 export class AuthService implements IAuthService {
+    // Route guards run before a page can render. Keep this substantially below
+    // the generic read timeout so an unavailable local gateway redirects to
+    // login instead of presenting an apparently blank application.
+    static readonly authenticationCheckTimeoutMs = 2500;
     private apiUrl = '/api/v1/auth';
 
     constructor(private http: HttpClient) {
@@ -53,8 +57,9 @@ export class AuthService implements IAuthService {
     }
 
     loggedIn() {
-        return this.http.get<{authenticated?: boolean}>(`${this.apiUrl}/session`).pipe(
-            map((session) => session.authenticated === true),
+        return this.http.get(`${this.apiUrl}/is-user-authenticated`).pipe(
+            timeout(AuthService.authenticationCheckTimeoutMs),
+            map(() => true),
             catchError(() => of(false))
         );
     }

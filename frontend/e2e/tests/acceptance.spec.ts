@@ -4,7 +4,7 @@ import { expect, Page, test } from '@playwright/test';
  * Real operator acceptance path:
  *
  * login -> local source registration -> bounded sync -> governed workflow
- * intake -> durable human approval -> one exact controlled workflow run.
+ * intake -> exact runtime selection -> one bounded, read-only workflow run.
  *
  * The source is the owner-scoped, read-only connected-sources mount. This test
  * never authorizes an external provider or requests an irreversible action.
@@ -12,6 +12,7 @@ import { expect, Page, test } from '@playwright/test';
 
 const email = process.env.E2E_OPERATOR_EMAIL || 'operator@example.com';
 const password = process.env.E2E_OPERATOR_PASSWORD || '';
+const allowMutation = process.env.E2E_ALLOW_MUTATION === 'true';
 
 async function login(page: Page) {
   await page.goto('/');
@@ -24,9 +25,12 @@ async function login(page: Page) {
 }
 
 test.describe('HAI operator acceptance flow', () => {
-  test.skip(!password, 'Set E2E_OPERATOR_PASSWORD and a seeded account to run against a live stack.');
+  test.skip(
+    !password || !allowMutation,
+    'Set E2E_OPERATOR_PASSWORD and E2E_ALLOW_MUTATION=true only for an isolated acceptance stack.',
+  );
 
-  test('login -> source -> sync -> workflow -> approval -> exact bounded execution', async ({ page }) => {
+  test('login -> source -> sync -> workflow -> exact bounded execution', async ({ page }) => {
     let sourceName = '';
     const runId = Date.now();
     const pursuitName = `E2E governed pursuit ${runId}`;
@@ -64,8 +68,18 @@ test.describe('HAI operator acceptance flow', () => {
       sourceName = `E2E local source ${Date.now()}`;
       await page.getByTestId('source-name').fill(sourceName);
       await page.getByTestId('source-target').fill('.');
+      await expect(page.getByTestId('source-connect')).toBeEnabled();
+      const createResponse = page.waitForResponse(
+        (response) => response.url().includes('/api/v1/sources/')
+          && response.request().method() === 'POST'
+      );
       await page.getByTestId('source-connect').click();
-
+      const createdSource = await (await createResponse).json();
+      expect(createdSource.name).toBe(sourceName);
+      const sourceListResponse = await page.request.get('/api/v1/sources/?includeDisabled=true');
+      expect(sourceListResponse.status()).toBe(200);
+      const listedSources = await sourceListResponse.json();
+      expect(listedSources.map((source: { name: string }) => source.name)).toContain(sourceName);
       const sourceRow = page.getByTestId('source-row').filter({ hasText: sourceName });
       await expect(sourceRow).toBeVisible();
       await sourceRow.click();
@@ -88,53 +102,51 @@ test.describe('HAI operator acceptance flow', () => {
       await expect(page.getByTestId('pursuit-row').filter({ hasText: pursuitName })).toBeVisible();
     });
 
-    await test.step('create an explicitly approval-gated workflow', async () => {
+    await test.step('create a low-risk workflow for the read-only probe', async () => {
       await page.goto('/workflow-engine');
       await page.locator('#workflow-intake-input').fill(
-        `Run the HAI backend readiness ${capabilityMarker} only after explicit human approval and attach the source-grounded result.`
+        `Run the selected HAI backend readiness ${capabilityMarker} for ${pursuitName} (${projectKey}) and record its read-only verification result. Do not send anything externally.`
       );
       await page.getByTestId('workflow-project-key').fill(projectKey);
-      await page.getByRole('button', { name: 'Basic', exact: true }).click();
-      await expect(page.getByRole('button', { name: 'Advanced', exact: true })).toBeVisible();
-      await page.locator('details.advanced-block > summary').click();
-      await page.getByTestId('workflow-source-id').fill(`e2e-source-${runId}`);
-      await page.getByTestId('workflow-source-uri').fill(`local://e2e/source/${runId}`);
-      await page.getByTestId('workflow-source-label').fill(sourceName);
+      const matchResponse = page.waitForResponse(
+        (response) => response.url().includes('/api/v1/pursuits/match')
+          && response.request().method() === 'POST'
+      );
+      await page.getByTestId('workflow-match-pursuit').click();
+      const matches = await (await matchResponse).json() as Array<{ pursuit?: { title?: string } }>;
+      expect(matches.some((match) => match.pursuit?.title === pursuitName)).toBeTruthy();
+      const pursuitMatch = page.locator('.pursuit-match-card').filter({ hasText: pursuitName });
+      await expect(pursuitMatch).toBeVisible();
+      await pursuitMatch.click();
       await page.getByTestId('workflow-create').click();
-      await expect(
-        page.getByTestId('workflow-approval-controls').or(page.getByTestId('workflow-runtime-selection'))
-      ).toBeVisible();
+      await expect(page.getByTestId('workflow-runtime-selection')).toBeVisible();
     });
 
-    await test.step('select the exact runtime and approve through the durable boundary', async () => {
+    await test.step('select the exact runtime through the durable boundary', async () => {
       const runtimeSelection = page.getByTestId('workflow-runtime-selection');
-      if (await runtimeSelection.isVisible()) {
-        const exactRuntime = runtimeSelection.getByRole('button', {
-          name: `E2E backend readiness ${capabilityMarker}`,
-          exact: true,
-        });
-        await expect(exactRuntime).toBeVisible();
-        const proposalResponse = page.waitForResponse((response) =>
-          response.request().method() === 'POST'
-          && /\/api\/v1\/workflow\/[^/]+\/proposals\/[^/]+\/resolve$/.test(new URL(response.url()).pathname)
-        );
-        await exactRuntime.click();
-        const response = await proposalResponse;
-        expect(response.ok(), await response.text()).toBeTruthy();
-      } else {
-        await page.getByTestId('workflow-approve').click();
-      }
+      const exactRuntime = runtimeSelection.getByRole('button', {
+        name: `E2E backend readiness ${capabilityMarker}`,
+        exact: true,
+      });
+      await expect(exactRuntime).toBeVisible();
+      const proposalResponse = page.waitForResponse((response) =>
+        response.request().method() === 'POST'
+        && /\/api\/v1\/workflow\/[^/]+\/proposals\/[^/]+\/resolve$/.test(new URL(response.url()).pathname)
+      );
+      await exactRuntime.click();
+      const response = await proposalResponse;
+      expect(response.ok(), await response.text()).toBeTruthy();
       await expect(page.getByTestId('workflow-approval-controls')).toHaveCount(0);
       await expect(page.getByTestId('workflow-runtime-selection')).toHaveCount(0);
-      await expect(page.getByText(/approved/i).first()).toBeVisible();
+      await expect(page.getByTestId('workflow-selected-state')).toHaveText('ready');
     });
 
-    await test.step('run only the selected safe, approved workflow', async () => {
+    await test.step('run only the selected safe workflow', async () => {
       const exactRun = page.getByTestId('workflow-run-selected');
       await expect(exactRun).toBeVisible();
       await exactRun.click();
       const confirmation = page.getByRole('dialog');
-      await expect(confirmation.getByText('Run this approved workflow?')).toBeVisible();
+      await expect(confirmation.getByText('Run this selected workflow?')).toBeVisible();
       const runResponse = page.waitForResponse((response) =>
         response.request().method() === 'POST'
         && /\/api\/v1\/workflow\/[^/]+\/run$/.test(new URL(response.url()).pathname)
@@ -143,8 +155,9 @@ test.describe('HAI operator acceptance flow', () => {
       const response = await runResponse;
       expect(response.ok(), await response.text()).toBeTruthy();
       const result = await response.json();
-      expect(result.status).toBe('completed');
-      expect(result.state).toBe('completed');
+      const resultContext = JSON.stringify(result, null, 2);
+      expect(result.status, resultContext).toBe('completed');
+      expect(result.state, resultContext).toBe('completed');
       await expect(page.getByText(/workflow completed/i).first()).toBeVisible();
       await expect(page.getByText(/last operation/i).first()).toBeVisible();
       await expect(page.getByTestId('workflow-selected-state')).toHaveText('completed');

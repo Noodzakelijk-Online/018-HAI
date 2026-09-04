@@ -46,17 +46,63 @@ treating an arbitrary HTTP 200 as health:
 
 | Runtime | Requests | Validation | Highest discovery level | Identity limitation |
 | --- | --- | --- | --- | --- |
-| OpenClaw | `GET /health` | `ok=true`, `status=live` | `available` | The public health body does not identify or authenticate the runtime. |
+| OpenClaw | `GET /health`; optionally a bounded Gateway `connect` handshake | Health: `ok=true`, `status=live`. Auth discovery: challenge, protocol `4`, `hello-ok`, server identity, non-null features/snapshot, positive policy limits, and exactly `operator.read`. | `available` | Health is unauthenticated. Auth discovery proves only that the configured Gateway accepted one read-only socket; it does not prove execution readiness or a final effect. |
 | Hermes | `GET /health`; optionally authenticated `GET /v1/capabilities` | `platform=hermes-agent`, version, capability object/platform | `health_checked` | Capability discovery requires `HERMES_API_SERVER_KEY`; liveness does not. |
 | Odysseus | `GET /api/health`, `GET /api/version` | healthy status, RFC3339 timestamp, non-empty version | `available` | The public responses do not carry a cryptographic product identity. |
 
-Responses are limited to 64 KiB, redirects are refused, hosts are allowlisted,
-JSON shape is checked, raw bodies are not returned, and only a SHA-256 evidence
-digest plus bounded metadata reaches the dashboard. Successful discovery keeps
-the runtime status `blocked`: `ready` is reserved for a genuinely executable
-adapter. Discovery evidence is currently in-process and intentionally expires
-on backend restart; durable readiness restoration will require a PostgreSQL
-ledger record rather than configuration inference.
+The production Runtime Lab OpenClaw entry is a read-only projection of the same
+canonical `internal/agentruntime` registry used by governed automation. It does
+not consult `OPENCLAW_BASE_URL`, create a second Gateway client policy, own
+task cancellation, or enable task execution. Its manual probe maps only bounded
+canonical readiness to the Runtime Lab contract and retains no raw Gateway
+payload or synthetic evidence digest. The generic `OPENCLAW_BASE_URL` adapter
+remains only for isolated Runtime Lab tooling and compatibility tests.
+
+Generic Runtime Lab responses are limited to 64 KiB, redirects are refused,
+hosts are allowlisted, JSON shape is checked, raw bodies are not returned, and
+only a SHA-256 evidence digest plus bounded metadata reaches the dashboard. The
+canonical OpenClaw adapter now also performs the stricter Companion-specific `GET /health` handshake: its
+response body is capped at 4 KiB, it accepts only `ok=true` with `status=live`,
+and it refuses URL credentials and redirects. Query and fragment data are
+never forwarded to the fixed `/health` request. A live Companion reports
+`available` for read-only discovery; `ready` remains reserved for a genuinely
+executable adapter. No gateway token is sent during this health probe. Discovery
+evidence is currently in-process and intentionally expires on backend restart;
+durable readiness restoration will require a PostgreSQL ledger record rather
+than configuration inference.
+
+With `OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED=true`, HAI performs a second,
+still unauthenticated and read-only validation step. It opens the configured
+WebSocket, limits the first inbound frame to 64 KiB, requires an `event` frame
+named `connect.challenge` with a non-empty nonce and non-negative integer
+timestamp, then closes the socket. It sends no token, Authorization header,
+`connect` frame, RPC, task, or node command. A malformed or unavailable
+challenge changes the result to `unavailable`; it can never be treated as an
+execution-ready state.
+
+With `OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED=true` and a configured
+`OPENCLAW_GATEWAY_TOKEN`, HAI may perform one further read-only identity check.
+After the same bounded challenge it sends only `connect`, requests exactly
+`operator.read`, validates a matching `hello-ok` response and closes the socket.
+The returned role and scope must be exactly `operator` and `operator.read`;
+over-scoped, incomplete, malformed, or unavailable responses are `unavailable`.
+
+`OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED=true` is an independent second
+opt-in that only operates after the authenticated identity check succeeds. HAI
+requires the `tasks.list` feature to be advertised, sends one `tasks.list`
+request with `limit: 50`, accepts only documented task-status values, and
+returns a non-persistent aggregate of status counts. It rejects malformed,
+unexpected, over-limit, or unknown-status responses. Task identifiers, titles,
+prompts, session keys, owner information, result summaries, and error text are
+discarded before the HAI health response is created. No task cancellation,
+creation, execution, tool invocation, channel action, browser action, node
+action, or configuration change is available through this discovery path.
+Only this authenticated path may expose the bounded printable Gateway server
+version in HAI health evidence; a health-only probe never infers a version.
+With task-ledger discovery disabled, no Gateway RPC, task, tool, browser, node,
+message, pairing, or channel command is sent. This remains an opt-in credential
+boundary and discovery-only even when the bounded task-ledger summary is
+enabled.
 
 ## Disposition Rules
 

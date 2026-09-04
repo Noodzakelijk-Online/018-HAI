@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository interface {
@@ -26,6 +27,7 @@ type Repository interface {
 	SaveLaunchIntent(event *models.AutomationLaunchEvent) error
 	SaveLaunchEvent(event *models.AutomationLaunchEvent) error
 	FindLaunchEvents(automationID uuid.UUID, limit int) ([]models.AutomationLaunchEvent, error)
+	FindLaunchEventByExecutionReference(reference string) (*models.AutomationLaunchEvent, error)
 	SaveApprovalDecision(record *ApprovalDecisionRecord) error
 	FindApprovalDecision(sourceID string) (*ApprovalDecisionRecord, error)
 }
@@ -144,6 +146,15 @@ func (r *GormUserRepository) FindHealthEvents(automationID uuid.UUID, limit int)
 }
 
 func (r *GormUserRepository) SaveLaunchEvent(event *models.AutomationLaunchEvent) error {
+	if event == nil {
+		return fmt.Errorf("launch event is required")
+	}
+	if key := strings.TrimSpace(event.EventKey); key != "" {
+		// The partial unique index introduced by migration 0067 is the authority
+		// for event-key idempotency. Let the database absorb a concurrent retry
+		// instead of treating a check-then-insert race as a worker failure.
+		return r.DB.Clauses(clause.OnConflict{DoNothing: true}).Create(event).Error
+	}
 	return r.DB.Create(event).Error
 }
 
@@ -171,6 +182,23 @@ func (r *GormUserRepository) FindLaunchEvents(automationID uuid.UUID, limit int)
 		return nil, err
 	}
 	return events, nil
+}
+
+func (r *GormUserRepository) FindLaunchEventByExecutionReference(reference string) (*models.AutomationLaunchEvent, error) {
+	reference = strings.TrimSpace(reference)
+	if reference == "" {
+		return nil, fmt.Errorf("execution reference is required")
+	}
+	var event models.AutomationLaunchEvent
+	err := r.DB.
+		Where("execution_reference = ?", reference).
+		Where("launch_type = ?", "agent_runtime").
+		Order("started_at DESC").
+		First(&event).Error
+	if err != nil {
+		return nil, err
+	}
+	return &event, nil
 }
 
 func (r *GormUserRepository) SaveApprovalDecision(record *ApprovalDecisionRecord) error {

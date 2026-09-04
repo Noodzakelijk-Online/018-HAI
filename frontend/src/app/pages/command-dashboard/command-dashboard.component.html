@@ -282,7 +282,7 @@
           <div class="section-heading">
             <div>
               <h2>Controlled Agent Runtimes</h2>
-            <span>Hermes, Odysseus, and OpenClaw execute only through approved task workflows.</span>
+            <span>Hermes, DeepSeek Harness, Odysseus, and OpenClaw execute only through approved task workflows.</span>
             </div>
             <strong>{{ runtimes.length }} registered</strong>
           </div>
@@ -314,7 +314,7 @@
                 nzSize="small"
                 (click)="refreshOpenClawEcosystem(openClaw)"
                 [nzLoading]="openClawRefreshLoading"
-                title="Re-scan the configured OpenClaw package path or uploaded zip."
+                title="Prepare a one-time owner-confirmed refresh for the configured OpenClaw package path or uploaded zip."
               >
                 Refresh ecosystem
               </button>
@@ -345,7 +345,7 @@
             </div>
             <div
               class="openclaw-metric"
-              title="Runtime health from the HAI runtime registry."
+              [title]="openClawGatewayHealthTitle(openClaw)"
             >
               <span>Health</span>
               <strong>{{ runtimeStatus(openClaw) }}</strong>
@@ -694,6 +694,10 @@
       </div>
 
       <nz-card nzTitle="Assistant Command History" class="full-band">
+        <div class="command-history-unavailable" *ngIf="commandLogsUnavailable" role="status">
+          <span>Command history is unavailable. Existing records are retained and HAI will not infer that no commands exist.</span>
+          <button nz-button nzType="link" type="button" (click)="loadCommandLogs()">Retry</button>
+        </div>
         <nz-table [nzData]="commandLogs" nzSize="small" [nzPageSize]="8">
           <thead>
             <tr>
@@ -718,7 +722,7 @@
             </tr>
           </tbody>
         </nz-table>
-        <nz-empty *ngIf="!commandLogs.length" nzNotFoundContent="No assistant commands yet."></nz-empty>
+        <nz-empty *ngIf="!commandLogsUnavailable && !commandLogs.length" nzNotFoundContent="No assistant commands yet."></nz-empty>
       </nz-card>
     </nz-content>
   </nz-layout>

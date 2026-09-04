@@ -20,16 +20,22 @@ import (
 const (
 	JobKindSweep      = "workflow.sweep"
 	sweepMaxAttempts  = 3
-	defaultPollSecond = 15 * time.Second
+	defaultPollSecond = 5 * time.Minute
+	minPollInterval   = 15 * time.Second
+	maxPollInterval   = time.Hour
 )
 
 // RegisterDurableScheduling registers the workflow sweep as a durable recurring
 // job. Safe to call on every startup: the job is a singleton.
-func RegisterDurableScheduling(runner *durablejob.Runner, service ScheduledWorkflowService, interval time.Duration, limit int) error {
+func RegisterDurableScheduling(runner *durablejob.Runner, service ScheduledWorkflowService, interval time.Duration, limit int, allowed ...func() bool) error {
 	if runner == nil || service == nil {
 		return fmt.Errorf("durable workflow scheduling needs both a runner and a service")
 	}
+	backgroundAllowed := schedulerBackgroundGate(allowed)
 	if err := runner.RegisterRecurring(JobKindSweep, interval, sweepMaxAttempts, func(ctx context.Context) error {
+		if !backgroundAllowed() {
+			return durablejob.Defer("background processing is paused by safety policy")
+		}
 		return runWorkflowSweep(service, limit)
 	}); err != nil {
 		return err
@@ -91,13 +97,13 @@ func runWorkflowSweep(service ScheduledWorkflowService, limit int) error {
 
 // startDurableScheduler builds the runner over the default queue and starts it.
 // Any failure is returned so the caller can fall back to the legacy ticker.
-func startDurableScheduler(ctx context.Context, service ScheduledWorkflowService, interval time.Duration, limit int) error {
+func startDurableScheduler(ctx context.Context, service ScheduledWorkflowService, interval time.Duration, limit int, allowed ...func() bool) error {
 	repo, err := durablejob.DefaultRepository()
 	if err != nil {
 		return err
 	}
 	runner := durablejob.NewRunner(repo, durablejob.Options{Queue: "workflow"})
-	if err := RegisterDurableScheduling(runner, service, interval, limit); err != nil {
+	if err := RegisterDurableScheduling(runner, service, interval, limit, allowed...); err != nil {
 		return err
 	}
 	go runner.Start(ctx, workflowPollInterval())
@@ -110,7 +116,7 @@ func workflowPollInterval() time.Duration {
 		return defaultPollSecond
 	}
 	var seconds int64
-	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 1 {
+	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < int64(minPollInterval/time.Second) || seconds > int64(maxPollInterval/time.Second) {
 		return defaultPollSecond
 	}
 	return time.Duration(seconds) * time.Second

@@ -1,13 +1,14 @@
 import { TestBed } from '@angular/core/testing';
-import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ContextMemoryService } from './context-memory.service';
+import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http';
 
 describe('ContextMemoryService', () => {
   let service: ContextMemoryService;
   let http: HttpTestingController;
 
   beforeEach(() => {
-    TestBed.configureTestingModule({ imports: [HttpClientTestingModule] });
+    TestBed.configureTestingModule({ imports: [], providers: [provideHttpClient(withInterceptorsFromDi()), provideHttpClientTesting()] });
     service = TestBed.inject(ContextMemoryService);
     http = TestBed.inject(HttpTestingController);
   });
@@ -31,5 +32,13 @@ describe('ContextMemoryService', () => {
       deferred: 0,
       explanation: 'Two visible records were indexed locally.',
     });
+  });
+
+  it('requests only the recent memory slice when a limit is supplied', () => {
+    service.list(undefined, false, 20).subscribe();
+
+    const request = http.expectOne('/api/v1/memory/?includeArchived=false&limit=20');
+    expect(request.request.method).toBe('GET');
+    request.flush([]);
   });
 });

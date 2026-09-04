@@ -23,6 +23,32 @@ type leaseLosingRepo struct {
 	*fakeRepo
 }
 
+type failingReapRepo struct {
+	*fakeRepo
+	err error
+}
+
+type failingRecurringCompletionRepo struct {
+	*fakeRepo
+}
+
+func (r *failingReapRepo) ReapExpiredLeases(time.Time, time.Duration) (int, error) {
+	return 0, r.err
+}
+
+func (r *failingRecurringCompletionRepo) CompleteRecurring(
+	_ uuid.UUID,
+	_ string,
+	_ int64,
+	_ time.Time,
+	_ string,
+	_ int,
+	_ string,
+	_ *models.DurableJob,
+) (bool, bool, error) {
+	return false, false, errors.New("simulated terminal transaction failure")
+}
+
 func (r *leaseLosingRepo) ExtendLease(
 	_ uuid.UUID,
 	_ string,
@@ -34,6 +60,53 @@ func (r *leaseLosingRepo) ExtendLease(
 }
 
 func newFakeRepo() *fakeRepo { return &fakeRepo{jobs: map[uuid.UUID]*models.DurableJob{}} }
+
+func TestRunnerStartProcessesAlreadyDueWorkWithoutWaitingForPollInterval(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Now().UTC()
+	if _, err := repo.Enqueue(&models.DurableJob{
+		Queue: "startup", Kind: "due", RunAt: now, MaxAttempts: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(repo, Options{WorkerID: "startup-worker", Queue: "startup"})
+	processed := make(chan struct{}, 1)
+	runner.Register("due", func(context.Context, Job) error {
+		processed <- struct{}{}
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go runner.Start(ctx, time.Hour)
+
+	select {
+	case <-processed:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("due work waited for the polling interval instead of running at worker startup")
+	}
+}
+
+func TestRunnerStatusRecordsPollFailureAndRecovery(t *testing.T) {
+	repository := &failingReapRepo{fakeRepo: newFakeRepo(), err: errors.New("database unavailable")}
+	runner := NewRunner(repository, Options{WorkerID: "status-worker", Queue: "status"})
+	runner.markStarted(time.Now().UTC())
+	runner.runAndReport(context.Background())
+	failed := runner.Status()
+	if !failed.Running || failed.LastError == "" || failed.ConsecutiveErrors != 1 || failed.LastPollAt.IsZero() {
+		t.Fatalf("failed worker status = %#v", failed)
+	}
+
+	repository.err = nil
+	runner.runAndReport(context.Background())
+	recovered := runner.Status()
+	if recovered.LastError != "" || recovered.ConsecutiveErrors != 0 || recovered.LastSuccessfulAt.IsZero() {
+		t.Fatalf("recovered worker status = %#v", recovered)
+	}
+	runner.markStopped()
+	if runner.Status().Running {
+		t.Fatal("runner status remained running after stop")
+	}
+}
 
 func (f *fakeRepo) Enqueue(job *models.DurableJob) (*models.DurableJob, error) {
 	if job.ID == uuid.Nil {
@@ -59,6 +132,20 @@ func (f *fakeRepo) EnqueueIfNoActive(job *models.DurableJob) (bool, error) {
 	}
 	for _, existing := range f.jobs {
 		if existing.Queue == job.Queue && existing.Kind == job.Kind &&
+			(existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
+			return false, nil
+		}
+	}
+	_, err := f.Enqueue(job)
+	return err == nil, err
+}
+
+func (f *fakeRepo) EnqueueIfNoActiveMatchingPayload(job *models.DurableJob) (bool, error) {
+	if job.Queue == "" {
+		job.Queue = "default"
+	}
+	for _, existing := range f.jobs {
+		if existing.Queue == job.Queue && existing.Kind == job.Kind && existing.Payload == job.Payload &&
 			(existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
 			return false, nil
 		}
@@ -115,6 +202,19 @@ func (f *fakeRepo) MarkForRetry(id uuid.UUID, workerID string, leaseGeneration i
 	return true, nil
 }
 
+func (f *fakeRepo) MarkDeferred(id uuid.UUID, workerID string, leaseGeneration int64, runAt time.Time, reason string) (bool, error) {
+	job := f.jobs[id]
+	if !fakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, nil
+	}
+	job.Status = models.DurableJobPending
+	job.RunAt = runAt
+	job.LastError = reason
+	job.LockedBy = ""
+	job.LockedAt = nil
+	return true, nil
+}
+
 func (f *fakeRepo) MarkDead(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, attempts int, lastErr string) (bool, error) {
 	job := f.jobs[id]
 	if !fakeLeaseOwned(job, workerID, leaseGeneration) {
@@ -127,6 +227,31 @@ func (f *fakeRepo) MarkDead(id uuid.UUID, workerID string, leaseGeneration int64
 	job.LockedBy = ""
 	job.LockedAt = nil
 	return true, nil
+}
+
+func (f *fakeRepo) CompleteRecurring(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time, terminalStatus string, attempts int, lastErr string, next *models.DurableJob) (bool, bool, error) {
+	job := f.jobs[id]
+	if !fakeLeaseOwned(job, workerID, leaseGeneration) {
+		return false, false, nil
+	}
+	if terminalStatus != models.DurableJobSucceeded && terminalStatus != models.DurableJobDead {
+		return false, false, errors.New("invalid recurring terminal status")
+	}
+	job.Status = terminalStatus
+	job.CompletedAt = &now
+	job.LockedBy = ""
+	job.LockedAt = nil
+	job.LastError = lastErr
+	if terminalStatus == models.DurableJobDead {
+		job.Attempts = attempts
+	}
+	for _, existing := range f.jobs {
+		if existing.ID != id && existing.Queue == next.Queue && existing.Kind == next.Kind && (existing.Status == models.DurableJobPending || existing.Status == models.DurableJobRunning) {
+			return true, false, nil
+		}
+	}
+	_, err := f.Enqueue(next)
+	return true, err == nil, err
 }
 
 func (f *fakeRepo) ExtendLease(id uuid.UUID, workerID string, leaseGeneration int64, now time.Time) (bool, error) {
@@ -206,6 +331,29 @@ func TestRunnerExecutesJobAndMarksSucceeded(t *testing.T) {
 	}
 }
 
+func TestEnsureScheduledForPayloadDeduplicatesOnlyMatchingWork(t *testing.T) {
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	repo := newFakeRepo()
+	runner := NewRunner(repo, Options{WorkerID: "w1", Queue: "source", Now: fixedClock(&now)})
+
+	created, err := runner.EnsureScheduledForPayload("source.sync", `{"sourceId":"a"}`, now, 5)
+	if err != nil || !created {
+		t.Fatalf("first payload schedule = %v, %v; want true, nil", created, err)
+	}
+	created, err = runner.EnsureScheduledForPayload("source.sync", `{"sourceId":"a"}`, now, 5)
+	if err != nil || created {
+		t.Fatalf("duplicate payload schedule = %v, %v; want false, nil", created, err)
+	}
+	created, err = runner.EnsureScheduledForPayload("source.sync", `{"sourceId":"b"}`, now, 5)
+	if err != nil || !created {
+		t.Fatalf("distinct payload schedule = %v, %v; want true, nil", created, err)
+	}
+
+	if got := len(repo.jobs); got != 2 {
+		t.Fatalf("active jobs = %d, want 2 distinct source syncs", got)
+	}
+}
+
 func TestRunnerRetriesWithBackoffAndSurvivesRestart(t *testing.T) {
 	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 	repo := newFakeRepo()
@@ -243,6 +391,36 @@ func TestRunnerRetriesWithBackoffAndSurvivesRestart(t *testing.T) {
 	stored, _ = repo.Find(job.ID)
 	if stored.Status != models.DurableJobSucceeded {
 		t.Fatalf("status after restart = %q, want succeeded", stored.Status)
+	}
+}
+
+func TestRunnerDefersPausedWorkWithoutConsumingRetryBudget(t *testing.T) {
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	repo := newFakeRepo()
+	runner := NewRunner(repo, Options{WorkerID: "w1", Now: fixedClock(&now)})
+	runner.Register("paused", func(context.Context, models.DurableJob) error {
+		return Defer("background processing is paused by safety policy")
+	})
+	job, err := runner.Enqueue("paused", "{}", now, 3)
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	if processed, err := runner.RunOnce(context.Background()); err != nil || processed != 1 {
+		t.Fatalf("RunOnce = %d, %v; want 1, nil", processed, err)
+	}
+	stored, err := repo.Find(job.ID)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if stored.Status != models.DurableJobPending || stored.Attempts != 0 {
+		t.Fatalf("deferred state = %q attempts=%d, want pending/0", stored.Status, stored.Attempts)
+	}
+	if !stored.RunAt.Equal(now.Add(DefaultDeferDelay)) {
+		t.Fatalf("deferred RunAt = %v, want %v", stored.RunAt, now.Add(DefaultDeferDelay))
+	}
+	if stored.LastError != "job deferred: background processing is paused by safety policy" {
+		t.Fatalf("deferred reason = %q", stored.LastError)
 	}
 }
 
@@ -486,6 +664,29 @@ func TestRegisterRecurringKeepsScheduleAliveAfterRepeatedFailures(t *testing.T) 
 	}
 	if pending != 1 {
 		t.Fatalf("pending occurrences = %d, want exactly 1 — the recurring schedule must survive failure", pending)
+	}
+}
+
+func TestRegisterRecurringDoesNotScheduleFutureWorkWhenTerminalTransactionFails(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	repo := &failingRecurringCompletionRepo{fakeRepo: newFakeRepo()}
+	runner := NewRunner(repo, Options{WorkerID: "w1", Now: fixedClock(&now)})
+	if err := runner.RegisterRecurring("tick", time.Minute, 1, func(context.Context) error { return nil }); err != nil {
+		t.Fatalf("RegisterRecurring: %v", err)
+	}
+
+	if _, err := runner.RunOnce(context.Background()); err == nil {
+		t.Fatal("RunOnce succeeded despite a failed terminal recurring transaction")
+	}
+
+	pending := 0
+	for _, job := range repo.jobs {
+		if job.Kind == "tick" && job.Status == models.DurableJobPending {
+			pending++
+		}
+	}
+	if pending != 0 {
+		t.Fatalf("pending recurring jobs = %d, want 0 when terminal transaction failed", pending)
 	}
 }
 

@@ -6,16 +6,14 @@ source of truth for current state.
 ## Near-term hardening
 
 - **Fresh-clone Windows acceptance (phase 032, TD-8):** the maintained Windows
-  Compose installation now builds and runs with healthy Postgres, Redis, Kafka,
-  nginx, IDP, backend, and frontend services. Repeat the same acceptance from a
-  clean clone and empty volumes before calling installation reproducibility
-  complete.
+  Compose installation runs the core Postgres, Redis, nginx, IDP, backend, and
+  frontend services by default. Kafka-compatible delivery is an explicit
+  `event-bus` profile. Repeat the same acceptance from a clean clone and empty
+  volumes before calling installation reproducibility complete.
 - **RBAC — done on the backend (phase 008/TD-9):** IDP-JWT identity→role is wired + runtime-proven. Remaining: IDP emits a `role` claim; broaden `requirePermission` onto more routes.
-- **Frontend dependency hardening (TD-6/BH-7) completed:** Angular 22.1.1,
-  ng-zorro 22.0.1, TypeScript 6.0.3, and the supported esbuild/Vite builder are
-  in place; the 379-test suite and production build pass; high/critical audit
-  findings are zero and blocking. Recheck the documented moderate CLI-only
-  exception by 2026-09-09 or when Angular CLI adopts MCP SDK 1.30+.
+- **Frontend dependency posture (TD-6/BH-7):** Angular 20/ng-zorro 20 is clean
+  on the production dependency audit and that audit is blocking in CI. Keep the
+  gate green through each dependency update.
 - Adopt the `apierror` envelope across handlers in step with the frontend (TD-1).
 - **Advisory outcome monitor release acceptance:** retain a disposable-PostgreSQL
   and signed-browser run for all three fixed collectors, exact replay after a
@@ -25,7 +23,7 @@ source of truth for current state.
   proactivity decisions, and inbox records, with zero execution, delivery,
   Calendar, workflow, mandate, provider, or learning effects.
 
-## Frontend follow-up
+## Frontend-dependent (need Angular work)
 
 - Wire the memory search UI and feature-flag/i18n surfaces into the dashboard (TD-7).
 - Deeper accessibility + cross-browser visual passes on the existing pages.

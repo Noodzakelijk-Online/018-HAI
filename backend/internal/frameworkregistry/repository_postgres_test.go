@@ -3,6 +3,7 @@
 package frameworkregistry
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -187,12 +188,17 @@ func TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun(t *testing.T) {
 		t.Fatal("rejected out-of-order rollback changed the registry schema")
 	}
 
-	for _, version := range []string{
-		"pre/0006_durable_job_fencing",
-		"pre/0005_framework_operating_contract",
-		"pre/0004_task_state_storage",
-		frameworkRegistryMigrationVersion,
-	} {
+	var appliedVersions []string
+	if err := db.Raw(`
+		SELECT version
+		FROM schema_migrations
+		WHERE version LIKE 'pre/%'
+		ORDER BY version DESC
+	`).Scan(&appliedVersions).Error; err != nil {
+		t.Fatalf("list applied pre migrations: %v", err)
+	}
+	rolledBack := 0
+	for _, version := range appliedVersions {
 		if err := infra.RollbackMigration(
 			db,
 			migrations.Files,
@@ -200,6 +206,10 @@ func TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun(t *testing.T) {
 			version,
 		); err != nil {
 			t.Fatalf("rollback %s: %v", version, err)
+		}
+		rolledBack++
+		if version == frameworkRegistryMigrationVersion {
+			break
 		}
 	}
 	if err := infra.RollbackMigration(
@@ -240,8 +250,8 @@ func TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reapply framework registry migration: %v", err)
 	}
-	if reapplied != 4 {
-		t.Fatalf("reapplied %d migrations, want 4", reapplied)
+	if reapplied != rolledBack {
+		t.Fatalf("reapplied %d migrations, want %d", reapplied, rolledBack)
 	}
 	if !relationExists(t, db, "framework_selection_records") {
 		t.Fatal("framework registry schema was not restored")
@@ -250,9 +260,9 @@ func TestFrameworkRegistryPostgresMigrationApplyRollbackAndRerun(t *testing.T) {
 
 func TestFrameworkRegistryPostgresOwnerScopeConstraintsAndHistory(t *testing.T) {
 	db := openFrameworkRegistryPostgresTestDB(t)
-	executeEmbeddedMigration(t, db, "pre/0001_extensions.up.sql")
-	executeEmbeddedMigration(t, db, "pre/0003_framework_registry.up.sql")
-	executeEmbeddedMigration(t, db, "pre/0005_framework_operating_contract.up.sql")
+	if _, err := infra.ApplyMigrations(db, migrations.Files, "pre"); err != nil {
+		t.Fatalf("apply pre migrations: %v", err)
+	}
 	repo := NewGormRepository(db)
 
 	t.Run("preferences are owner scoped and unique per owner and framework", func(t *testing.T) {

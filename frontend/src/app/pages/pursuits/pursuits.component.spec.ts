@@ -42,6 +42,48 @@ describe('PursuitsComponent action lanes', () => {
     ));
   });
 
+  it('reuses active pursuits returned by the dashboard instead of issuing a second list request', () => {
+    const pursuitService = (component as any).pursuitsService;
+    pursuitService.dashboard = jasmine.createSpy('dashboard').and.returnValue(of({
+      counts: {}, pursuits: [{ id: 'pursuit-1', title: 'Ready pursuit' }],
+    }));
+    pursuitService.list = jasmine.createSpy('list').and.returnValue(of([]));
+    spyOn<any>(component as any, 'selectPursuit');
+
+    component.load();
+
+    expect(pursuitService.dashboard).toHaveBeenCalledWith(true);
+    expect(pursuitService.list).not.toHaveBeenCalled();
+    expect(component.pursuits.map((pursuit) => pursuit.id)).toEqual(['pursuit-1']);
+  });
+
+  it('reconciles life domains and refreshes the pursuit view', () => {
+    const pursuitService = (component as any).pursuitsService;
+    pursuitService.reconcileLifeDomains = jasmine.createSpy('reconcileLifeDomains').and.returnValue(of({
+      scanned: 4, projected: 3, skipped: 1, failed: 0,
+    }));
+    spyOn(component, 'load');
+
+    component.reconcileLifeDomains();
+
+    expect(pursuitService.reconcileLifeDomains).toHaveBeenCalled();
+    expect(component.lifeDomainReconciliation).toEqual({ scanned: 4, projected: 3, skipped: 1, failed: 0 });
+    expect(notification.success).toHaveBeenCalledWith('Life domains updated', '3 indexed; 1 unchanged.');
+    expect(component.load).toHaveBeenCalled();
+  });
+
+  it('keeps the view stable when life-domain reconciliation fails', () => {
+    const pursuitService = (component as any).pursuitsService;
+    pursuitService.reconcileLifeDomains = jasmine.createSpy('reconcileLifeDomains').and.returnValue(
+      throwError(() => ({ error: { error: 'Life-domain projection is unavailable.' } })),
+    );
+
+    component.reconcileLifeDomains();
+
+    expect(component.lifeDomainReconciliationRunning).toBeFalse();
+    expect(notification.error).toHaveBeenCalledWith('Life-domain update unavailable', 'Life-domain projection is unavailable.');
+  });
+
   it('opens the first action in the selected operational lane', () => {
     const action: IPursuitAction = {
       label: 'Prepare the evidence index',
@@ -146,11 +188,28 @@ describe('PursuitsComponent action lanes', () => {
     expect(router.navigate).toHaveBeenCalledWith(['/pursuits'], { queryParams: { selected: 'pursuit-2' } });
   });
 
+  it('ignores a stale pursuit detail response after the user selects another pursuit', () => {
+    const firstResponse = new Subject<IPursuitDetail>();
+    const secondResponse = new Subject<IPursuitDetail>();
+    const pursuitService = (component as any).pursuitsService;
+    pursuitService.get = jasmine.createSpy('get').and.returnValues(firstResponse, secondResponse);
+    const router = (component as any).router;
+    router.navigate = jasmine.createSpy('navigate');
+
+    component.selectPursuit({ id: 'first' } as any);
+    component.selectPursuit({ id: 'second' } as any);
+
+    firstResponse.next({ pursuit: { id: 'first' } } as IPursuitDetail);
+    secondResponse.next({ pursuit: { id: 'second' } } as IPursuitDetail);
+
+    expect(component.selected?.pursuit.id).toBe('second');
+    expect(pursuitService.get).toHaveBeenCalledTimes(2);
+  });
+
   it('creates a structured outcome contract from the basic pursuit form', () => {
     const pursuitService = (component as any).pursuitsService;
     const created = { id: 'pursuit-1', title: 'Operational outcome' } as any;
     pursuitService.create = jasmine.createSpy('create').and.returnValue(of(created));
-    spyOn(component, 'load');
     spyOn(component, 'selectPursuit');
     component.createForm.patchValue({
       title: 'Operational outcome',
@@ -173,6 +232,9 @@ describe('PursuitsComponent action lanes', () => {
     expect(request.dependencies[0].status).toBe('pending');
     expect(request.targetAt).toBe('2026-09-01T00:00:00Z');
     expect(request.resourceLimits).toEqual(jasmine.objectContaining({ maxEffortHours: 12, maxSpendEur: 0, maxParallelWorkflows: 2 }));
+    expect(component.pursuits.map((pursuit) => pursuit.id)).toEqual(['pursuit-1']);
+    expect(component.loading).toBeFalse();
+    expect(component.selectPursuit).toHaveBeenCalledWith(created);
   });
 
   it('does not advertise or call planning when the governed action queue blocks new work', () => {

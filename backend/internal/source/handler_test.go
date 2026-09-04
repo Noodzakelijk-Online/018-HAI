@@ -1,6 +1,7 @@
 package source
 
 import (
+	"automation-hub-backend/internal/docling"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/whispercpp"
@@ -21,6 +22,23 @@ type sourceTranscriberStub struct {
 	folder      string
 }
 
+type sourceDocumentExtractorStub struct {
+	documents []docling.Document
+	err       error
+	folder    string
+}
+
+func (s *sourceDocumentExtractorStub) Status() docling.Status {
+	return docling.Status{Configured: true}
+}
+func (s *sourceDocumentExtractorStub) Probe(context.Context) (*docling.ProbeResult, error) {
+	return &docling.ProbeResult{Reachable: true, Configured: true}, nil
+}
+func (s *sourceDocumentExtractorStub) Extract(_ context.Context, folder string) ([]docling.Document, error) {
+	s.folder = folder
+	return s.documents, s.err
+}
+
 func (s *sourceTranscriberStub) Status() whispercpp.Status { return whispercpp.Status{} }
 func (s *sourceTranscriberStub) Probe(context.Context) (*whispercpp.ProbeResult, error) {
 	return &whispercpp.ProbeResult{Reachable: true}, nil
@@ -34,10 +52,11 @@ func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	aliceID := uuid.New()
 	bobID := uuid.New()
-	service := NewService(newFakeSourceRepo(
+	repo := newFakeSourceRepo(
 		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
 		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
-	), nil)
+	)
+	service := NewService(repo, nil)
 	handler := NewHandler(service)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -59,12 +78,80 @@ func TestHandlerOnlyListsVisibleSourcesAndRejectsForeignControls(t *testing.T) {
 	if len(sources) != 1 || sources[0].ID != aliceID {
 		t.Fatalf("visible sources = %#v, want only Alice source", sources)
 	}
+	if repo.lastVisibleSourceOwner != "alice" {
+		t.Fatalf("source list was not filtered by owner in the repository: %q", repo.lastVisibleSourceOwner)
+	}
 
 	foreignRequest := httptest.NewRequest(http.MethodPost, "/sources/"+bobID.String()+"/pause", nil)
 	foreignResponse := httptest.NewRecorder()
 	router.ServeHTTP(foreignResponse, foreignRequest)
 	if foreignResponse.Code != http.StatusNotFound {
 		t.Fatalf("foreign pause status = %d, body=%s", foreignResponse.Code, foreignResponse.Body.String())
+	}
+	if repo.lastMutableSourceID != bobID || repo.lastMutableSourceOwner != "alice" {
+		t.Fatalf("mutable source lookup = %s/%q, want exact foreign source/alice", repo.lastMutableSourceID, repo.lastMutableSourceOwner)
+	}
+}
+
+func TestHandlerListsOnlyVisibleConnectionHealthInOneBatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID := uuid.New()
+	bobID := uuid.New()
+	handler := NewHandler(NewService(newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", ConnectorKey: "local-folder", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", ConnectorKey: "local-folder", Enabled: true, Status: "active"},
+	), nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/connection-health", handler.ConnectionHealths)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/connection-health", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("connection health status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var health []ConnectionHealth
+	if err := json.Unmarshal(response.Body.Bytes(), &health); err != nil {
+		t.Fatalf("decode connection health: %v", err)
+	}
+	if len(health) != 1 || health[0].SourceID != aliceID {
+		t.Fatalf("visible connection health = %#v, want only Alice source", health)
+	}
+}
+
+func TestHandlerLoadsOwnerScopedRecentActivityFromRepository(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	aliceID, bobID := uuid.New(), uuid.New()
+	repo := newFakeSourceRepo(
+		&models.ConnectedSource{ID: aliceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"},
+		&models.ConnectedSource{ID: bobID, OwnerIdentity: "bob", Name: "Bob source", Enabled: true, Status: "active"},
+	)
+	repo.jobs = []models.SourceSyncJob{{ID: uuid.New(), SourceID: aliceID}, {ID: uuid.New(), SourceID: bobID}}
+	repo.auditLogs = []models.SourceAuditLog{{ID: uuid.New(), SourceID: aliceID}, {ID: uuid.New(), SourceID: bobID}}
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/sync-jobs", handler.SyncJobs)
+	router.GET("/sources/audit-logs", handler.AuditLogs)
+
+	for _, path := range []string{"/sources/sync-jobs", "/sources/audit-logs"} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, body=%s", path, response.Code, response.Body.String())
+		}
+	}
+	if len(repo.lastSyncJobSourceIDs) != 1 || repo.lastSyncJobSourceIDs[0] != aliceID {
+		t.Fatalf("sync-job query source IDs = %#v, want only Alice source", repo.lastSyncJobSourceIDs)
+	}
+	if repo.lastSyncJobLimit != 100 {
+		t.Fatalf("sync-job history limit = %d, want 100", repo.lastSyncJobLimit)
+	}
+	if len(repo.lastAuditLogSourceIDs) != 1 || repo.lastAuditLogSourceIDs[0] != aliceID {
+		t.Fatalf("audit-log query source IDs = %#v, want only Alice source", repo.lastAuditLogSourceIDs)
+	}
+	if repo.lastAuditLogLimit != 100 {
+		t.Fatalf("audit-log history limit = %d, want 100", repo.lastAuditLogLimit)
 	}
 }
 
@@ -82,6 +169,41 @@ func TestGoogleOAuthStartRejectsForeignSourceBeforeConfigurationLookup(t *testin
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/oauth/google/start?sourceId="+foreignID.String(), nil))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("foreign OAuth start status = %d, body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestGoogleOAuthCallbackRequiresMatchingBrowserStateCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(NewService(newFakeSourceRepo(), nil))
+	router := gin.New()
+	router.GET("/sources/oauth/google/callback", handler.GoogleOAuthCallback)
+
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/sources/oauth/google/callback?code=code&state=state-a", nil),
+		func() *http.Request {
+			req := httptest.NewRequest(http.MethodGet, "/sources/oauth/google/callback?code=code&state=state-a", nil)
+			req.AddCookie(&http.Cookie{Name: googleOAuthStateCookieName, Value: "state-b"})
+			return req
+		}(),
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusFound || response.Header().Get("Location") != "/connected-sources?oauth=error" {
+			t.Fatalf("callback status=%d location=%q, want rejected state", response.Code, response.Header().Get("Location"))
+		}
+		if !strings.Contains(response.Header().Get("Set-Cookie"), googleOAuthStateCookieName+"=") {
+			t.Fatal("callback did not clear the browser-bound OAuth state cookie")
+		}
+	}
+}
+
+func TestGoogleOAuthStateFromAuthorizeURLRequiresState(t *testing.T) {
+	state, err := googleOAuthStateFromAuthorizeURL("https://accounts.example.test/authorize?state=signed-state")
+	if err != nil || state != "signed-state" {
+		t.Fatalf("state = %q, err=%v", state, err)
+	}
+	if _, err := googleOAuthStateFromAuthorizeURL("https://accounts.example.test/authorize"); err == nil {
+		t.Fatal("expected authorize URL without state to fail closed")
 	}
 }
 
@@ -143,10 +265,58 @@ func TestHandlerListsOnlyOwnerScopedExtractionsFromRepository(t *testing.T) {
 	if len(extractions) != 1 || extractions[0].SourceID != aliceID {
 		t.Fatalf("visible extractions = %#v, want only Alice extraction", extractions)
 	}
+	if total := response.Header().Get("X-Total-Count"); total != "1" {
+		t.Fatalf("X-Total-Count = %q, want 1", total)
+	}
 	for _, sourceID := range repo.lastExtractionSourceIDs {
 		if sourceID == bobID {
 			t.Fatalf("handler repository query included Bob's private source")
 		}
+	}
+}
+
+func TestHandlerRejectsInvalidExtractionPageLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(NewService(newFakeSourceRepo(), nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/extractions", handler.Extractions)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/extractions?limit=501", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestHandlerBoundsExtractionHistoryAndReportsExactTotal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, OwnerIdentity: "alice", Name: "Alice source", Enabled: true, Status: "active"})
+	for index := 0; index < 3; index++ {
+		if _, err := repo.SaveExtraction(&models.SourceExtraction{ID: uuid.New(), SourceID: sourceID, Summary: "private context"}); err != nil {
+			t.Fatalf("SaveExtraction: %v", err)
+		}
+	}
+	handler := NewHandler(NewService(repo, nil))
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.GET("/sources/extractions", handler.Extractions)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sources/extractions?limit=2", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	var extractions []models.SourceExtraction
+	if err := json.Unmarshal(response.Body.Bytes(), &extractions); err != nil {
+		t.Fatalf("decode extractions: %v", err)
+	}
+	if len(extractions) != 2 {
+		t.Fatalf("returned records = %d, want 2", len(extractions))
+	}
+	if total := response.Header().Get("X-Total-Count"); total != "3" {
+		t.Fatalf("X-Total-Count = %q, want 3", total)
 	}
 }
 
@@ -181,6 +351,9 @@ func TestHandlerRejectsOwnerlessLegacySourceAndExtractionMutations(t *testing.T)
 	router.ServeHTTP(archiveResponse, httptest.NewRequest(http.MethodPost, "/sources/extractions/"+extractionID.String()+"/archive", nil))
 	if archiveResponse.Code != http.StatusNotFound {
 		t.Fatalf("ownerless extraction archive status = %d, want 404: %s", archiveResponse.Code, archiveResponse.Body.String())
+	}
+	if repo.lastMutableExtractionID != extractionID || repo.lastMutableExtractionOwner != "alice" {
+		t.Fatalf("mutable extraction lookup = %s/%q, want exact extraction/alice", repo.lastMutableExtractionID, repo.lastMutableExtractionOwner)
 	}
 
 	storedSource, err := repo.FindSource(sourceID)
@@ -220,6 +393,9 @@ func TestHandlerTranscribesOnlyAnOwnedExplicitAudioSource(t *testing.T) {
 	if stub.folder != "voice-notes/2026-07" {
 		t.Fatalf("folder = %q", stub.folder)
 	}
+	if repo.lastMutableSourceID != sourceID || repo.lastMutableSourceOwner != "alice" {
+		t.Fatalf("transcription must resolve the exact owned source, got id=%s owner=%q", repo.lastMutableSourceID, repo.lastMutableSourceOwner)
+	}
 	if len(repo.rawItems) != 1 {
 		t.Fatalf("raw items = %#v", repo.rawItems)
 	}
@@ -255,5 +431,68 @@ func TestHandlerTranscriptionRejectsCallerPayloadAndNonAudioSources(t *testing.T
 	router.ServeHTTP(nonAudioResponse, nonAudioRequest)
 	if nonAudioResponse.Code != http.StatusBadRequest {
 		t.Fatalf("non-audio status = %d, body=%s", nonAudioResponse.Code, nonAudioResponse.Body.String())
+	}
+}
+
+func TestHandlerExtractsOnlyAnOwnedExplicitDoclingSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{
+		ID: sourceID, OwnerIdentity: "alice", ConnectorKey: doclingDocumentsConnectorKey, Name: "Legal evidence", Category: "document",
+		Enabled: true, LocalOnly: true, Status: "active", SyncTarget: "legal/vivare", DefaultProjectKey: "Vivare dispute",
+	})
+	stub := &sourceDocumentExtractorStub{documents: []docling.Document{{
+		Path: "legal/vivare/evidence.docx", Text: "The hearing is scheduled for 9 September.", Format: "docx", PageCount: 2,
+		ContentDigest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}}}
+	service := NewService(repo, nil)
+	handler := NewHandlerWithDocumentExtractor(service, stub)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.POST("/sources/:id/extract-documents", handler.ExtractDocuments)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/extract-documents", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("extract status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if stub.folder != "legal/vivare" {
+		t.Fatalf("folder = %q", stub.folder)
+	}
+	if repo.lastMutableSourceID != sourceID || repo.lastMutableSourceOwner != "alice" {
+		t.Fatalf("document extraction must resolve the exact owned source, got id=%s owner=%q", repo.lastMutableSourceID, repo.lastMutableSourceOwner)
+	}
+	if len(repo.rawItems) != 1 {
+		t.Fatalf("raw items = %#v", repo.rawItems)
+	}
+	for _, raw := range repo.rawItems {
+		if raw.ItemType != "document_extraction" || !strings.HasPrefix(raw.SourceURI, "document://selected-source/"+sourceID.String()+"/") {
+			t.Fatalf("raw item = %#v", raw)
+		}
+	}
+	if _, err := service.Sync(sourceID, ImportRequest{}); err == nil || !strings.Contains(err.Error(), "controlled document extraction route") {
+		t.Fatalf("generic docling sync error = %v", err)
+	}
+}
+
+func TestHandlerDocumentExtractionRejectsPayloadAndNonDoclingSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sourceID := uuid.New()
+	repo := newFakeSourceRepo(&models.ConnectedSource{ID: sourceID, OwnerIdentity: "alice", ConnectorKey: "local-folder", Name: "Files", Enabled: true, LocalOnly: true, Status: "active", SyncTarget: "notes"})
+	handler := NewHandlerWithDocumentExtractor(NewService(repo, nil), &sourceDocumentExtractorStub{})
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set(identity.ContextSubjectKey, "alice") })
+	router.POST("/sources/:id/extract-documents", handler.ExtractDocuments)
+
+	payloadResponse := httptest.NewRecorder()
+	router.ServeHTTP(payloadResponse, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/extract-documents", strings.NewReader(`{"path":"anywhere"}`)))
+	if payloadResponse.Code != http.StatusBadRequest {
+		t.Fatalf("payload status = %d, body=%s", payloadResponse.Code, payloadResponse.Body.String())
+	}
+
+	nonDoclingResponse := httptest.NewRecorder()
+	router.ServeHTTP(nonDoclingResponse, httptest.NewRequest(http.MethodPost, "/sources/"+sourceID.String()+"/extract-documents", nil))
+	if nonDoclingResponse.Code != http.StatusBadRequest {
+		t.Fatalf("non-Docling status = %d, body=%s", nonDoclingResponse.Code, nonDoclingResponse.Body.String())
 	}
 }

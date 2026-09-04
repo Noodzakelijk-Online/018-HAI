@@ -1,9 +1,9 @@
-import { Component, Inject, OnInit } from '@angular/core';
+import { ChangeDetectorRef, Component, Inject, OnDestroy, OnInit, ViewEncapsulation } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { NzModalService } from 'ng-zorro-antd/modal';
-import { catchError, forkJoin, of } from 'rxjs';
+import { catchError, forkJoin, of, Subscription, timeout } from 'rxjs';
 import {
   IPursuitDetail,
   IPursuitMatchCandidate,
@@ -34,12 +34,15 @@ import { IWorkflowService } from '../../services/workflow.service.interface';
 type FrameworkProvenanceState = 'missing' | 'invalid' | 'recorded' | 'verified';
 
 @Component({
-  standalone: false,
-  selector: 'app-workflow-engine',
-  templateUrl: './workflow-engine.component.html',
-  styleUrls: ['./workflow-engine.component.scss'],
+    selector: 'app-workflow-engine',
+    templateUrl: './workflow-engine.component.html',
+    styleUrls: ['./workflow-engine.component.scss'],
+    // Workflow uses broad element and layout selectors. Scope them to this
+    // route instead of allowing a lazy-loaded stylesheet to affect HAI-wide UI.
+    encapsulation: ViewEncapsulation.Emulated,
+    standalone: false
 })
-export class WorkflowEngineComponent implements OnInit {
+export class WorkflowEngineComponent implements OnInit, OnDestroy {
   overview?: IWorkflowOverview;
   dashboard?: IWorkflowDashboard;
   reminderProposals?: IWorkflowReminderProposalSnapshot;
@@ -68,6 +71,7 @@ export class WorkflowEngineComponent implements OnInit {
   saving = false;
   matchingPursuits = false;
   runningAction?: 'refresh' | 'worker' | 'selected' | 'followups' | 'recovery' | 'reminders';
+  private readonly operationTimeoutMs = 30000;
   lastOperation?: {
     name: string;
     status: 'completed' | 'failed';
@@ -81,6 +85,8 @@ export class WorkflowEngineComponent implements OnInit {
   activeQueue: 'all' | 'approval' | 'ready' | 'blocked' | 'review' = 'all';
   private frameworkSelectionLookup = 0;
   activationBusyId?: string;
+  private refreshSubscription?: Subscription;
+  private intakeChangesSubscription?: Subscription;
 
   intakeForm: FormGroup = this.fb.group({
     input: ['', [Validators.required]],
@@ -118,12 +124,13 @@ export class WorkflowEngineComponent implements OnInit {
     private notification: NzNotificationService,
     private modal: NzModalService,
     private route: ActivatedRoute,
-    private router: Router
+    private router: Router,
+    private changeDetector: ChangeDetectorRef
   ) {}
 
   ngOnInit(): void {
     this.refresh();
-    this.intakeForm.valueChanges.subscribe(() => {
+    this.intakeChangesSubscription = this.intakeForm.valueChanges.subscribe(() => {
       // A changed signal must be matched again; never link edited intake to a stale pursuit choice.
       this.selectedPursuitMatch = undefined;
       this.pursuitMatches = [];
@@ -137,10 +144,16 @@ export class WorkflowEngineComponent implements OnInit {
     }
   }
 
+  ngOnDestroy(): void {
+    this.refreshSubscription?.unsubscribe();
+    this.intakeChangesSubscription?.unsubscribe();
+  }
+
   refresh(showNotification = false, preserveLastOperation = false): void {
     if (this.runningAction && this.runningAction !== 'refresh') {
       return;
     }
+    this.refreshSubscription?.unsubscribe();
     const blockingRefresh = !preserveLastOperation;
     this.loading = true;
     this.reminderProposals = undefined;
@@ -152,7 +165,7 @@ export class WorkflowEngineComponent implements OnInit {
     if (blockingRefresh) {
       this.runningAction = 'refresh';
     }
-    forkJoin({
+    this.refreshSubscription = forkJoin({
       overview: this.workflowService.overview(),
       dashboard: this.workflowService.dashboard(),
       reminderProposals: this.workflowService.reminderProposals().pipe(catchError(() => {
@@ -302,6 +315,9 @@ export class WorkflowEngineComponent implements OnInit {
         if (!this.selectedPursuitMatch && matches[0].score >= 0.7) {
           this.selectedPursuitMatch = matches[0];
         }
+        // Matching can be initiated from the shared shell after a lazy route
+        // change. Render the returned, selectable candidates immediately.
+        this.changeDetector.detectChanges();
       },
       error: () => {
         this.matchingPursuits = false;
@@ -736,7 +752,7 @@ export class WorkflowEngineComponent implements OnInit {
       return;
     }
     this.runningAction = 'worker';
-    this.workflowService.runDue({ limit: 10 }).subscribe({
+    this.workflowService.runDue({ limit: 10 }).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (summary) => {
         this.runSummary = summary;
         this.runningAction = undefined;
@@ -769,7 +785,7 @@ export class WorkflowEngineComponent implements OnInit {
       return;
     }
     this.runningAction = 'recovery';
-    this.workflowService.recoverStaleClaims({ limit: 50 }).subscribe({
+    this.workflowService.recoverStaleClaims({ limit: 50 }).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (summary) => {
         this.recoverySummary = summary;
         this.runningAction = undefined;
@@ -855,7 +871,10 @@ export class WorkflowEngineComponent implements OnInit {
       next: (record) => {
         this.applyWorkflowRecord(record);
         this.notification.success('Proposal updated', noteByStatus[status]);
-        this.refresh();
+        // The just-returned workflow is authoritative for this action. Keep
+        // background list reconciliation non-blocking so a ready workflow can
+        // immediately enter its own guarded execution confirmation.
+        this.refresh(false, true);
       },
       error: () => this.notification.error('Error', 'Failed to update proposal.'),
     });
@@ -863,11 +882,13 @@ export class WorkflowEngineComponent implements OnInit {
 
   runSelectedWorkflow(): void {
     const item = this.selected?.item;
-    if (!item || item.currentState !== 'ready' || item.approvalStatus !== 'approved' || this.runningAction) {
+    const approvalSatisfied = item?.approvalStatus === 'approved'
+      || (!item?.requiresApproval && item?.approvalStatus === 'not_required');
+    if (!item || item.currentState !== 'ready' || !approvalSatisfied || this.runningAction) {
       return;
     }
     this.modal.confirm({
-      nzTitle: 'Run this approved workflow?',
+      nzTitle: 'Run this selected workflow?',
       nzContent: 'HAI will claim only this workflow. Any concrete task or runtime action still passes authorization, emergency-stop, audit, and verification gates.',
       nzOkText: 'Run this workflow',
       nzCancelText: 'Cancel',
@@ -955,6 +976,9 @@ export class WorkflowEngineComponent implements OnInit {
 
   applyWorkflowRecord(record: IWorkflowRecord): void {
     this.selected = record;
+    // Selected workflow controls are a primary Basic-view action surface.
+    // Render this record before optional provenance lookups begin.
+    this.changeDetector.detectChanges();
     this.frameworkSelectionDecision = undefined;
     this.frameworkSelectionLoading = false;
     this.frameworkSelectionUnavailable = false;

@@ -6,10 +6,19 @@ import (
 	"automation-hub-backend/migrations"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+)
+
+var (
+	defaultDBMu          sync.Mutex
+	defaultDB            *gorm.DB
+	openConfiguredDB     = OpenDefaultDB
+	runDefaultMigrations = RunMigrations
 )
 
 func NewPostgresDatabase(user, password, dbName, dbHost string, dbPort int) (*gorm.DB, error) {
@@ -32,16 +41,47 @@ func OpenDefaultDB() (*gorm.DB, error) {
 }
 
 func GetDefaultDB() (*gorm.DB, error) {
-	db, err := OpenDefaultDB()
+	defaultDBMu.Lock()
+	defer defaultDBMu.Unlock()
+	if defaultDB != nil {
+		return defaultDB, nil
+	}
+
+	db, err := openConfiguredDB()
 	if err != nil {
 		return nil, err
 	}
 
-	if err := RunMigrations(db); err != nil {
-		return nil, err
+	if migrationsEnabledAtStartup() {
+		if err := runDefaultMigrations(db); err != nil {
+			return nil, err
+		}
 	}
 
+	defaultDB = db
 	return db, nil
+}
+
+// resetDefaultDBForTest clears the package connection cache. It is deliberately
+// unexported: production uses one migrated pool for its process lifetime.
+func resetDefaultDBForTest() {
+	defaultDBMu.Lock()
+	defer defaultDBMu.Unlock()
+	defaultDB = nil
+}
+
+// migrationsEnabledAtStartup keeps existing installations compatible while
+// allowing a production API process to run with a DML-only database role.
+// Schema migrations must then be applied by the explicit `app migrate up`
+// command using the separate migration-owner credentials. An invalid value
+// fails closed: the process will not silently assume schema privileges.
+func migrationsEnabledAtStartup() bool {
+	value, exists := os.LookupEnv("DB_MIGRATIONS_ENABLED")
+	if !exists || strings.TrimSpace(value) == "" {
+		return true
+	}
+	enabled, err := strconv.ParseBool(strings.TrimSpace(value))
+	return err == nil && enabled
 }
 
 // autoMigrateEnabled reports whether Gorm AutoMigrate should run for table
@@ -60,6 +100,24 @@ func autoMigrateEnabled() bool {
 	}
 }
 
+// autoMigrateMissingTables is intentionally narrower than GORM AutoMigrate.
+// Versioned SQL is authoritative for every existing table, index, and
+// constraint. In the deliberate development-only AutoMigrate mode, only a
+// model whose table is genuinely absent may be materialised. Altering an
+// existing table remains a reviewed migration responsibility.
+func autoMigrateMissingTables(db *gorm.DB, candidates ...interface{}) error {
+	missing := make([]interface{}, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !db.Migrator().HasTable(candidate) {
+			missing = append(missing, candidate)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return db.AutoMigrate(missing...)
+}
+
 func RunMigrations(db *gorm.DB) error {
 	// Phase 1: versioned migrations that must precede table creation (extensions
 	// the models' UUID defaults depend on).
@@ -75,11 +133,13 @@ func RunMigrations(db *gorm.DB) error {
 		}
 	}
 
-	// Phase 2: optional dev-only table sync. The baseline migration already
-	// created every table, so this is opt-in (DB_AUTOMIGRATE=true) and exists
-	// only to materialise a newly-added model before its migration is generated.
+	// Phase 2: optional dev-only missing-table creation. The baseline migration
+	// already created every versioned table, so this is opt-in
+	// (DB_AUTOMIGRATE=true) and exists only to materialise a newly-added model
+	// before its migration is generated. It must never alter migration-owned
+	// columns, indexes, or constraints.
 	if autoMigrateEnabled() {
-		if err := db.AutoMigrate(
+		if err := autoMigrateMissingTables(db,
 			&models.Automation{},
 			&models.AutomationHealthEvent{},
 			&models.AutomationLaunchEvent{},

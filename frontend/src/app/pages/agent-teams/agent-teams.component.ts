@@ -19,10 +19,10 @@ import { AuthSessionService } from '../../services/auth-session.service'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 
 @Component({
-  standalone: false,
-  selector: 'app-agent-teams',
-  templateUrl: './agent-teams.component.html',
-  styleUrls: ['./agent-teams.component.scss'],
+    selector: 'app-agent-teams',
+    templateUrl: './agent-teams.component.html',
+    styleUrls: ['./agent-teams.component.scss'],
+    standalone: false
 })
 export class AgentTeamsComponent implements OnInit {
   @ViewChild('membersSection') membersSection?: HaiProgressiveSectionComponent
@@ -333,7 +333,7 @@ export class AgentTeamsComponent implements OnInit {
       this.notification.error('Team detail unavailable', this.apiError(error, 'The section could not be loaded.'))
     }
     if (section === 'decisions') {
-      forkJoin({ messages: this.teamsService.messages(team.id, team.version), attention: this.teamsService.attention(team.id, team.version) }).subscribe({
+      this.teamsService.decisionOverview(team.id, team.version).subscribe({
         next: (result) => { this.detailLoading = false; this.loadedSections.add(section); this.messages = result.messages; this.attention = result.attention },
         error: failed,
       })
@@ -367,7 +367,12 @@ export class AgentTeamsComponent implements OnInit {
   private loadAttention(): void {
     const team = this.selected
     if (!team) return
-    this.teamsService.attention(team.id, team.version).subscribe({ next: (items) => this.attention = items })
+    this.teamsService.attention(team.id, team.version).subscribe({
+      next: (items) => this.attention = items,
+      error: (error: HttpErrorResponse) => {
+        this.notification.error('Attention queue unavailable', this.apiError(error, 'The decision succeeded, but the queue could not be refreshed.'))
+      },
+    })
   }
   private replaceTeam(team: AgentTeamContract): void {
     this.selected = team

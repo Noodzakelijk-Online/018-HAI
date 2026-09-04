@@ -4,11 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+)
+
+const (
+	maxModelsProbeBytes    = 512 * 1024
+	maxChatCompletionBytes = 2 * 1024 * 1024
 )
 
 func newDirectHTTPClient(timeout time.Duration) *http.Client {
@@ -106,7 +112,13 @@ func probeModelsEndpointWithBearer(ctx context.Context, client *http.Client, pro
 	var body struct {
 		Data []json.RawMessage `json:"data"`
 	}
-	_ = json.NewDecoder(resp.Body).Decode(&body)
+	raw, err := readBoundedProviderResponse(resp.Body, maxModelsProbeBytes)
+	if err != nil {
+		return ProbeResult{ProviderID: providerID, Status: ProviderFailed, DurationMs: dur, Detail: err.Error(), CheckedAt: now}
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return ProbeResult{ProviderID: providerID, Status: ProviderFailed, DurationMs: dur, Detail: "invalid models response", CheckedAt: now}
+	}
 	return ProbeResult{ProviderID: providerID, Status: ProviderActive, ModelsSeen: len(body.Data), DurationMs: dur, Detail: "probe ok", CheckedAt: now}
 }
 
@@ -144,7 +156,11 @@ func chatCompletionWithBearer(ctx context.Context, client *http.Client, provider
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	raw, err := readBoundedProviderResponse(resp.Body, maxChatCompletionBytes)
+	if err != nil {
+		return InferenceResult{ProviderID: providerID, OK: false, Error: err.Error()}, err
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
 		return InferenceResult{ProviderID: providerID, OK: false, Error: err.Error()}, err
 	}
 	text := ""
@@ -159,4 +175,15 @@ func chatCompletionWithBearer(ctx context.Context, client *http.Client, provider
 		res.TokensPerSecond = float64(res.OutputTokensEstimate) / (float64(res.DurationMs) / 1000)
 	}
 	return res, nil
+}
+
+func readBoundedProviderResponse(reader io.Reader, limit int64) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read provider response: %w", err)
+	}
+	if int64(len(raw)) > limit {
+		return nil, fmt.Errorf("provider response exceeds %d byte limit", limit)
+	}
+	return raw, nil
 }

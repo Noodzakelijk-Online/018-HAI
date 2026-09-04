@@ -1,30 +1,48 @@
-.header-container {
-  background: #fff;
-  border-bottom: 1px solid #f0f0f0;
-  padding: 0 24px;
+.os-page {
+  width: min(100%, 1440px);
+  margin: 0 auto;
+  padding: 28px clamp(18px, 3vw, 40px) 44px;
 }
 
-.header-content {
+.os-page__header {
   align-items: center;
   display: flex;
+  gap: 16px;
   justify-content: space-between;
+  margin-bottom: 24px;
 
-  &__title {
-    font-size: 20px;
-    margin: 0;
-  }
+  h1 { margin: 0; color: var(--hai-text); font-size: clamp(27px, 3vw, 34px); line-height: 1.08; }
+}
 
-  &__actions {
-    display: flex;
-    gap: 8px;
-  }
+.os-page__eyebrow {
+  margin: 0 0 6px;
+  color: var(--hai-blue);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.os-page__description {
+  max-width: 680px;
+  margin: 8px 0 0;
+  color: var(--hai-text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.os-page__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .content-container {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 24px;
+  padding: 0;
 }
 
 .status-strip,
@@ -37,6 +55,27 @@
 .status-strip nz-card,
 .metric-button {
   min-height: 86px;
+}
+
+:host ::ng-deep .status-strip .ant-card,
+:host ::ng-deep .section-card.ant-card {
+  color: var(--hai-text);
+  background: var(--hai-surface);
+  border-color: var(--hai-border);
+  border-radius: 8px;
+}
+
+:host ::ng-deep .section-card .ant-card-head {
+  color: var(--hai-text);
+  border-color: var(--hai-border);
+}
+
+:host ::ng-deep .section-card .ant-table,
+:host ::ng-deep .section-card .ant-table-thead > tr > th,
+:host ::ng-deep .section-card .ant-table-tbody > tr > td {
+  color: var(--hai-text);
+  background: var(--hai-surface);
+  border-color: var(--hai-border);
 }
 
 .status-strip strong,
@@ -220,6 +259,11 @@
 }
 
 @media (max-width: 900px) {
+  .os-page__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .pursuit-hero,
   .spotlight-item {
     grid-template-columns: 1fr;

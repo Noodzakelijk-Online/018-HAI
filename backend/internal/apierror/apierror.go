@@ -3,7 +3,13 @@
 // clients and the troubleshooting guide share one vocabulary.
 package apierror
 
-import "net/http"
+import (
+	"errors"
+	"net/http"
+	"strings"
+
+	"automation-hub-backend/internal/safety"
+)
 
 // Code is a stable, machine-readable error identifier.
 type Code string
@@ -82,3 +88,23 @@ type Envelope struct {
 
 // Envelope wraps the error for JSON serialization.
 func (e *Error) Envelope() Envelope { return Envelope{Error: e} }
+
+// PublicMessage returns a stable fallback for unexpected errors. A handler may
+// pass a deliberately constructed API Error when its message is safe for the
+// caller; all other errors can contain provider, database, filesystem, or
+// credential context and must not be echoed in an HTTP response.
+func PublicMessage(err error, fallback string) string {
+	fallback = strings.TrimSpace(fallback)
+	if fallback == "" {
+		fallback = "The request could not be completed"
+	}
+	var public *Error
+	if !errors.As(err, &public) || public == nil {
+		return fallback
+	}
+	message := strings.TrimSpace(safety.RedactSecrets(public.Message))
+	if message == "" || len(message) > 500 {
+		return fallback
+	}
+	return message
+}

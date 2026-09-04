@@ -762,7 +762,7 @@ func TestPursuitRationaleFlowsIntoOperationalContext(t *testing.T) {
 	if created.RiskLevel != "high" || created.AutonomyLevel != "approve_before_execute" {
 		t.Fatalf("rationale did not raise the safety floor: %q/%q", created.RiskLevel, created.AutonomyLevel)
 	}
-	if created.Domain != "stability" {
+	if created.Domain != "legal_government" {
 		t.Fatalf("rationale did not classify the pursuit domain: %q", created.Domain)
 	}
 

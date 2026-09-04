@@ -17,17 +17,24 @@ import (
 // ambient scan survives a restart, retries on backoff, and is recovered by
 // lease if the worker dies mid-scan.
 const (
-	JobKindScan     = "ambient.scan"
-	scanMaxAttempts = 3
+	JobKindScan            = "ambient.scan"
+	scanMaxAttempts        = 3
+	defaultAmbientPoll     = 5 * time.Minute
+	minAmbientPollInterval = 15 * time.Second
+	maxAmbientPollInterval = time.Hour
 )
 
 // RegisterDurableScheduling registers the ambient scan as a durable recurring
 // job. Safe to call on every startup: the job is a singleton.
-func RegisterDurableScheduling(runner *durablejob.Runner, service Service, interval time.Duration) error {
+func RegisterDurableScheduling(runner *durablejob.Runner, service Service, interval time.Duration, allowed ...func() bool) error {
 	if runner == nil || service == nil {
 		return fmt.Errorf("durable ambient scheduling needs both a runner and a service")
 	}
+	backgroundAllowed := schedulerBackgroundGate(allowed)
 	if err := runner.RegisterRecurring(JobKindScan, interval, scanMaxAttempts, func(ctx context.Context) error {
+		if !backgroundAllowed() {
+			return durablejob.Defer("background processing is paused by safety policy")
+		}
 		return runAmbientScan(service)
 	}); err != nil {
 		return err
@@ -52,13 +59,13 @@ func runAmbientScan(service Service) error {
 
 // startDurableScheduler builds the runner over the default queue and starts it.
 // Any failure is returned so the caller can fall back to the legacy ticker.
-func startDurableScheduler(ctx context.Context, service Service, interval time.Duration) error {
+func startDurableScheduler(ctx context.Context, service Service, interval time.Duration, allowed ...func() bool) error {
 	repo, err := durablejob.DefaultRepository()
 	if err != nil {
 		return err
 	}
 	runner := durablejob.NewRunner(repo, durablejob.Options{Queue: "ambient"})
-	if err := RegisterDurableScheduling(runner, service, interval); err != nil {
+	if err := RegisterDurableScheduling(runner, service, interval, allowed...); err != nil {
 		return err
 	}
 	go runner.Start(ctx, ambientPollInterval())
@@ -68,11 +75,11 @@ func startDurableScheduler(ctx context.Context, service Service, interval time.D
 func ambientPollInterval() time.Duration {
 	value := strings.TrimSpace(os.Getenv("AMBIENT_WORKER_POLL_SECONDS"))
 	if value == "" {
-		return 15 * time.Second
+		return defaultAmbientPoll
 	}
 	var seconds int64
-	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 1 {
-		return 15 * time.Second
+	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < int64(minAmbientPollInterval/time.Second) || seconds > int64(maxAmbientPollInterval/time.Second) {
+		return defaultAmbientPoll
 	}
 	return time.Duration(seconds) * time.Second
 }

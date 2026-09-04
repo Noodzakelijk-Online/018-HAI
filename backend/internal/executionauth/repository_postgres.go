@@ -608,6 +608,14 @@ type receiptReferences struct {
 	portfolioProposalDecisionID any
 }
 
+// ownerControlApprovalSourcePrefix identifies the short-lived, signed approval
+// used only to release an engaged emergency stop. It intentionally has no
+// database decision row: the signature is verified by the approval resolver
+// before the receipt is persisted, and the immutable receipt is its audit
+// record. Keep this local to executionauth to avoid an import cycle with
+// opscontrol, which depends on this package.
+const ownerControlApprovalSourcePrefix = "opscontrol-owner:"
+
 func encodeReceipt(receipt Receipt) ([]byte, receiptReferences, error) {
 	if err := validateReceipt(receipt); err != nil {
 		return nil, receiptReferences{}, err
@@ -692,21 +700,29 @@ func receiptReferencesFromEvidence(
 		}
 		result.assignmentID = evidence.Agent.AssignmentID
 	}
-	approvalID, err := optionalUUID(
-		"approval decision id",
-		evidence.Approval.DecisionID,
-	)
-	if err != nil {
-		return receiptReferences{}, err
-	}
 	sourceID := strings.TrimSpace(evidence.Approval.SourceID)
+	decisionID := strings.TrimSpace(evidence.Approval.DecisionID)
 	switch {
-	case approvalID == nil && sourceID == "":
-	case approvalID == nil || sourceID == "":
+	case decisionID == "" && sourceID == "":
+	case decisionID == "" || sourceID == "":
 		return receiptReferences{}, fmt.Errorf(
 			"approval evidence requires source and decision ids",
 		)
+	case strings.HasPrefix(sourceID, ownerControlApprovalSourcePrefix):
+		// Owner-control approvals are HMAC-signed, effect-bound, and verified
+		// before this receipt reaches persistence. Unlike workflow and task
+		// approvals, their decision identity is a digest rather than a foreign
+		// key. The receipt evidence remains the durable audit record.
+		if !validDigest(decisionID) {
+			return receiptReferences{}, fmt.Errorf(
+				"owner control approval decision id must be a SHA-256 digest",
+			)
+		}
 	case strings.HasPrefix(sourceID, "task-review:"):
+		approvalID, err := optionalUUID("approval decision id", decisionID)
+		if err != nil {
+			return receiptReferences{}, err
+		}
 		if _, err := uuid.Parse(strings.TrimPrefix(sourceID, "task-review:")); err != nil {
 			return receiptReferences{}, fmt.Errorf(
 				"task review approval source must identify its review item",
@@ -714,6 +730,10 @@ func receiptReferencesFromEvidence(
 		}
 		result.taskReviewDecisionID = approvalID
 	case strings.HasPrefix(sourceID, "workflow-decision:"):
+		approvalID, err := optionalUUID("approval decision id", decisionID)
+		if err != nil {
+			return receiptReferences{}, err
+		}
 		if strings.TrimPrefix(sourceID, "workflow-decision:") !=
 			referenceString(approvalID) {
 			return receiptReferences{}, fmt.Errorf(
@@ -722,6 +742,10 @@ func receiptReferencesFromEvidence(
 		}
 		result.workflowDecisionID = approvalID
 	case strings.HasPrefix(sourceID, "portfolio-decision:"):
+		approvalID, err := optionalUUID("approval decision id", decisionID)
+		if err != nil {
+			return receiptReferences{}, err
+		}
 		if strings.TrimPrefix(sourceID, "portfolio-decision:") !=
 			referenceString(approvalID) {
 			return receiptReferences{}, fmt.Errorf(

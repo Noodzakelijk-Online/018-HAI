@@ -14,10 +14,10 @@ export interface IFrameworkPreferenceEditor {
 }
 
 @Component({
-  standalone: false,
-  selector: 'app-framework-registry-inspector',
-  templateUrl: './framework-registry-inspector.component.html',
-  styleUrls: ['./framework-registry-inspector.component.scss'],
+    selector: 'app-framework-registry-inspector',
+    templateUrl: './framework-registry-inspector.component.html',
+    styleUrls: ['./framework-registry-inspector.component.scss'],
+    standalone: false
 })
 export class FrameworkRegistryInspectorComponent {
   @Input() loading = false;

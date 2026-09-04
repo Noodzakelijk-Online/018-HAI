@@ -21,8 +21,11 @@ import (
 const DefaultGmailBaseURL = "https://gmail.googleapis.com/gmail/v1"
 
 const (
-	maxGmailBodyBytes       = 512 << 10
-	maxGmailAttachmentBytes = 512 << 10
+	maxGmailBodyBytes                   = 512 << 10
+	maxGmailAttachmentBytes             = 512 << 10
+	maxGmailAttachmentRecords           = 20
+	maxGmailAttachmentContentTotalBytes = 1 << 20
+	maxGmailResponseBytes               = 8 << 20
 )
 
 var ErrHistoryCursorExpired = errors.New("gmail history cursor expired")
@@ -236,7 +239,8 @@ func (g GmailClient) GetMessageMetadata(ctx context.Context, id string) (GmailMe
 	}
 	plain, htmlBody := []string{}, []string{}
 	attachments := []GmailAttachment{}
-	g.collectPart(ctx, parsed.ID, parsed.Payload, &plain, &htmlBody, &attachments)
+	attachmentContentBudget := maxGmailAttachmentContentTotalBytes
+	g.collectPart(ctx, parsed.ID, parsed.Payload, &plain, &htmlBody, &attachments, &attachmentContentBudget)
 	msg.Body = strings.TrimSpace(strings.Join(plain, "\n\n"))
 	if msg.Body == "" {
 		msg.Body = strings.TrimSpace(strings.Join(htmlBody, "\n\n"))
@@ -269,17 +273,21 @@ func (g GmailClient) FetchRecent(ctx context.Context, maxResults int, query stri
 	return g.FetchMessageIDs(ctx, ids), nil
 }
 
-func (g GmailClient) collectPart(ctx context.Context, messageID string, part gmailMessagePart, plain, htmlBody *[]string, attachments *[]GmailAttachment) {
+func (g GmailClient) collectPart(ctx context.Context, messageID string, part gmailMessagePart, plain, htmlBody *[]string, attachments *[]GmailAttachment, attachmentContentBudget *int) {
 	if strings.TrimSpace(part.Filename) != "" {
+		if len(*attachments) >= maxGmailAttachmentRecords {
+			return
+		}
 		attachment := GmailAttachment{Filename: part.Filename, MimeType: part.MimeType, Size: part.Body.Size}
-		if gmailTextMime(part.MimeType) && part.Body.Size <= maxGmailAttachmentBytes {
+		if gmailTextMime(part.MimeType) && part.Body.Size <= maxGmailAttachmentBytes && *attachmentContentBudget > 0 && part.Body.Size <= int64(*attachmentContentBudget) {
 			data := part.Body.Data
 			if data == "" && part.Body.AttachmentID != "" {
 				data, _ = g.fetchAttachmentData(ctx, messageID, part.Body.AttachmentID)
 			}
-			if decoded, err := decodeGmailData(data); err == nil && len(decoded) <= maxGmailAttachmentBytes {
+			if decoded, err := decodeGmailData(data); err == nil && len(decoded) <= maxGmailAttachmentBytes && len(decoded) <= *attachmentContentBudget {
 				attachment.Content = strings.TrimSpace(string(decoded))
 				attachment.Fetched = attachment.Content != ""
+				*attachmentContentBudget -= len(decoded)
 			}
 		}
 		*attachments = append(*attachments, attachment)
@@ -295,7 +303,7 @@ func (g GmailClient) collectPart(ctx context.Context, messageID string, part gma
 		}
 	}
 	for _, child := range part.Parts {
-		g.collectPart(ctx, messageID, child, plain, htmlBody, attachments)
+		g.collectPart(ctx, messageID, child, plain, htmlBody, attachments, attachmentContentBudget)
 	}
 }
 
@@ -388,9 +396,12 @@ func (g GmailClient) getJSON(ctx context.Context, path string, target any) error
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxGmailResponseBytes+1))
 	if err != nil {
 		return err
+	}
+	if len(body) > maxGmailResponseBytes {
+		return fmt.Errorf("gmail response exceeded the %d byte safety limit", maxGmailResponseBytes)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("gmail returned 401: access token is invalid or expired")

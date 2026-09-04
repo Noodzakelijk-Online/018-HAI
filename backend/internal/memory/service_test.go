@@ -298,8 +298,90 @@ func TestOwnerScopedMemoryQuarantinesOwnerlessRecords(t *testing.T) {
 	}
 }
 
+func TestOwnerScopedMemoryUsesRepositoryBoundaryWhenAvailable(t *testing.T) {
+	repo := newOwnerScopedFakeRepository()
+	service := NewService(repo)
+	scoped := service.(OwnerScopedService)
+
+	alice, err := scoped.CreateForOwner("alice", CreateRequest{
+		ProjectKey: "vivare", Kind: "decision", Content: "Collect the source-linked evidence first.",
+	})
+	if err != nil {
+		t.Fatalf("CreateForOwner: %v", err)
+	}
+	if repo.findAllForOwnerCalls != 1 || repo.unscopedFindAllCalls != 0 {
+		t.Fatalf("create did not use owner query: scoped=%d unscoped=%d", repo.findAllForOwnerCalls, repo.unscopedFindAllCalls)
+	}
+
+	if _, err := scoped.FindAllForOwner("alice", "vivare", false); err != nil {
+		t.Fatalf("FindAllForOwner: %v", err)
+	}
+	if repo.findAllForOwnerCalls != 2 || repo.unscopedFindAllCalls != 0 {
+		t.Fatalf("list did not use owner query: scoped=%d unscoped=%d", repo.findAllForOwnerCalls, repo.unscopedFindAllCalls)
+	}
+
+	if _, err := scoped.FindByIDForOwner("alice", alice.ID); err != nil {
+		t.Fatalf("FindByIDForOwner: %v", err)
+	}
+	if repo.findByIDForOwnerCalls != 1 || repo.unscopedFindByIDCalls != 0 {
+		t.Fatalf("lookup did not use owner query: scoped=%d unscoped=%d", repo.findByIDForOwnerCalls, repo.unscopedFindByIDCalls)
+	}
+}
+
 type fakeRepository struct {
 	memories map[uuid.UUID]models.ContextMemory
+}
+
+type ownerScopedFakeRepository struct {
+	*fakeRepository
+	findAllForOwnerCalls  int
+	findByIDForOwnerCalls int
+	unscopedFindAllCalls  int
+	unscopedFindByIDCalls int
+}
+
+func newOwnerScopedFakeRepository() *ownerScopedFakeRepository {
+	return &ownerScopedFakeRepository{fakeRepository: newFakeRepository()}
+}
+
+func (r *ownerScopedFakeRepository) FindAll(projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	r.unscopedFindAllCalls++
+	return r.fakeRepository.FindAll(projectKey, includeArchived)
+}
+
+func (r *ownerScopedFakeRepository) FindByID(id uuid.UUID) (*models.ContextMemory, error) {
+	r.unscopedFindByIDCalls++
+	return r.fakeRepository.FindByID(id)
+}
+
+func (r *ownerScopedFakeRepository) FindAllForOwner(ownerIdentity, projectKey string, includeArchived bool) ([]models.ContextMemory, error) {
+	r.findAllForOwnerCalls++
+	all, err := r.fakeRepository.FindAll(projectKey, includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	return filterReadableMemories(all, ownerIdentity), nil
+}
+
+func (r *ownerScopedFakeRepository) FindByIDForOwner(ownerIdentity string, id uuid.UUID) (*models.ContextMemory, error) {
+	r.findByIDForOwnerCalls++
+	memory, err := r.fakeRepository.FindByID(id)
+	if err != nil || !readableByOwner(memory, ownerIdentity) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return memory, nil
+}
+
+func (r *ownerScopedFakeRepository) FindRecentForOwner(ownerIdentity, projectKey string, includeArchived bool, limit int) ([]models.ContextMemory, error) {
+	all, err := r.fakeRepository.FindAll(projectKey, includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	visible := filterReadableMemories(all, ownerIdentity)
+	if len(visible) > limit {
+		return visible[:limit], nil
+	}
+	return visible, nil
 }
 
 func newFakeRepository() *fakeRepository {

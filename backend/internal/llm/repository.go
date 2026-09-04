@@ -3,9 +3,13 @@ package llm
 import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -69,6 +73,56 @@ func DefaultGenerationHistoryRepository() (GenerationHistoryRepository, error) {
 
 type GormModelMaintenanceRepository struct {
 	DB *gorm.DB
+}
+
+// AcquireModelMaintenanceLease serializes one provider/model maintenance pass
+// across backend processes. The session lock is released automatically if its
+// process or database connection exits, avoiding a stale daily-maintenance
+// block after a restart.
+func (r *GormModelMaintenanceRepository) AcquireModelMaintenanceLease(ctx context.Context, providerID, modelID string) (func(), bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	providerID = strings.TrimSpace(providerID)
+	modelID = strings.TrimSpace(modelID)
+	if providerID == "" || modelID == "" {
+		return nil, false, fmt.Errorf("provider id and model id are required")
+	}
+	db, err := r.DB.DB()
+	if err != nil {
+		return nil, false, err
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	key := modelMaintenanceLeaseKey(providerID, modelID)
+	var acquired bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&acquired); err != nil {
+		_ = conn.Close()
+		return nil, false, err
+	}
+	if !acquired {
+		_ = conn.Close()
+		return func() {}, false, nil
+	}
+
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var released bool
+			_ = conn.QueryRowContext(releaseCtx, "SELECT pg_advisory_unlock($1)", key).Scan(&released)
+			_ = conn.Close()
+		})
+	}
+	return release, true, nil
+}
+
+func modelMaintenanceLeaseKey(providerID, modelID string) int64 {
+	digest := sha256.Sum256([]byte("hai:model-maintenance:" + strings.TrimSpace(providerID) + "\x00" + strings.TrimSpace(modelID)))
+	return int64(binary.BigEndian.Uint64(digest[:8]))
 }
 
 type GormGenerationHistoryRepository struct {

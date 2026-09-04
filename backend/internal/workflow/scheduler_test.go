@@ -34,6 +34,17 @@ func TestWorkflowSchedulerCanDisableOpenLoopPass(t *testing.T) {
 	}
 }
 
+func TestWorkflowSchedulerDoesNothingWhenBackgroundIsStopped(t *testing.T) {
+	service := &fakeScheduledWorkflowService{}
+	scheduler := NewScheduler(service, time.Minute, 2, func() bool { return false })
+
+	scheduler.runOnce()
+
+	if len(service.calls) != 0 {
+		t.Fatalf("calls = %#v, want no background work while stopped", service.calls)
+	}
+}
+
 func TestWorkflowSchedulerLimitDefaultsAndCaps(t *testing.T) {
 	t.Setenv("WORKFLOW_SCHEDULER_RUN_LIMIT", "75")
 	if got := schedulerLimit(); got != 50 {
@@ -61,6 +72,40 @@ func TestWorkflowClaimLeaseDefaultsAndBounds(t *testing.T) {
 	t.Setenv("WORKFLOW_CLAIM_LEASE_SECONDS", "999999")
 	if got := claimLeaseDuration(); got != 24*time.Hour {
 		t.Fatalf("capped lease = %s, want 24h", got)
+	}
+}
+
+func TestWorkflowPollIntervalUsesSafeBounds(t *testing.T) {
+	for _, value := range []string{"", "1", "14", "3601", "invalid"} {
+		t.Setenv("WORKFLOW_WORKER_POLL_SECONDS", value)
+		if got := workflowPollInterval(); got != defaultPollSecond {
+			t.Fatalf("workflowPollInterval() with %q = %s, want default %s", value, got, defaultPollSecond)
+		}
+	}
+	t.Setenv("WORKFLOW_WORKER_POLL_SECONDS", "15")
+	if got := workflowPollInterval(); got != minPollInterval {
+		t.Fatalf("workflowPollInterval() = %s, want %s", got, minPollInterval)
+	}
+	t.Setenv("WORKFLOW_WORKER_POLL_SECONDS", "3600")
+	if got := workflowPollInterval(); got != maxPollInterval {
+		t.Fatalf("workflowPollInterval() = %s, want %s", got, maxPollInterval)
+	}
+}
+
+func TestWorkflowSchedulerIntervalUsesSafeBounds(t *testing.T) {
+	for _, value := range []string{"", "1", "14", "86401", "invalid"} {
+		t.Setenv("WORKFLOW_SCHEDULER_INTERVAL_SECONDS", value)
+		if got := schedulerInterval("WORKFLOW_SCHEDULER_INTERVAL_SECONDS"); got != defaultSchedulerInterval {
+			t.Fatalf("schedulerInterval() with %q = %s, want default %s", value, got, defaultSchedulerInterval)
+		}
+	}
+	t.Setenv("WORKFLOW_SCHEDULER_INTERVAL_SECONDS", "15")
+	if got := schedulerInterval("WORKFLOW_SCHEDULER_INTERVAL_SECONDS"); got != minSchedulerInterval {
+		t.Fatalf("schedulerInterval() = %s, want %s", got, minSchedulerInterval)
+	}
+	t.Setenv("WORKFLOW_SCHEDULER_INTERVAL_SECONDS", "86400")
+	if got := schedulerInterval("WORKFLOW_SCHEDULER_INTERVAL_SECONDS"); got != maxSchedulerInterval {
+		t.Fatalf("schedulerInterval() = %s, want %s", got, maxSchedulerInterval)
 	}
 }
 

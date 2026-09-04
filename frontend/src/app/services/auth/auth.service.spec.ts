@@ -1,33 +1,32 @@
-import { TestBed } from '@angular/core/testing';
-import { HttpClientTestingModule } from '@angular/common/http/testing';
-import { HttpTestingController } from '@angular/common/http/testing';
+import { TestBed, fakeAsync, tick } from '@angular/core/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 
 import { AuthService } from './auth.service';
+import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http';
 
 describe('AuthService', () => {
   let service: AuthService;
-  let http: HttpTestingController;
+  let controller: HttpTestingController;
 
   beforeEach(() => {
-    TestBed.configureTestingModule({ imports: [HttpClientTestingModule] });
+    TestBed.configureTestingModule({ imports: [], providers: [provideHttpClient(withInterceptorsFromDi()), provideHttpClientTesting()] });
     service = TestBed.inject(AuthService);
-    http = TestBed.inject(HttpTestingController);
+    controller = TestBed.inject(HttpTestingController);
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => controller.verify());
 
   it('should be created', () => {
     expect(service).toBeTruthy();
   });
 
-  it('uses the non-error session status for route-guard authentication', () => {
+  it('fails a hanging authentication probe promptly', fakeAsync(() => {
     let authenticated: boolean | undefined;
-    service.loggedIn().subscribe((value) => authenticated = value);
+    service.loggedIn().subscribe((result) => (authenticated = result));
+    controller.expectOne('/api/v1/auth/is-user-authenticated');
 
-    const request = http.expectOne('/api/v1/auth/session');
-    expect(request.request.method).toBe('GET');
-    request.flush({ authenticated: false });
+    tick(AuthService.authenticationCheckTimeoutMs + 1);
 
     expect(authenticated).toBeFalse();
-  });
+  }));
 });

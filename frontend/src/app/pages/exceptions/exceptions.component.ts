@@ -12,10 +12,10 @@ const ATTENTION_STATES = [
 ];
 
 @Component({
-  standalone: false,
-  selector: 'app-exceptions',
-  templateUrl: './exceptions.component.html',
-  styleUrls: ['./exceptions.component.scss'],
+    selector: 'app-exceptions',
+    templateUrl: './exceptions.component.html',
+    styleUrls: ['./exceptions.component.scss'],
+    standalone: false
 })
 export class ExceptionsComponent implements OnInit {
   items: IWorkflowItem[] = [];

@@ -32,6 +32,7 @@ var (
 	ErrDestructiveAuthorizationMismatch = errors.New("connected-source authorization receipt does not match the final effect")
 	ErrDestructiveOwnerMismatch         = errors.New("connected-source resource is not owned by the authenticated actor")
 	ErrSourceEmergencyStopActive        = errors.New("emergency stop blocks connected-source mutation")
+	ErrSourceRevoked                    = errors.New("revoked connected sources cannot be reactivated")
 )
 
 // FinalEffectAuthorizer atomically authorizes and consumes authority for one

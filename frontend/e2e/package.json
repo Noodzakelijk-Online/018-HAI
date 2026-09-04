@@ -5,10 +5,13 @@
   "scripts": {
     "test": "playwright test",
     "test:headed": "playwright test --headed",
+    "typecheck": "tsc --project tsconfig.json",
     "report": "playwright show-report",
     "install-browsers": "playwright install --with-deps chromium"
   },
   "devDependencies": {
-    "@playwright/test": "^1.47.0"
+    "@playwright/test": "^1.47.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
   }
 }

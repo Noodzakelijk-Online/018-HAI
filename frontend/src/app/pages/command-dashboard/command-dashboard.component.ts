@@ -1,7 +1,8 @@
-import { Component, Inject, OnInit } from '@angular/core';
+import { Component, Inject, OnDestroy, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
+import { finalize, Subscription, switchMap } from 'rxjs';
 import {
   IAgentRuntimeEcosystemSurface,
   IAgentRuntimeHealth,
@@ -48,12 +49,12 @@ interface RuntimeSurfaceGroup {
 }
 
 @Component({
-  standalone: false,
-  selector: 'app-command-dashboard',
-  templateUrl: './command-dashboard.component.html',
-  styleUrls: ['./command-dashboard.component.scss'],
+    selector: 'app-command-dashboard',
+    templateUrl: './command-dashboard.component.html',
+    styleUrls: ['./command-dashboard.component.scss'],
+    standalone: false
 })
-export class CommandDashboardComponent implements OnInit {
+export class CommandDashboardComponent implements OnInit, OnDestroy {
   private readonly openClawArchiveMaxBytes = 750 * 1024 * 1024;
   dashboard?: ICommandDashboard;
   pursuitDashboard?: IPursuitDashboard;
@@ -76,7 +77,13 @@ export class CommandDashboardComponent implements OnInit {
   resolvingDashboardDecisionId = '';
   selectedRuntimeSurface?: IAgentRuntimeEcosystemSurface;
   commandLogs: IAssistantCommandResult[] = [];
+  commandLogsUnavailable = false;
   lastCommand?: IAssistantCommandResult;
+  private dashboardRefreshSubscription?: Subscription;
+  private pursuitDashboardSubscription?: Subscription;
+  private pursuitBriefSubscription?: Subscription;
+  private runtimeOverviewSubscription?: Subscription;
+  private commandLogsSubscription?: Subscription;
 
   actions: DashboardAction[] = [
     {
@@ -155,9 +162,18 @@ export class CommandDashboardComponent implements OnInit {
     this.loadCommandLogs();
   }
 
+  ngOnDestroy(): void {
+    this.dashboardRefreshSubscription?.unsubscribe();
+    this.pursuitDashboardSubscription?.unsubscribe();
+    this.pursuitBriefSubscription?.unsubscribe();
+    this.runtimeOverviewSubscription?.unsubscribe();
+    this.commandLogsSubscription?.unsubscribe();
+  }
+
   refreshRuntimes(): void {
     this.runtimeLoading = true;
-    this.agentRuntimes.overview().subscribe({
+    this.runtimeOverviewSubscription?.unsubscribe();
+    this.runtimeOverviewSubscription = this.agentRuntimes.overview().subscribe({
       next: ({ runtimes, health }) => {
         this.runtimes = runtimes;
         this.runtimeHealth = health.reduce(
@@ -199,6 +215,28 @@ export class CommandDashboardComponent implements OnInit {
     return this.runtimeHealth[runtime.id]?.reason || 'Not probed';
   }
 
+  openClawGatewayHealthTitle(runtime: IAgentRuntimeInfo): string {
+    const health = this.runtimeHealth[runtime.id];
+    if (!health) {
+      return 'Runtime health has not been probed.';
+    }
+    const detail = [health.reason];
+    if (health.version) {
+      detail.push(`Authenticated gateway version: ${health.version}.`);
+    }
+    const ledger = health.gatewayTaskLedger;
+    if (ledger) {
+      const counts = Object.entries(ledger.statusCounts)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([status, count]) => `${count} ${status}`)
+        .join(', ');
+      detail.push(
+        `Read-only task ledger sampled ${ledger.sampledTasks} task${ledger.sampledTasks === 1 ? '' : 's'}${counts ? `: ${counts}` : ''}${ledger.truncated ? '; more tasks may exist' : ''}.`
+      );
+    }
+    return detail.join(' ');
+  }
+
   openClawRuntime(): IAgentRuntimeInfo | undefined {
     return this.runtimes.find((runtime) => runtime.id === 'openclaw');
   }
@@ -221,6 +259,9 @@ export class CommandDashboardComponent implements OnInit {
     }
     if (!runtime.enabled) {
       return 'Installed as a reference surface. Runtime execution is disabled.';
+    }
+    if (this.runtimeStatus(runtime) === 'available' && !runtime.executionEnabled) {
+      return 'OpenClaw Companion discovery is connected. Task execution remains disabled until the separate CLI, workspace, approval-proof, and gateway credential requirements are configured.';
     }
     if (!runtime.configured) {
       return 'Registered but not ready. Complete workspace, executable, and safety configuration first.';
@@ -385,7 +426,8 @@ export class CommandDashboardComponent implements OnInit {
   refresh(): void {
     this.loading = true;
     this.refreshPursuits();
-    this.memoryEngine.dashboard().subscribe({
+    this.dashboardRefreshSubscription?.unsubscribe();
+    this.dashboardRefreshSubscription = this.memoryEngine.dashboard().subscribe({
       next: (dashboard) => {
         this.dashboard = dashboard;
         this.loading = false;
@@ -407,9 +449,13 @@ export class CommandDashboardComponent implements OnInit {
       return;
     }
     this.openClawConfigLoading = true;
-    this.agentRuntimes.setOpenClawEcosystemPath(path).subscribe({
-      next: (runtime) => {
+    this.agentRuntimes.prepareOpenClawEcosystemPath(path).pipe(
+      switchMap((authorization) => this.agentRuntimes.setOpenClawEcosystemPath(path, authorization)),
+      finalize(() => {
         this.openClawConfigLoading = false;
+      })
+    ).subscribe({
+      next: (runtime) => {
         const index = this.runtimes.findIndex((item) => item.id === runtime.id);
         if (index >= 0) {
           this.runtimes[index] = runtime;
@@ -418,7 +464,6 @@ export class CommandDashboardComponent implements OnInit {
         this.notification.success('OpenClaw ecosystem path updated', `Configured at ${this.openClawEcosystemPath}`);
       },
       error: (error) => {
-        this.openClawConfigLoading = false;
         this.notification.error(
           'OpenClaw ecosystem config failed',
           error?.error?.error || 'The backend rejected the configured OpenClaw ecosystem path.'
@@ -432,18 +477,24 @@ export class CommandDashboardComponent implements OnInit {
       return;
     }
     this.openClawRefreshLoading = true;
-    this.agentRuntimes.refreshOpenClawEcosystem().subscribe({
-      next: (updatedRuntime) => {
+    this.agentRuntimes.prepareOpenClawEcosystemRefresh().pipe(
+      switchMap((authorization) => this.agentRuntimes.refreshOpenClawEcosystem(authorization)),
+      finalize(() => {
         this.openClawRefreshLoading = false;
+      })
+    ).subscribe({
+      next: (updatedRuntime) => {
         const index = this.runtimes.findIndex((item) => item.id === updatedRuntime.id);
         if (index >= 0) {
           this.runtimes[index] = updatedRuntime;
           this.openClawEcosystemPath = updatedRuntime.ecosystemPath || '';
         }
-        this.notification.success('OpenClaw ecosystem refresh queued', 'Re-scanned the selected OpenClaw source path.');
+        this.notification.success(
+          'OpenClaw ecosystem refreshed',
+          'Re-scanned the selected OpenClaw source after a one-time owner confirmation.'
+        );
       },
       error: (error) => {
-        this.openClawRefreshLoading = false;
         this.notification.error(
           'OpenClaw ecosystem refresh failed',
           error?.error?.error || 'The backend failed to refresh OpenClaw ecosystem inventory.'
@@ -479,9 +530,13 @@ export class CommandDashboardComponent implements OnInit {
       return;
     }
     this.openClawUploadLoading = true;
-    this.agentRuntimes.uploadOpenClawEcosystem(file).subscribe({
-      next: (runtime) => {
+    this.agentRuntimes.prepareOpenClawEcosystemUpload(file).pipe(
+      switchMap((authorization) => this.agentRuntimes.uploadOpenClawEcosystem(file, authorization)),
+      finalize(() => {
         this.openClawUploadLoading = false;
+      })
+    ).subscribe({
+      next: (runtime) => {
         this.openClawUploadFileName = '';
         const index = this.runtimes.findIndex((item) => item.id === runtime.id);
         if (index >= 0) {
@@ -494,7 +549,7 @@ export class CommandDashboardComponent implements OnInit {
         );
       },
       error: (error) => {
-        this.openClawUploadLoading = false;
+        this.openClawUploadFileName = '';
         this.notification.error(
           'OpenClaw ecosystem upload failed',
           error?.error?.error || 'The uploaded archive could not be indexed.'
@@ -505,7 +560,8 @@ export class CommandDashboardComponent implements OnInit {
 
   refreshPursuits(): void {
     this.pursuitsLoading = true;
-    this.pursuits.dashboard().subscribe({
+    this.pursuitDashboardSubscription?.unsubscribe();
+    this.pursuitDashboardSubscription = this.pursuits.dashboard().subscribe({
       next: (dashboard) => {
         this.pursuitDashboard = dashboard;
         this.pursuitsLoading = false;
@@ -515,7 +571,8 @@ export class CommandDashboardComponent implements OnInit {
         this.pursuitDashboard = undefined;
       },
     });
-    this.pursuits.brief().subscribe({
+    this.pursuitBriefSubscription?.unsubscribe();
+    this.pursuitBriefSubscription = this.pursuits.brief().subscribe({
       next: (brief) => {
         this.pursuitBrief = brief;
       },
@@ -526,13 +583,15 @@ export class CommandDashboardComponent implements OnInit {
   }
 
   loadCommandLogs(): void {
-    this.assistantCommands.logs().subscribe({
+    this.commandLogsSubscription?.unsubscribe();
+    this.commandLogsSubscription = this.assistantCommands.logs().subscribe({
       next: (logs) => {
         this.commandLogs = logs || [];
+        this.commandLogsUnavailable = false;
         this.lastCommand = this.commandLogs[0] || this.lastCommand;
       },
       error: () => {
-        this.commandLogs = [];
+        this.commandLogsUnavailable = true;
       },
     });
   }
@@ -558,6 +617,7 @@ export class CommandDashboardComponent implements OnInit {
             this.pursuitBrief = result.agentCycle.pursuitBrief;
           }
           this.commandLogs = [result, ...this.commandLogs].slice(0, 50);
+          this.commandLogsUnavailable = false;
           this.notification.success(action.title, result.nextAction || result.summary);
           this.refresh();
         },

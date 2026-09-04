@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,11 +18,15 @@ import (
 	"testing"
 	"time"
 
+	"automation-hub-backend/internal/hostruntime"
 	"automation-hub-backend/internal/safety"
+
+	"github.com/google/uuid"
+	"golang.org/x/net/websocket"
 )
 
 func TestMain(m *testing.M) {
-	if len(os.Args) > 1 && (os.Args[1] == "chat" || os.Args[1] == "agent") {
+	if len(os.Args) > 1 && (os.Args[1] == "chat" || os.Args[1] == "agent" || os.Args[1] == "--profile") {
 		for _, arg := range os.Args[1:] {
 			fmt.Fprintln(os.Stdout, arg)
 		}
@@ -29,6 +34,7 @@ func TestMain(m *testing.M) {
 			"HERMES_HOME",
 			"HERMES_PROFILE",
 			"HERMES_IGNORE_USER_CONFIG",
+			"DSH_HOME",
 			"TERMINAL_CWD",
 			"OPENCLAW_STATE_DIR",
 			"OPENCLAW_HOME",
@@ -319,7 +325,7 @@ func TestRegistryCancellationDuringProofVerificationNeverReachesAdapter(t *testi
 		t.Fatal("final-effect proof verification did not start")
 	}
 	stop := registry.StopTask(context.Background(), "test", "task-1", "alice")
-	if stop.Status != "stopping" {
+	if stop.Status != "cancellation_requested" || !strings.Contains(stop.Message, "delivery is not yet verified") {
 		t.Fatalf("stop while verifying proof = %#v", stop)
 	}
 	close(releaseVerification)
@@ -352,6 +358,20 @@ func TestRegistryReadAPIsRemainAvailableWithoutFinalEffectVerifier(t *testing.T)
 	skills, err := registry.Skills(context.Background(), "hermes")
 	if err != nil || len(skills) != 1 {
 		t.Fatalf("skills should not require execution authorization: skills=%#v err=%v", skills, err)
+	}
+}
+
+func TestRegistryHealthForChecksOnlyTheRequestedRuntime(t *testing.T) {
+	openClaw := &fakeAdapter{info: Info{ID: "openclaw"}}
+	hermes := &fakeAdapter{info: Info{ID: "hermes"}}
+	registry := NewRegistry(openClaw, hermes)
+
+	health, ok := registry.HealthFor(context.Background(), "openclaw")
+	if !ok || health.RuntimeID != "openclaw" {
+		t.Fatalf("HealthFor(openclaw) = (%#v, %t)", health, ok)
+	}
+	if openClaw.healthCalls != 1 || hermes.healthCalls != 0 {
+		t.Fatalf("HealthFor must not probe unrelated runtimes: openclaw=%d hermes=%d", openClaw.healthCalls, hermes.healthCalls)
 	}
 }
 
@@ -457,8 +477,11 @@ func TestRegistryStopTaskCancelsActiveRuntimeExecution(t *testing.T) {
 	}
 
 	stop := registry.StopTask(context.Background(), "test", "task-1", "alice")
-	if stop.Status != "stopping" || !strings.Contains(stop.Message, "cancellation signal") {
+	if stop.Status != "cancellation_requested" || !strings.Contains(stop.Message, "delivery is not yet verified") {
 		t.Fatalf("stop result = %#v", stop)
+	}
+	if !containsString(stop.AuditEvents, "runtime cancellation delivery is not yet verified") {
+		t.Fatalf("stop request must not claim a verified downstream stop: %#v", stop.AuditEvents)
 	}
 
 	select {
@@ -685,6 +708,34 @@ func TestHermesAdapterInvokesControlledCli(t *testing.T) {
 	}
 }
 
+func TestHermesExecutionFailureDoesNotEchoTaskPrompt(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	sensitivePrompt := "sensitive prompt: do-not-expose-6f7d8a"
+	adapter := &hermesAdapter{
+		enabled:       true,
+		executable:    filepath.Join(root, "missing-hermes-executable"),
+		workspace:     workspace,
+		workspaceRoot: root,
+		timeout:       time.Second,
+		outputLimit:   defaultOutputLimit,
+	}
+
+	result := adapter.ExecuteTask(context.Background(), Task{ID: "task-1", Prompt: sensitivePrompt})
+	if result.Status != "failed" {
+		t.Fatalf("result = %#v", result)
+	}
+	if strings.Contains(result.Message, sensitivePrompt) {
+		t.Fatalf("execution error leaked task prompt: %#v", result)
+	}
+	if result.Message != "Hermes process failed without diagnostic output" {
+		t.Fatalf("unexpected failure message: %#v", result)
+	}
+}
+
 func TestOpenClawInfoAdvertisesEcosystemAndControls(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "openclaw")
@@ -744,6 +795,496 @@ func TestOpenClawInfoAdvertisesEcosystemAndControls(t *testing.T) {
 	}
 	if len(info.Architecture) == 0 {
 		t.Fatalf("expected OpenClaw architecture chain to be visible")
+	}
+}
+
+func TestOpenClawCompanionGatewayHealthDoesNotRequireHostCLI(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.Method != http.MethodGet || request.URL.Path != "/health" {
+			t.Fatalf("unexpected companion health request: %s %s", request.Method, request.URL.Path)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	}))
+	defer server.Close()
+
+	gatewayURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	adapter := &openClawAdapter{
+		enabled:        true,
+		gatewayEnabled: true,
+		gatewayURL:     gatewayURL,
+		allowedHost:    map[string]bool{"127.0.0.1": true},
+		timeout:        time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "available" {
+		t.Fatalf("companion gateway health = %#v, want available", health)
+	}
+	if !strings.Contains(health.Reason, "gateway health endpoint is live") {
+		t.Fatalf("companion gateway reason = %q", health.Reason)
+	}
+	if requests != 1 {
+		t.Fatalf("companion health request count = %d, want 1", requests)
+	}
+}
+
+func TestOpenClawHealthOnlyGatewayDoesNotRequireTokenForControlledCLIExecution(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve native test executable: %v", err)
+	}
+	adapter := &openClawAdapter{
+		enabled:         true,
+		executable:      executable,
+		workspace:       workspace,
+		workspaceRoot:   root,
+		gatewayEnabled:  true,
+		gatewayURL:      "ws://127.0.0.1:18789",
+		allowedHost:     map[string]bool{"127.0.0.1": true},
+		agentCLIEnabled: true,
+		sandboxRequired: true,
+		sandboxMode:     "all",
+		// This test validates that an optional health-only Gateway does not affect
+		// the independently governed CLI path. Leave enough headroom for a
+		// race-instrumented test binary to start under loaded CI workers.
+		timeout:         5 * time.Second,
+		outputLimit:     defaultOutputLimit,
+	}
+
+	info := adapter.Info()
+	if !info.Configured || !info.ExecutionEnabled {
+		t.Fatalf("health-only gateway should not disable separately governed CLI execution: %#v", info)
+	}
+	result := adapter.ExecuteTask(context.Background(), Task{ID: "task-1", Prompt: "inspect local work"})
+	if result.Status != "completed" {
+		t.Fatalf("health-only gateway should not block CLI execution: %#v", result)
+	}
+}
+
+func TestOpenClawCompanionGatewayHealthRejectsUnexpectedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"starting"}`))
+	}))
+	defer server.Close()
+
+	adapter := &openClawAdapter{
+		enabled:        true,
+		gatewayEnabled: true,
+		gatewayURL:     "ws" + strings.TrimPrefix(server.URL, "http"),
+		allowedHost:    map[string]bool{"127.0.0.1": true},
+		timeout:        time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "unavailable" || !strings.Contains(health.Reason, "unexpected health response") {
+		t.Fatalf("unexpected companion gateway health = %#v", health)
+	}
+}
+
+func TestOpenClawGatewayTaskLedgerDiscoveryRequiresAuthenticatedDiscovery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	}))
+	defer server.Close()
+
+	adapter := &openClawAdapter{
+		enabled:                           true,
+		gatewayEnabled:                    true,
+		gatewayTaskLedgerDiscoveryEnabled: true,
+		gatewayURL:                        "ws" + strings.TrimPrefix(server.URL, "http"),
+		allowedHost:                       map[string]bool{"127.0.0.1": true},
+		timeout:                           time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "blocked" || !strings.Contains(health.Reason, "OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED") {
+		t.Fatalf("task-ledger discovery without authenticated discovery = %#v", health)
+	}
+}
+
+func TestOpenClawGatewayTaskLedgerDiscoveryRequiresToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	}))
+	defer server.Close()
+
+	adapter := &openClawAdapter{
+		enabled:                              true,
+		gatewayEnabled:                       true,
+		gatewayAuthenticatedDiscoveryEnabled: true,
+		gatewayTaskLedgerDiscoveryEnabled:    true,
+		gatewayURL:                           "ws" + strings.TrimPrefix(server.URL, "http"),
+		allowedHost:                          map[string]bool{"127.0.0.1": true},
+		timeout:                              time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "blocked" || !strings.Contains(health.Reason, "OPENCLAW_GATEWAY_TOKEN") {
+		t.Fatalf("task-ledger discovery without token = %#v", health)
+	}
+}
+
+func TestOpenClawCompanionGatewayHealthRejectsCredentialBearingURL(t *testing.T) {
+	adapter := &openClawAdapter{
+		enabled:        true,
+		gatewayEnabled: true,
+		gatewayURL:     "ws://gateway-token@127.0.0.1:18789",
+		allowedHost:    map[string]bool{"127.0.0.1": true},
+		timeout:        time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "blocked" || !strings.Contains(health.Reason, "must not include credentials") {
+		t.Fatalf("credential-bearing companion gateway URL health = %#v", health)
+	}
+}
+
+func TestOpenClawCompanionGatewayProtocolChallengeIsReadOnly(t *testing.T) {
+	var receivedFrame string
+	var authorizationHeader string
+	gateway := websocket.Server{
+		Handshake: func(_ *websocket.Config, request *http.Request) error {
+			authorizationHeader = request.Header.Get("Authorization")
+			return nil
+		},
+		Handler: func(connection *websocket.Conn) {
+			if err := websocket.JSON.Send(connection, map[string]any{
+				"type":    "event",
+				"event":   "connect.challenge",
+				"payload": map[string]any{"nonce": "challenge-nonce", "ts": float64(1_737_264_000_000)},
+			}); err != nil {
+				t.Errorf("send protocol challenge: %v", err)
+				return
+			}
+			_ = connection.SetDeadline(time.Now().Add(time.Second))
+			if err := websocket.Message.Receive(connection, &receivedFrame); err != nil && !errors.Is(err, io.EOF) {
+				t.Errorf("receive unexpected client frame: %v", err)
+			}
+		},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	})
+	mux.Handle("/", gateway)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	adapter := &openClawAdapter{
+		enabled:                         true,
+		gatewayEnabled:                  true,
+		gatewayProtocolDiscoveryEnabled: true,
+		gatewayURL:                      "ws" + strings.TrimPrefix(server.URL, "http"),
+		gatewayToken:                    "must-not-be-sent",
+		allowedHost:                     map[string]bool{"127.0.0.1": true},
+		timeout:                         time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "available" || !strings.Contains(health.Reason, "protocol challenge was verified") {
+		t.Fatalf("companion gateway protocol health = %#v", health)
+	}
+	if receivedFrame != "" {
+		t.Fatalf("challenge probe sent a client frame: %q", receivedFrame)
+	}
+	if authorizationHeader != "" {
+		t.Fatalf("challenge probe sent an authorization header: %q", authorizationHeader)
+	}
+}
+
+func TestOpenClawCompanionGatewayProtocolChallengeRejectsMalformedFrame(t *testing.T) {
+	gateway := websocket.Server{
+		Handshake: func(_ *websocket.Config, _ *http.Request) error { return nil },
+		Handler: func(connection *websocket.Conn) {
+			_ = websocket.JSON.Send(connection, map[string]any{
+				"type":    "event",
+				"event":   "unexpected.event",
+				"payload": map[string]any{"nonce": "challenge-nonce", "ts": float64(1)},
+			})
+		},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	})
+	mux.Handle("/", gateway)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	adapter := &openClawAdapter{
+		enabled:                         true,
+		gatewayEnabled:                  true,
+		gatewayProtocolDiscoveryEnabled: true,
+		gatewayURL:                      "ws" + strings.TrimPrefix(server.URL, "http"),
+		allowedHost:                     map[string]bool{"127.0.0.1": true},
+		timeout:                         time.Second,
+	}
+
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "unavailable" || !strings.Contains(health.Reason, "protocol challenge") {
+		t.Fatalf("malformed companion gateway protocol health = %#v", health)
+	}
+}
+
+func TestOpenClawCompanionGatewayAuthenticatedReadDiscoveryUsesBoundedOperatorHandshake(t *testing.T) {
+	var receivedFrame map[string]any
+	var authorizationHeader string
+	done := make(chan struct{})
+	gateway := websocket.Server{
+		Handshake: func(_ *websocket.Config, request *http.Request) error {
+			authorizationHeader = request.Header.Get("Authorization")
+			return nil
+		},
+		Handler: func(connection *websocket.Conn) {
+			defer close(done)
+			if err := websocket.JSON.Send(connection, map[string]any{
+				"type":    "event",
+				"event":   "connect.challenge",
+				"payload": map[string]any{"nonce": "challenge-nonce", "ts": float64(1_737_264_000_000)},
+			}); err != nil {
+				t.Errorf("send protocol challenge: %v", err)
+				return
+			}
+			_ = connection.SetDeadline(time.Now().Add(time.Second))
+			if err := websocket.JSON.Receive(connection, &receivedFrame); err != nil {
+				return
+			}
+			requestID, _ := receivedFrame["id"].(string)
+			if err := websocket.JSON.Send(connection, map[string]any{
+				"type": "res",
+				"id":   requestID,
+				"ok":   true,
+				"payload": map[string]any{
+					"type":     "hello-ok",
+					"protocol": float64(4),
+					"server":   map[string]any{"version": "2026.8.1", "connId": "connection-1"},
+					"features": map[string]any{"methods": []string{"status"}, "events": []string{}},
+					"snapshot": map[string]any{},
+					"auth":     map[string]any{"role": "operator", "scopes": []string{"operator.read"}},
+					"policy":   map[string]any{"maxPayload": float64(65536), "maxBufferedBytes": float64(65536)},
+				},
+			}); err != nil {
+				t.Errorf("send hello response: %v", err)
+			}
+		},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	})
+	mux.Handle("/", gateway)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	t.Setenv("OPENCLAW_AGENT_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_TOKEN", "gateway-read-token")
+	t.Setenv("OPENCLAW_GATEWAY_URL", "ws"+strings.TrimPrefix(server.URL, "http"))
+	t.Setenv("AGENT_RUNTIME_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("OPENCLAW_TIMEOUT_SECONDS", "1")
+
+	health := newOpenClawAdapterFromEnv().HealthCheck(context.Background())
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gateway did not finish the authenticated handshake")
+	}
+	if health.Status != "available" || !strings.Contains(health.Reason, "authenticated operator.read") {
+		t.Fatalf("authenticated discovery health = %#v", health)
+	}
+	if health.Version != "2026.8.1" {
+		t.Fatalf("authenticated discovery version = %q, want server version", health.Version)
+	}
+	if authorizationHeader != "" {
+		t.Fatalf("authenticated discovery sent an authorization header: %q", authorizationHeader)
+	}
+	if receivedFrame["type"] != "req" || receivedFrame["method"] != "connect" {
+		t.Fatalf("unexpected gateway frame: %#v", receivedFrame)
+	}
+	params, ok := receivedFrame["params"].(map[string]any)
+	if !ok {
+		t.Fatalf("connect params missing: %#v", receivedFrame)
+	}
+	scopes, ok := params["scopes"].([]any)
+	if !ok {
+		t.Fatalf("connect scopes missing: %#v", params)
+	}
+	hasRead := false
+	hasWrite := false
+	for _, scope := range scopes {
+		value, _ := scope.(string)
+		hasRead = hasRead || value == "operator.read"
+		hasWrite = hasWrite || value == "operator.write"
+	}
+	if params["role"] != "operator" || len(scopes) != 1 || !hasRead || hasWrite {
+		t.Fatalf("connect scopes were not bounded to operator.read: %#v", params)
+	}
+	auth, ok := params["auth"].(map[string]any)
+	if !ok || auth["token"] != "gateway-read-token" {
+		t.Fatalf("connect auth token was not sent through the protocol body: %#v", params)
+	}
+}
+
+func TestOpenClawCompanionGatewayReadOnlyTaskLedgerDiscoveryReturnsOnlyAggregateCounts(t *testing.T) {
+	var receivedFrames []map[string]any
+	done := make(chan struct{})
+	gateway := websocket.Server{
+		Handler: func(connection *websocket.Conn) {
+			defer close(done)
+			if err := websocket.JSON.Send(connection, map[string]any{
+				"type":    "event",
+				"event":   "connect.challenge",
+				"payload": map[string]any{"nonce": "challenge-nonce", "ts": float64(1_737_264_000_000)},
+			}); err != nil {
+				t.Errorf("send protocol challenge: %v", err)
+				return
+			}
+			_ = connection.SetDeadline(time.Now().Add(time.Second))
+			for len(receivedFrames) < 2 {
+				var frame map[string]any
+				if err := websocket.JSON.Receive(connection, &frame); err != nil {
+					return
+				}
+				receivedFrames = append(receivedFrames, frame)
+				requestID, _ := frame["id"].(string)
+				if frame["method"] == "connect" {
+					if err := websocket.JSON.Send(connection, map[string]any{
+						"type": "res",
+						"id":   requestID,
+						"ok":   true,
+						"payload": map[string]any{
+							"type":     "hello-ok",
+							"protocol": float64(4),
+							"server":   map[string]any{"version": "2026.8.1", "connId": "connection-1"},
+							"features": map[string]any{"methods": []string{"tasks.list"}, "events": []string{}},
+							"snapshot": map[string]any{},
+							"auth":     map[string]any{"role": "operator", "scopes": []string{"operator.read"}},
+							"policy":   map[string]any{"maxPayload": float64(65536), "maxBufferedBytes": float64(65536)},
+						},
+					}); err != nil {
+						t.Errorf("send hello response: %v", err)
+						return
+					}
+					continue
+				}
+				if err := websocket.JSON.Send(connection, map[string]any{
+					"type": "res",
+					"id":   requestID,
+					"ok":   true,
+					"payload": map[string]any{
+						"tasks": []map[string]any{
+							{"id": "sensitive-task-one", "title": "Never expose this", "status": "running"},
+							{"id": "sensitive-task-two", "title": "Never expose this either", "status": "completed"},
+							{"id": "sensitive-task-three", "title": "Still private", "status": "running"},
+						},
+						"nextCursor": "more-private-tasks",
+					},
+				}); err != nil {
+					t.Errorf("send task ledger response: %v", err)
+				}
+			}
+		},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"status":"live"}`))
+	})
+	mux.Handle("/", gateway)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	t.Setenv("OPENCLAW_AGENT_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED", "true")
+	t.Setenv("OPENCLAW_GATEWAY_TOKEN", "gateway-read-token")
+	t.Setenv("OPENCLAW_GATEWAY_URL", "ws"+strings.TrimPrefix(server.URL, "http"))
+	t.Setenv("AGENT_RUNTIME_ALLOWED_HOSTS", "127.0.0.1")
+	t.Setenv("OPENCLAW_TIMEOUT_SECONDS", "1")
+
+	health := newOpenClawAdapterFromEnv().HealthCheck(context.Background())
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gateway did not finish the bounded task ledger discovery")
+	}
+	if health.Status != "available" || health.GatewayTaskLedger == nil {
+		t.Fatalf("task-ledger discovery health = %#v", health)
+	}
+	if health.GatewayTaskLedger.SampledTasks != 3 || !health.GatewayTaskLedger.Truncated || health.GatewayTaskLedger.StatusCounts["running"] != 2 || health.GatewayTaskLedger.StatusCounts["completed"] != 1 {
+		t.Fatalf("unexpected aggregate task ledger = %#v", health.GatewayTaskLedger)
+	}
+	if len(receivedFrames) != 2 || receivedFrames[0]["method"] != "connect" || receivedFrames[1]["method"] != "tasks.list" {
+		t.Fatalf("unexpected gateway frames = %#v", receivedFrames)
+	}
+	params, ok := receivedFrames[1]["params"].(map[string]any)
+	if !ok || params["limit"] != float64(openClawGatewayTaskLedgerLimit) || len(params) != 1 {
+		t.Fatalf("task-ledger request should contain only its bounded limit: %#v", receivedFrames[1])
+	}
+}
+
+func TestOpenClawGatewayTaskLedgerRejectsUnknownTaskStatus(t *testing.T) {
+	_, err := openClawGatewayTaskLedgerFromResponse(json.RawMessage(`{"tasks":[{"status":"unexpected"}]}`))
+	if err == nil {
+		t.Fatal("unknown task status should be rejected")
+	}
+}
+
+func TestPresentGatewayJSONRejectsMissingOrNullValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		value json.RawMessage
+		want  bool
+	}{
+		{name: "missing", value: nil, want: false},
+		{name: "empty", value: json.RawMessage("  "), want: false},
+		{name: "null", value: json.RawMessage("null"), want: false},
+		{name: "object", value: json.RawMessage(`{}`), want: true},
+		{name: "array", value: json.RawMessage(`[]`), want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := presentGatewayJSON(test.value); got != test.want {
+				t.Fatalf("presentGatewayJSON(%q) = %t, want %t", test.value, got, test.want)
+			}
+		})
+	}
+}
+
+func TestValidGatewayEvidenceValueRejectsUnboundedOrControlValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "empty", value: "", want: false},
+		{name: "version", value: "2026.7.1-2", want: true},
+		{name: "control character", value: "2026.7\n1", want: false},
+		{name: "oversized", value: strings.Repeat("a", 129), want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := validGatewayEvidenceValue(test.value); got != test.want {
+				t.Fatalf("validGatewayEvidenceValue(%q) = %t, want %t", test.value, got, test.want)
+			}
+		})
 	}
 }
 
@@ -1499,9 +2040,347 @@ func executableFakeAdapter() *fakeAdapter {
 	}}
 }
 
+func TestDeepSeekHarnessAdapterIsRegisteredAndDisabledByDefault(t *testing.T) {
+	t.Setenv("DEEPSEEK_HARNESS_ENABLED", "false")
+	t.Setenv("DEEPSEEK_HARNESS_WORKSPACE", "")
+	t.Setenv("DEEPSEEK_HARNESS_STATE_DIR", "")
+	t.Setenv("AGENT_RUNTIME_WORKSPACE_ROOT", "")
+	registry := NewRegistry(newDeepSeekHarnessAdapterFromEnv())
+	infos := registry.List()
+	if len(infos) != 1 {
+		t.Fatalf("runtime count = %d, want 1", len(infos))
+	}
+	info := infos[0]
+	if info.ID != "deepseek-harness" || info.Enabled || info.ExecutionEnabled || info.Type != "deepseek_harness" {
+		t.Fatalf("unexpected DeepSeek Harness info: %#v", info)
+	}
+	if !containsString(info.MissingConfiguration, "DEEPSEEK_HARNESS_WORKSPACE") {
+		t.Fatalf("missing configuration = %#v, want workspace", info.MissingConfiguration)
+	}
+	if !containsString(info.MissingConfiguration, "DEEPSEEK_HARNESS_VERSION") {
+		t.Fatalf("missing configuration = %#v, want pinned version", info.MissingConfiguration)
+	}
+	if skills, err := registry.Skills(context.Background(), "deepseek-harness"); err != nil || len(skills) != 1 || skills[0].ExecutionMode != "approved_headless_task" {
+		t.Fatalf("skills = %#v, err = %v", skills, err)
+	}
+}
+
+func TestDeepSeekHarnessAdapterRequiresExplicitHeadlessExecutionOptIn(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:         true,
+		executable:      "dsh",
+		expectedVersion: "test-preview-1.0",
+		workspace:       workspace,
+		workspaceRoot:   root,
+		stateDir:        filepath.Join(workspace, ".dsh-state"),
+	}
+	info := adapter.Info()
+	if !info.Configured || info.ExecutionEnabled {
+		t.Fatalf("adapter configuration = %#v, want configured but execution opt-in disabled", info)
+	}
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "EXECUTION_ENABLED") {
+		t.Fatalf("result = %#v, want execution opt-in block", result)
+	}
+}
+
+func TestDeepSeekHarnessAdapterQueuesApprovedTaskToHostBridge(t *testing.T) {
+	dispatcher := &capturingHostRuntimeDispatcher{}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:             true,
+		executionEnabled:    true,
+		expectedVersion:     "0.1.1-rc.2",
+		workspaceKey:        "hai",
+		dispatcher:          dispatcher,
+		hostDispatchEnabled: true,
+	}
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "queued" || !strings.Contains(result.Message, "Windows host bridge") {
+		t.Fatalf("result = %#v, want queued host bridge task", result)
+	}
+	if dispatcher.task.RuntimeID != "deepseek-harness" || dispatcher.task.TaskID != "harness-task" || !dispatcher.task.Approved {
+		t.Fatalf("host runtime task = %#v", dispatcher.task)
+	}
+}
+
+func TestDeepSeekHarnessAdapterDoesNotQueueWhenHostBridgeIsDisabled(t *testing.T) {
+	dispatcher := &capturingHostRuntimeDispatcher{}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:          true,
+		executionEnabled: true,
+		expectedVersion:  "0.1.1-rc.2",
+		workspaceKey:     "hai",
+		dispatcher:       dispatcher,
+	}
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "host bridge is disabled") {
+		t.Fatalf("result = %#v, want disabled host bridge block", result)
+	}
+	if dispatcher.task.TaskID != "" {
+		t.Fatalf("disabled host bridge unexpectedly received task: %#v", dispatcher.task)
+	}
+}
+
+func TestDeepSeekHarnessAdapterRunsDocumentedHeadlessProfile(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "test-preview-1.0",
+		versionProbe:                func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
+		workspace:                   workspace,
+		workspaceRoot:               root,
+		stateDir:                    filepath.Join(workspace, ".dsh-state"),
+		timeout:                     5 * time.Second,
+		outputLimit:                 defaultOutputLimit,
+		allowDirectExecutionForTest: true,
+	}
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "completed" || !strings.Contains(result.Output, "--profile") || !strings.Contains(result.Output, "headless") {
+		t.Fatalf("result = %#v, want documented headless invocation", result)
+	}
+	if !strings.Contains(result.Output, "DSH_HOME=") || !strings.Contains(result.Output, "HAI_RUNTIME_TASK_ID=harness-task") {
+		t.Fatalf("result output = %q, want isolated state and task metadata", result.Output)
+	}
+}
+
+func TestDeepSeekHarnessAdapterRejectsOptionLikePrompt(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "test-preview-1.0",
+		versionProbe:                func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
+		workspace:                   workspace,
+		workspaceRoot:               root,
+		stateDir:                    filepath.Join(workspace, ".dsh-state"),
+		timeout:                     time.Second,
+		outputLimit:                 defaultOutputLimit,
+		allowDirectExecutionForTest: true,
+	}
+
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "--install-plugin=untrusted"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "must not start with a command option") {
+		t.Fatalf("result = %#v, want option-like prompt rejection", result)
+	}
+}
+
+func TestDeepSeekHarnessAdapterRejectsLauncherSubcommandPrompt(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "test-preview-1.0",
+		workspace:                   workspace,
+		workspaceRoot:               root,
+		stateDir:                    filepath.Join(workspace, ".dsh-state"),
+		timeout:                     time.Second,
+		outputLimit:                 defaultOutputLimit,
+		allowDirectExecutionForTest: true,
+	}
+
+	for _, prompt := range []string{"web", "plugin"} {
+		result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", prompt))
+		if result.Status != "blocked" || !strings.Contains(result.Message, "launcher subcommand") {
+			t.Fatalf("prompt %q result = %#v, want launcher subcommand rejection", prompt, result)
+		}
+	}
+}
+
+func TestDeepSeekHarnessAdapterBoundsWaitingForSharedState(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "test-preview-1.0",
+		workspace:                   workspace,
+		workspaceRoot:               root,
+		stateDir:                    filepath.Join(workspace, ".dsh-state"),
+		timeout:                     10 * time.Millisecond,
+		outputLimit:                 defaultOutputLimit,
+		allowDirectExecutionForTest: true,
+	}
+	if !adapter.acquireExecutionGate(context.Background()) {
+		t.Fatal("could not acquire test execution gate")
+	}
+	defer adapter.releaseExecutionGate()
+
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "already running") {
+		t.Fatalf("result = %#v, want bounded shared-state wait", result)
+	}
+}
+
+func TestDeepSeekHarnessAdapterRejectsWorkspaceOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	adapter := &deepSeekHarnessAdapter{
+		enabled:       true,
+		executable:    "dsh",
+		workspace:     outside,
+		workspaceRoot: root,
+		stateDir:      filepath.Join(outside, ".dsh-state"),
+	}
+	if reason := adapter.workspaceBlockedReason(); !strings.Contains(reason, "must stay inside") {
+		t.Fatalf("workspace block reason = %q", reason)
+	}
+}
+
+func TestDeepSeekHarnessAdapterRejectsMissingWorkspaceRoot(t *testing.T) {
+	workspace := t.TempDir()
+	adapter := &deepSeekHarnessAdapter{
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "test-preview-1.0",
+		workspace:                   workspace,
+		workspaceRoot:               "",
+		stateDir:                    filepath.Join(workspace, ".dsh-state"),
+		allowDirectExecutionForTest: true,
+	}
+
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "workspace root") {
+		t.Fatalf("result = %#v, want missing workspace root block", result)
+	}
+}
+
+func TestDeepSeekHarnessAdapterRejectsStateDirectoryOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "test-preview-1.0",
+		workspace:                   workspace,
+		workspaceRoot:               root,
+		stateDir:                    filepath.Join(t.TempDir(), ".dsh-state"),
+		allowDirectExecutionForTest: true,
+	}
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "state directory must stay inside") {
+		t.Fatalf("result = %#v, want state directory block", result)
+	}
+}
+
+func TestDeepSeekHarnessAdapterRejectsStateDirectorySymlinkOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	stateDir := filepath.Join(workspace, ".dsh-state")
+	if err := os.Symlink(outside, stateDir); err != nil {
+		t.Skipf("symlink creation is unavailable in this test environment: %v", err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:          true,
+		executionEnabled: true,
+		executable:       os.Args[0],
+		expectedVersion:  "test-preview-1.0",
+		workspace:        workspace,
+		workspaceRoot:    root,
+		stateDir:         stateDir,
+	}
+	if reason := adapter.stateDirBlockedReason(); !strings.Contains(reason, "must not be a symbolic link") {
+		t.Fatalf("state directory block reason = %q", reason)
+	}
+}
+
+func TestDeepSeekHarnessHealthReportsPreviewReadiness(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:          true,
+		executionEnabled: true,
+		executable:       os.Args[0],
+		expectedVersion:  "test-preview-1.0",
+		versionProbe:     func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
+		workspace:        workspace,
+		workspaceRoot:    root,
+		stateDir:         filepath.Join(workspace, ".dsh-state"),
+	}
+	health := adapter.HealthCheck(context.Background())
+	if health.Status != "ready" || !strings.Contains(health.Reason, "headless") {
+		t.Fatalf("health = %#v, want headless readiness", health)
+	}
+}
+
+func TestDeepSeekHarnessAdapterBlocksVersionMismatchBeforeTaskExecution(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "deepseek-harness")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	adapter := &deepSeekHarnessAdapter{
+		enabled:                     true,
+		executionEnabled:            true,
+		executable:                  os.Args[0],
+		expectedVersion:             "different-preview",
+		versionProbe:                func(context.Context) (string, error) { return "dsh test-preview-1.0", nil },
+		workspace:                   workspace,
+		workspaceRoot:               root,
+		stateDir:                    filepath.Join(workspace, ".dsh-state"),
+		timeout:                     time.Second,
+		outputLimit:                 defaultOutputLimit,
+		allowDirectExecutionForTest: true,
+	}
+	result := adapter.ExecuteTask(context.Background(), approvedRuntimeTask("harness-task", "inspect workspace"))
+	if result.Status != "blocked" || !strings.Contains(result.Message, "version mismatch") {
+		t.Fatalf("result = %#v, want version mismatch block", result)
+	}
+}
+
+type capturingHostRuntimeDispatcher struct {
+	task hostruntime.ApprovedTask
+	err  error
+}
+
+func (d *capturingHostRuntimeDispatcher) Enqueue(task hostruntime.ApprovedTask) (*hostruntime.Job, error) {
+	d.task = task
+	if d.err != nil {
+		return nil, d.err
+	}
+	return &hostruntime.Job{ID: uuid.New(), Status: hostruntime.StatusPending}, nil
+}
+
 type fakeAdapter struct {
-	info   Info
-	called bool
+	info        Info
+	called      bool
+	healthCalls int
 }
 
 func (a *fakeAdapter) Info() Info {
@@ -1509,6 +2388,7 @@ func (a *fakeAdapter) Info() Info {
 }
 
 func (a *fakeAdapter) HealthCheck(context.Context) Health {
+	a.healthCalls++
 	return Health{RuntimeID: a.info.ID, Status: "ready"}
 }
 

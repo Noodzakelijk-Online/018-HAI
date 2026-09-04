@@ -3,7 +3,13 @@ package source
 import (
 	"automation-hub-backend/internal/infra"
 	"automation-hub-backend/internal/models"
+	"automation-hub-backend/internal/safety"
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,10 +23,13 @@ type Repository interface {
 	UpdateSource(source *models.ConnectedSource) (*models.ConnectedSource, error)
 	RevokeSource(source *models.ConnectedSource, ownerIdentity string, revokedAt time.Time) (*models.ConnectedSource, error)
 	FindSources(includeDisabled bool) ([]models.ConnectedSource, error)
+	FindSourcesVisibleToOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error)
 	FindSource(id uuid.UUID) (*models.ConnectedSource, error)
+	FindMutableSourceForOwner(id uuid.UUID, ownerIdentity string) (*models.ConnectedSource, error)
 	CreateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
 	UpdateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error)
 	FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error)
+	FindSyncJobsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceSyncJob, error)
 	FindRawItem(sourceID uuid.UUID, externalID string) (*models.SourceRawItem, error)
 	SaveRawItem(item *models.SourceRawItem) (*models.SourceRawItem, error)
 	FindRawItems(sourceID uuid.UUID) ([]models.SourceRawItem, error)
@@ -28,7 +37,9 @@ type Repository interface {
 	SaveExtraction(extraction *models.SourceExtraction) (*models.SourceExtraction, error)
 	FindExtractions(projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
 	FindExtractionsForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error)
+	FindExtractionPageForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, int64, error)
 	FindExtraction(id uuid.UUID) (*models.SourceExtraction, error)
+	FindMutableExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error)
 	DeleteExtractionForOwner(
 		extraction *models.SourceExtraction,
 		source *models.ConnectedSource,
@@ -38,12 +49,61 @@ type Repository interface {
 	DeletePendingVectorIndex(extractionID uuid.UUID) error
 	SaveAuditLog(log *models.SourceAuditLog) (*models.SourceAuditLog, error)
 	FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error)
+	FindAuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error)
 	SaveOAuthToken(token *models.SourceOAuthToken) error
 	FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuthToken, error)
+	FindOAuthTokensForSources(sourceIDs []uuid.UUID) ([]models.SourceOAuthToken, error)
 }
 
 type GormRepository struct {
 	DB *gorm.DB
+}
+
+// AcquireSourceSyncLease prevents the same source from being synced by two
+// backend processes at once. PostgreSQL releases this session-level advisory
+// lock if the process or database connection dies, so an abandoned worker
+// cannot permanently block a source after a restart.
+func (r *GormRepository) AcquireSourceSyncLease(ctx context.Context, sourceID uuid.UUID) (func(), bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	db, err := r.DB.DB()
+	if err != nil {
+		return nil, false, err
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	key := sourceSyncLeaseKey(sourceID)
+	var acquired bool
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&acquired); err != nil {
+		_ = conn.Close()
+		return nil, false, err
+	}
+	if !acquired {
+		_ = conn.Close()
+		return func() {}, false, nil
+	}
+
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			// The connection may already be gone after a database restart. Closing
+			// it is still enough to ensure no session lock survives locally.
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var released bool
+			_ = conn.QueryRowContext(releaseCtx, "SELECT pg_advisory_unlock($1)", key).Scan(&released)
+			_ = conn.Close()
+		})
+	}
+	return release, true, nil
+}
+
+func sourceSyncLeaseKey(sourceID uuid.UUID) int64 {
+	digest := sha256.Sum256(append([]byte("hai:source-sync:"), sourceID[:]...))
+	return int64(binary.BigEndian.Uint64(digest[:8]))
 }
 
 func NewGormRepository(db *gorm.DB) Repository {
@@ -170,17 +230,55 @@ func (r *GormRepository) RevokeSource(
 
 func (r *GormRepository) FindSources(includeDisabled bool) ([]models.ConnectedSource, error) {
 	var sources []models.ConnectedSource
-	query := r.DB.Order("updated_at desc")
-	if !includeDisabled {
-		query = query.Where("enabled = ? AND status <> ?", true, "revoked")
-	}
+	query := r.sourceQuery(includeDisabled)
 	err := query.Find(&sources).Error
 	return sources, err
+}
+
+// FindSourcesVisibleToOwner preserves read-only visibility of ownerless legacy
+// sources while keeping other owners' records inside the database boundary.
+func (r *GormRepository) FindSourcesVisibleToOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return r.FindSources(includeDisabled)
+	}
+	var sources []models.ConnectedSource
+	err := r.sourceQuery(includeDisabled).
+		Where("owner_identity = ? OR owner_identity = '' OR owner_identity IS NULL", ownerIdentity).
+		Find(&sources).Error
+	return sources, err
+}
+
+func (r *GormRepository) sourceQuery(includeDisabled bool) *gorm.DB {
+	query := r.DB.Order("updated_at desc")
+	if !includeDisabled {
+		// Paused and revoked sources remain available to their owner through the
+		// explicit history view, but are not candidates for background work.
+		// Filtering them at the database keeps large, deliberately paused source
+		// inventories out of every scheduler sweep.
+		query = query.Where("enabled = ? AND status NOT IN ?", true, []string{"paused", "revoked"})
+	}
+	return query
 }
 
 func (r *GormRepository) FindSource(id uuid.UUID) (*models.ConnectedSource, error) {
 	var source models.ConnectedSource
 	if err := r.DB.First(&source, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &source, nil
+}
+
+// FindMutableSourceForOwner is stricter than source visibility: ownerless
+// legacy sources can remain readable during migration, but only their verified
+// owner can alter configuration or trigger ingestion.
+func (r *GormRepository) FindMutableSourceForOwner(id uuid.UUID, ownerIdentity string) (*models.ConnectedSource, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var source models.ConnectedSource
+	if err := r.DB.Where("id = ? AND owner_identity = ?", id, ownerIdentity).First(&source).Error; err != nil {
 		return nil, err
 	}
 	return &source, nil
@@ -194,6 +292,9 @@ func (r *GormRepository) CreateSyncJob(job *models.SourceSyncJob) (*models.Sourc
 }
 
 func (r *GormRepository) UpdateSyncJob(job *models.SourceSyncJob) (*models.SourceSyncJob, error) {
+	// Adapter failures can include arbitrary upstream diagnostics. Persist only
+	// a redacted message; API responses and audit records use the same boundary.
+	job.Message = safety.RedactSecrets(job.Message)
 	if err := r.DB.Save(job).Error; err != nil {
 		return nil, err
 	}
@@ -207,6 +308,15 @@ func (r *GormRepository) FindSyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJ
 		query = query.Where("source_id = ?", *sourceID)
 	}
 	err := query.Find(&jobs).Error
+	return jobs, err
+}
+
+func (r *GormRepository) FindSyncJobsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceSyncJob, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceSyncJob{}, nil
+	}
+	var jobs []models.SourceSyncJob
+	err := r.DB.Where("source_id IN ?", sourceIDs).Order("created_at desc").Limit(boundedHistoryLimit(limit)).Find(&jobs).Error
 	return jobs, err
 }
 
@@ -257,9 +367,31 @@ func (r *GormRepository) FindExtractionsForSources(sourceIDs []uuid.UUID, projec
 	return r.findExtractions(sourceIDs, projectKey, includeArchived)
 }
 
+func (r *GormRepository) FindExtractionPageForSources(sourceIDs []uuid.UUID, projectKey string, includeArchived bool, limit int) ([]models.SourceExtraction, int64, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceExtraction{}, 0, nil
+	}
+	query := r.extractionsQuery(sourceIDs, projectKey, includeArchived)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var extractions []models.SourceExtraction
+	if err := query.Order("updated_at desc").Limit(limit).Find(&extractions).Error; err != nil {
+		return nil, 0, err
+	}
+	return extractions, total, nil
+}
+
 func (r *GormRepository) findExtractions(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) ([]models.SourceExtraction, error) {
 	var extractions []models.SourceExtraction
-	query := r.DB.Order("updated_at desc")
+	query := r.extractionsQuery(sourceIDs, projectKey, includeArchived).Order("updated_at desc")
+	err := query.Find(&extractions).Error
+	return extractions, err
+}
+
+func (r *GormRepository) extractionsQuery(sourceIDs []uuid.UUID, projectKey string, includeArchived bool) *gorm.DB {
+	query := r.DB.Model(&models.SourceExtraction{})
 	if sourceIDs != nil {
 		query = query.Where("source_id IN ?", sourceIDs)
 	}
@@ -269,13 +401,30 @@ func (r *GormRepository) findExtractions(sourceIDs []uuid.UUID, projectKey strin
 	if !includeArchived {
 		query = query.Where("archived = ?", false)
 	}
-	err := query.Find(&extractions).Error
-	return extractions, err
+	return query
 }
 
 func (r *GormRepository) FindExtraction(id uuid.UUID) (*models.SourceExtraction, error) {
 	var extraction models.SourceExtraction
 	if err := r.DB.First(&extraction, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &extraction, nil
+}
+
+// FindMutableExtractionForOwner scopes an extraction mutation to its verified
+// source owner without materializing the user's full source or extraction history.
+func (r *GormRepository) FindMutableExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error) {
+	ownerIdentity = strings.TrimSpace(ownerIdentity)
+	if ownerIdentity == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var extraction models.SourceExtraction
+	err := r.DB.Model(&models.SourceExtraction{}).
+		Joins("JOIN connected_sources ON connected_sources.id = source_extractions.source_id").
+		Where("source_extractions.id = ? AND connected_sources.owner_identity = ?", id, ownerIdentity).
+		First(&extraction).Error
+	if err != nil {
 		return nil, err
 	}
 	return &extraction, nil
@@ -373,6 +522,25 @@ func (r *GormRepository) FindAuditLogs(sourceID *uuid.UUID) ([]models.SourceAudi
 	return logs, err
 }
 
+func (r *GormRepository) FindAuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceAuditLog{}, nil
+	}
+	var logs []models.SourceAuditLog
+	err := r.DB.Where("source_id IN ?", sourceIDs).Order("created_at desc").Limit(boundedHistoryLimit(limit)).Find(&logs).Error
+	return logs, err
+}
+
+func boundedHistoryLimit(limit int) int {
+	if limit <= 0 {
+		return 100
+	}
+	if limit > 250 {
+		return 250
+	}
+	return limit
+}
+
 // SaveOAuthToken upserts the token for a source (one token set per source).
 func (r *GormRepository) SaveOAuthToken(token *models.SourceOAuthToken) error {
 	var existing models.SourceOAuthToken
@@ -397,4 +565,15 @@ func (r *GormRepository) FindOAuthToken(sourceID uuid.UUID) (*models.SourceOAuth
 		return nil, err
 	}
 	return &token, nil
+}
+
+func (r *GormRepository) FindOAuthTokensForSources(sourceIDs []uuid.UUID) ([]models.SourceOAuthToken, error) {
+	if len(sourceIDs) == 0 {
+		return []models.SourceOAuthToken{}, nil
+	}
+	var tokens []models.SourceOAuthToken
+	if err := r.DB.Where("source_id IN ?", sourceIDs).Find(&tokens).Error; err != nil {
+		return nil, err
+	}
+	return tokens, nil
 }

@@ -10,17 +10,24 @@ import (
 	"time"
 )
 
+const (
+	defaultSchedulerInterval = 10 * time.Minute
+	minSchedulerInterval     = 15 * time.Second
+	maxSchedulerInterval     = 24 * time.Hour
+)
+
 type Scheduler struct {
-	service  Service
-	interval time.Duration
-	running  atomic.Bool
+	service           Service
+	interval          time.Duration
+	backgroundAllowed func() bool
+	running           atomic.Bool
 }
 
-func NewScheduler(service Service, interval time.Duration) *Scheduler {
-	if interval < 15*time.Second {
-		interval = 10 * time.Minute
+func NewScheduler(service Service, interval time.Duration, allowed ...func() bool) *Scheduler {
+	if interval < minSchedulerInterval || interval > maxSchedulerInterval {
+		interval = defaultSchedulerInterval
 	}
-	return &Scheduler{service: service, interval: interval}
+	return &Scheduler{service: service, interval: interval, backgroundAllowed: schedulerBackgroundGate(allowed)}
 }
 
 // StartScheduler starts scheduled source syncing.
@@ -30,19 +37,20 @@ func NewScheduler(service Service, interval time.Duration) *Scheduler {
 // durable queue cannot be reached — or SOURCE_SCHEDULER_DURABLE is explicitly
 // disabled — it falls back to the legacy in-process ticker and says so, rather
 // than silently running no scheduler at all.
-func StartScheduler(ctx context.Context, service Service) {
+func StartScheduler(ctx context.Context, service Service, allowed ...func() bool) {
 	if !schedulerEnabled() {
 		return
 	}
 	interval := schedulerInterval()
+	backgroundAllowed := schedulerBackgroundGate(allowed)
 	if durableSchedulerEnabled() {
-		if err := startDurableScheduler(ctx, service, interval); err != nil {
+		if err := startDurableScheduler(ctx, service, interval, backgroundAllowed); err != nil {
 			log.Printf("source scheduler: durable queue unavailable (%v); falling back to the in-process ticker", err)
 		} else {
 			return
 		}
 	}
-	scheduler := NewScheduler(service, interval)
+	scheduler := NewScheduler(service, interval, backgroundAllowed)
 	go scheduler.Start(ctx)
 }
 
@@ -72,6 +80,9 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 
 func (s *Scheduler) runOnce() {
+	if s.backgroundAllowed != nil && !s.backgroundAllowed() {
+		return
+	}
 	if !s.running.CompareAndSwap(false, true) {
 		return
 	}
@@ -86,6 +97,13 @@ func (s *Scheduler) runOnce() {
 	}
 }
 
+func schedulerBackgroundGate(allowed []func() bool) func() bool {
+	if len(allowed) > 0 && allowed[0] != nil {
+		return allowed[0]
+	}
+	return func() bool { return true }
+}
+
 func schedulerEnabled() bool {
 	value := strings.TrimSpace(strings.ToLower(os.Getenv("SOURCE_SCHEDULER_ENABLED")))
 	return value == "" || value == "true" || value == "1" || value == "yes"
@@ -94,11 +112,11 @@ func schedulerEnabled() bool {
 func schedulerInterval() time.Duration {
 	value := strings.TrimSpace(os.Getenv("SOURCE_SCHEDULER_INTERVAL_SECONDS"))
 	if value == "" {
-		return 10 * time.Minute
+		return defaultSchedulerInterval
 	}
 	var seconds int64
-	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 15 {
-		return 10 * time.Minute
+	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < int64(minSchedulerInterval/time.Second) || seconds > int64(maxSchedulerInterval/time.Second) {
+		return defaultSchedulerInterval
 	}
 	return time.Duration(seconds) * time.Second
 }

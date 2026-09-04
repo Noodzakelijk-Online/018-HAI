@@ -57,6 +57,9 @@ func TestMain(m *testing.M) {
 	case "redact":
 		fmt.Println("token=super-secret-token")
 		os.Exit(0)
+	case "fail-with-secret":
+		fmt.Fprintln(os.Stderr, "token=super-secret-token")
+		os.Exit(1)
 	}
 	os.Exit(m.Run())
 }
@@ -616,6 +619,58 @@ func TestLaunchRunsAllowlistedScriptWithoutShell(t *testing.T) {
 	}
 }
 
+func TestLaunchBlocksScriptChangedDuringFinalAuthorization(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "launch.sh")
+	marker := filepath.Join(dir, "changed-script-ran.txt")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'reviewed-script'\n"), 0755); err != nil {
+		t.Fatalf("WriteFile reviewed script: %v", err)
+	}
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
+	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, script))
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Pinned Script Automation",
+		URLPath:      "pinned-script-automation",
+		LaunchType:   "script",
+		LaunchTarget: filepath.Base(script),
+	})
+	authorizer := &recordingExecutionAuthorizer{
+		onCall: func() {
+			if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch "+filepath.Base(marker)+"\n"), 0755); err != nil {
+				t.Fatalf("replace script during authorization: %v", err)
+			}
+		},
+	}
+	service := NewServiceWithRuntimeRegistryApprovalProofsAndExecutionAuthorization(
+		repo,
+		events.Publisher{},
+		agentruntime.DefaultRegistry(),
+		newUnitTestApprovalProofService(),
+		authorizer,
+	)
+
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if result.Status != "blocked" || !strings.Contains(result.Message, "SHA-256 does not match") {
+		t.Fatalf("result = %#v, want changed script blocked by the final pin check", result)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("replacement script executed or stat returned unexpected error: %v", err)
+	}
+	if authorizer.calls.Load() != 1 {
+		t.Fatalf("authorization calls = %d, want one", authorizer.calls.Load())
+	}
+	if len(repo.launchEvents) != 1 || !containsString(repo.launchEvents[0].AuditEvents, "script hash pin rejected after execution authorization") {
+		t.Fatalf("launch audit = %#v, want final pin rejection", repo.launchEvents)
+	}
+}
+
 func TestLaunchBlocksScriptWithoutApprovalBeforeProcessExecution(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "launch.sh")
@@ -712,6 +767,38 @@ func TestLaunchRedactsScriptOutputSecrets(t *testing.T) {
 	}
 }
 
+func TestLaunchRedactsScriptFailureSecrets(t *testing.T) {
+	dir := t.TempDir()
+	target := writeExecutableScriptFixture(t, dir, "fail-with-secret")
+	t.Setenv("AUTOMATION_SCRIPT_EXECUTION_ENABLED", "true")
+	t.Setenv("AUTOMATION_SCRIPT_DIR", dir)
+	t.Setenv("AUTOMATION_SCRIPT_SHA256_ALLOWLIST", scriptPin(t, filepath.Join(dir, target)))
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Failing Script Automation",
+		URLPath:      "failing-script-automation",
+		LaunchType:   "script",
+		LaunchTarget: target,
+	})
+	service := newTestService(repo, events.Publisher{})
+
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{}))
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("status = %q, want failed", result.Status)
+	}
+	if strings.Contains(result.Output, "super-secret-token") || strings.Contains(result.Message, "super-secret-token") {
+		t.Fatalf("failed script result leaked a secret: %#v", result)
+	}
+	if len(repo.launchEvents) != 1 || strings.Contains(repo.launchEvents[0].Output, "super-secret-token") || strings.Contains(repo.launchEvents[0].Message, "super-secret-token") {
+		t.Fatalf("launch event leaked a secret: %#v", repo.launchEvents)
+	}
+}
+
 func writeExecutableScriptFixture(t *testing.T, dir, mode string) string {
 	t.Helper()
 	t.Setenv("HAI_TEST_SCRIPT_MODE", mode)
@@ -741,6 +828,8 @@ func writeExecutableScriptFixture(t *testing.T, dir, mode string) string {
 		body = "#!/bin/sh\nif [ -n \"$SECRET_TOKEN\" ]; then echo leaked; else echo clean; fi\n"
 	case "redact":
 		body = "#!/bin/sh\necho 'token=super-secret-token'\n"
+	case "fail-with-secret":
+		body = "#!/bin/sh\necho 'token=super-secret-token' >&2\nexit 1\n"
 	default:
 		t.Fatalf("unsupported script fixture mode %q", mode)
 	}
@@ -1009,20 +1098,20 @@ func TestAgentRuntimeLaunchRequiresApprovalAndReceivesTask(t *testing.T) {
 	if completed.Status != "completed" || !adapter.called {
 		t.Fatalf("approved task did not run: %#v", completed)
 	}
-	if completed.RuntimeTaskID != id.String() {
-		t.Fatalf("runtime task id = %q, want automation id %s", completed.RuntimeTaskID, id)
+	if !strings.HasPrefix(completed.RuntimeTaskID, "automation:"+id.String()+":intent:") {
+		t.Fatalf("runtime task id = %q, want launch-scoped id for automation %s", completed.RuntimeTaskID, id)
 	}
 	if adapter.task.Prompt != "Inspect the project and report verified completion." || adapter.task.ProjectKey != "018-hai" {
 		t.Fatalf("task context was not propagated: %#v", adapter.task)
 	}
-	if adapter.task.ID != id.String() {
-		t.Fatalf("adapter task id = %q, want %s", adapter.task.ID, id)
+	if adapter.task.ID != completed.RuntimeTaskID {
+		t.Fatalf("adapter task id = %q, want launch result id %s", adapter.task.ID, completed.RuntimeTaskID)
 	}
 	if len(repo.launchEvents) != 2 || !containsString(repo.launchEvents[1].AuditEvents, "fake runtime executed under approval") {
 		t.Fatalf("completed runtime audit was not persisted: %#v", repo.launchEvents)
 	}
-	if repo.launchEvents[1].RuntimeTaskID != id.String() {
-		t.Fatalf("launch event runtime task id = %q, want %s", repo.launchEvents[1].RuntimeTaskID, id)
+	if repo.launchEvents[1].RuntimeTaskID != completed.RuntimeTaskID {
+		t.Fatalf("launch event runtime task id = %q, want %s", repo.launchEvents[1].RuntimeTaskID, completed.RuntimeTaskID)
 	}
 }
 
@@ -1113,6 +1202,36 @@ func TestAgentRuntimeLaunchAllowsOpenClaw(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeLaunchAllowsDeepSeekHarness(t *testing.T) {
+	id := uuid.New()
+	adapter := &fakeAgentRuntimeAdapter{id: "deepseek-harness"}
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "DeepSeek Harness Runtime",
+		URLPath:      "deepseek-harness-runtime",
+		Host:         "localhost",
+		Port:         8080,
+		LaunchType:   "agent_runtime",
+		RuntimeType:  "deepseek-harness",
+		LaunchTarget: "runtime://deepseek-harness",
+	})
+	service := newTestServiceWithAuthorizedRuntime(t, repo, events.Publisher{}, adapter)
+
+	completed, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{
+		Task:       "Inspect the approved workspace and report evidence.",
+		ProjectKey: "018-hai",
+	}))
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if completed.Status != "completed" || !adapter.called {
+		t.Fatalf("approved DeepSeek Harness task did not run: %#v", completed)
+	}
+	if adapter.task.Prompt != "Inspect the approved workspace and report evidence." || adapter.task.ProjectKey != "018-hai" {
+		t.Fatalf("task context was not propagated: %#v", adapter.task)
+	}
+}
+
 func TestLaunchBlocksDockerWithoutApprovalBeforeSocketAccess(t *testing.T) {
 	socketPath, calls := startDockerTestServer(t)
 	t.Setenv("AUTOMATION_DOCKER_CONTROL_ENABLED", "true")
@@ -1169,6 +1288,37 @@ func TestLaunchAllowsDockerWithApproval(t *testing.T) {
 	}
 	if len(repo.launchEvents) != 1 || repo.launchEvents[0].Status != "completed" {
 		t.Fatalf("approved Docker launch was not audited: %#v", repo.launchEvents)
+	}
+}
+
+func TestLaunchRedactsDockerFailureOutput(t *testing.T) {
+	socketPath, calls := startDockerTestServerWithResponse(t, http.StatusInternalServerError, "token=super-secret-token")
+	t.Setenv("AUTOMATION_DOCKER_CONTROL_ENABLED", "true")
+	t.Setenv("AUTOMATION_DOCKER_ALLOWED_CONTAINERS", "safe-container")
+	t.Setenv("AUTOMATION_DOCKER_SOCKET", socketPath)
+
+	id := uuid.New()
+	repo := newFakeAutomationRepo(&models.Automation{
+		ID:           id,
+		Name:         "Docker failure redaction",
+		URLPath:      "docker-failure-redaction",
+		LaunchType:   "docker_service",
+		LaunchTarget: "safe-container",
+	})
+	service := newTestService(repo, events.Publisher{})
+
+	result, err := service.LaunchTask(id, approvedTaskLaunchRequest(t, service, id, TaskLaunchRequest{OwnerIdentity: "alice"}))
+	if err != nil {
+		t.Fatalf("LaunchTask: %v", err)
+	}
+	if calls.Load() != 1 || result.Status != "failed" {
+		t.Fatalf("Docker launch result = %#v calls=%d, want one failed launch", result, calls.Load())
+	}
+	if strings.Contains(result.Output, "super-secret-token") {
+		t.Fatalf("Docker failure output leaked a secret: %#v", result)
+	}
+	if len(repo.launchEvents) != 1 || strings.Contains(repo.launchEvents[0].Output, "super-secret-token") {
+		t.Fatalf("Docker launch event leaked a secret: %#v", repo.launchEvents)
 	}
 }
 
@@ -1349,6 +1499,10 @@ func approvedTaskLaunchRequest(
 }
 
 func startDockerTestServer(t *testing.T) (string, *atomic.Int32) {
+	return startDockerTestServerWithResponse(t, http.StatusNoContent, "")
+}
+
+func startDockerTestServerWithResponse(t *testing.T, status int, body string) (string, *atomic.Int32) {
 	t.Helper()
 	socketPath := filepath.Join(os.TempDir(), "hai-"+uuid.NewString()+".sock")
 	listener, err := net.Listen("unix", socketPath)
@@ -1361,7 +1515,8 @@ func startDockerTestServer(t *testing.T) (string, *atomic.Int32) {
 	calls := &atomic.Int32{}
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
 	})}
 	go func() {
 		_ = server.Serve(listener)
@@ -1548,6 +1703,16 @@ func (r *fakeAutomationRepo) SaveLaunchIntent(event *models.AutomationLaunchEven
 
 func (r *fakeAutomationRepo) FindLaunchEvents(automationID uuid.UUID, limit int) ([]models.AutomationLaunchEvent, error) {
 	return r.launchEvents, nil
+}
+
+func (r *fakeAutomationRepo) FindLaunchEventByExecutionReference(reference string) (*models.AutomationLaunchEvent, error) {
+	for index := len(r.launchEvents) - 1; index >= 0; index-- {
+		event := r.launchEvents[index]
+		if event.ExecutionReference == reference {
+			return &event, nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *fakeAutomationRepo) SaveApprovalDecision(record *ApprovalDecisionRecord) error {

@@ -264,18 +264,24 @@ func TestGoogleLoginBindsSignedStateToBrowserCookie(t *testing.T) {
 	router := gin.New()
 	router.GET("/google/login", NewHandler(service).GoogleLogin)
 
-	request := httptest.NewRequest(http.MethodGet, "/google/login", nil)
+	request := httptest.NewRequest(http.MethodGet, "/google/login?returnUrl=/connected-sources", nil)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 
 	require.Equal(t, http.StatusFound, recorder.Code)
 	require.Equal(t, service.googleAuthURL, recorder.Header().Get("Location"))
 	cookies := recorder.Result().Cookies()
-	require.Len(t, cookies, 1)
-	require.Equal(t, googleOAuthStateCookie, cookies[0].Name)
-	require.Equal(t, "signed-state", cookies[0].Value)
-	require.True(t, cookies[0].HttpOnly)
-	require.Equal(t, http.SameSiteLaxMode, cookies[0].SameSite)
+	require.Len(t, cookies, 2)
+	byName := map[string]*http.Cookie{}
+	for _, cookie := range cookies {
+		byName[cookie.Name] = cookie
+	}
+	require.Equal(t, "signed-state", byName[googleOAuthStateCookie].Value)
+	require.Equal(t, "/connected-sources", byName[googleOAuthReturnURLCookie].Value)
+	for _, cookie := range byName {
+		require.True(t, cookie.HttpOnly)
+		require.Equal(t, http.SameSiteLaxMode, cookie.SameSite)
+	}
 }
 
 func TestGoogleCallbackRejectsStateNotBoundToBrowser(t *testing.T) {
@@ -318,17 +324,72 @@ func TestGoogleCallbackAcceptsMatchingBrowserStateOnce(t *testing.T) {
 	router.GET("/google/callback", NewHandler(service).GoogleCallback)
 	request := httptest.NewRequest(http.MethodGet, "/google/callback?code=code&state=signed-state", nil)
 	request.AddCookie(&http.Cookie{Name: googleOAuthStateCookie, Value: "signed-state"})
+	request.AddCookie(&http.Cookie{Name: googleOAuthReturnURLCookie, Value: "/workflow-engine?view=advanced"})
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 
 	require.Equal(t, http.StatusFound, recorder.Code)
-	require.Equal(t, "/", recorder.Header().Get("Location"))
+	require.Equal(t, "/workflow-engine?view=advanced", recorder.Header().Get("Location"))
 	require.Equal(t, 1, service.googleLoginCalls)
 	deletedState := false
+	deletedReturnURL := false
 	for _, cookie := range recorder.Result().Cookies() {
 		if cookie.Name == googleOAuthStateCookie && cookie.MaxAge < 0 {
 			deletedState = true
 		}
+		if cookie.Name == googleOAuthReturnURLCookie && cookie.MaxAge < 0 {
+			deletedReturnURL = true
+		}
 	}
 	require.True(t, deletedState)
+	require.True(t, deletedReturnURL)
+}
+
+func TestGoogleLoginRejectsUnsafeReturnURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &middlewareAuthService{googleAuthURL: "https://accounts.google.test/auth?client_id=hai&state=signed-state"}
+	router := gin.New()
+	router.GET("/google/login", NewHandler(service).GoogleLogin)
+
+	request := httptest.NewRequest(http.MethodGet, "/google/login?returnUrl=//untrusted.example", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == googleOAuthReturnURLCookie {
+			require.Equal(t, "/", cookie.Value)
+			return
+		}
+	}
+	t.Fatal("expected Google return URL cookie")
+}
+
+func TestGoogleCallbackRejectsUnsafeReturnURLCookie(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &middlewareAuthService{googleTokens: &dto.TokenDetails{AccessToken: "access", RefreshToken: "refresh", AtExpires: time.Now().Add(time.Hour).Unix(), RtExpires: time.Now().Add(24 * time.Hour).Unix()}}
+	router := gin.New()
+	router.GET("/google/callback", NewHandler(service).GoogleCallback)
+	request := httptest.NewRequest(http.MethodGet, "/google/callback?code=code&state=signed-state", nil)
+	request.AddCookie(&http.Cookie{Name: googleOAuthStateCookie, Value: "signed-state"})
+	request.AddCookie(&http.Cookie{Name: googleOAuthReturnURLCookie, Value: "//untrusted.example"})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusFound, recorder.Code)
+	require.Equal(t, "/", recorder.Header().Get("Location"))
+}
+
+func TestSafeAuthenticationReturnURL(t *testing.T) {
+	for _, test := range []struct {
+		candidate string
+		expected  string
+	}{
+		{candidate: "/connected-sources?source=gmail", expected: "/connected-sources?source=gmail"},
+		{candidate: "", expected: "/"},
+		{candidate: "//untrusted.example", expected: "/"},
+		{candidate: "/\\untrusted.example", expected: "/"},
+		{candidate: "/\r\nLocation: https://untrusted.example", expected: "/"},
+		{candidate: "/login?returnUrl=/connected-sources", expected: "/"},
+	} {
+		require.Equal(t, test.expected, safeAuthenticationReturnURL(test.candidate))
+	}
 }

@@ -3,7 +3,9 @@
   justify-content: center;
   align-items: flex-start;
   padding: 24px 16px;
-  min-height: 100%;
+  min-height: 100vh;
+  color: var(--hai-text);
+  background: var(--hai-page-bg);
 
   &__card {
     width: 100%;
@@ -27,7 +29,7 @@
   }
 
   &__step-desc {
-    color: rgba(0, 0, 0, 0.65);
+    color: var(--hai-muted);
     line-height: 1.6;
   }
 
@@ -41,6 +43,13 @@
   &__spacer {
     flex: 1 1 auto;
   }
+}
+
+:host ::ng-deep .onboarding__card.ant-card {
+  color: var(--hai-text);
+  background: var(--hai-surface);
+  border-color: var(--hai-border);
+  box-shadow: var(--hai-shadow);
 }
 
 // Responsive: stack the action bar on narrow screens.

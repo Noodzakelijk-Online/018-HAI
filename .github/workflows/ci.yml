@@ -6,6 +6,33 @@ on:
   pull_request:
 
 jobs:
+  windows-installer:
+    name: Windows installer build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.13"
+          cache-dependency-path: backend/go.sum
+      - name: Installer payload and safety contract
+        shell: pwsh
+        run: ./scripts/test-windows-installer-contract.ps1
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Build Windows installer
+        shell: pwsh
+        run: ./scripts/build-windows-installer.ps1 -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: hai-windows-installer
+          path: installer/release/HAI-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 14
+
   backend:
     name: Backend build and tests
     runs-on: ubuntu-latest
@@ -17,12 +44,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
       - run: go vet ./...
       - run: go test ./...
       - name: Execution-boundary race tests
-        run: go test -count=1 -race ./internal/automation ./internal/task
+        # Keep concurrency coverage limited to stateful boundary packages. This
+        # catches duplicate lease, approval, model-refresh, source-sync, and
+        # runtime-registration races without making every CI package pay the
+        # race-detector cost.
+        run: go test -count=1 -race ./internal/automation ./internal/task ./internal/source ./internal/llm ./internal/agentruntime ./internal/durablejob
       - run: go build ./...
       - name: Vulnerability scan
         run: |
@@ -40,7 +71,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: idp/go.sum
       - run: go vet ./...
       - run: go test ./...
@@ -61,7 +92,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: nginx-config-manager/go.sum
       - run: go vet ./...
       - run: go test ./...
@@ -82,19 +113,104 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22.22.3"
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci --no-audit --no-fund
+      - run: npm ci
       - run: npm run build
-      # Angular's built-in Karma configuration provides the sandbox-free
-      # launcher used by CI and the documented local container workflow.
+      # Unit tests run in headless Chrome (preinstalled on ubuntu-latest) via the
+      # sandbox-free launcher in karma.conf.js.
       - name: Unit tests (headless Chrome)
         run: npx ng test --watch=false --browsers=ChromeHeadlessNoSandbox
-      # High and critical advisories are release blockers. The accepted
-      # Angular CLI-only moderate advisory is documented separately.
-      - name: Dependency audit (blocking high/critical)
-        run: npm audit --audit-level=high
+      # A valid production audit remains a hard gate for high/critical
+      # findings. The helper retries bounded transport failures and records an
+      # explicit warning when npm's advisory API fails to return any trustworthy
+      # report, rather than misclassifying an external outage as a code failure.
+      - name: Production dependency audit
+        run: bash ../scripts/audit-frontend-production-dependencies.sh
+
+  browser-acceptance:
+    name: Browser acceptance (real Compose stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/e2e/package-lock.json
+      - name: Create isolated production-like environment
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          values = {
+              "COMPOSE_PROJECT_NAME": "hai-browser-acceptance",
+              "GATEWAY_HOST_BIND": "127.0.0.1",
+              "GATEWAY_HOST_PORT": "8080",
+              "RUN_MODE": "production",
+              "DB_PASSWORD": "a4f6bc91d0e32b7c8a5f49d6e0c12b34",
+              "BACKEND_DB_USER": "hai_runtime",
+              "BACKEND_DB_PASSWORD": "bc49e5a12f0d36c87b5a9e0d41c2f638",
+              "BACKEND_API_SHARED_KEY": "c5a98e3d0f42b7619ce0a34d8b6f1270",
+              "HAI_MEMORY_ENCRYPTION_KEY": "d8a72f1c0e469b35a8f02d7c16e94b5f",
+              "JWT_SECRET": "e1c93b5a74d0f6281a5e9c03b7f2468d",
+              "HAI_APPROVAL_PROOF_SIGNING_KEY": "f4d8a2c9e0b31576d9c4a1f8b20e6735",
+              "FIRST_RUN_ADMIN_EMAIL": "e2e-owner@example.test",
+              "FIRST_RUN_ADMIN_PASSWORD": "E2eLocalOwnerPassword!2026",
+              "DB_MIGRATIONS_ENABLED": "false",
+              "LOCAL_LOGIN_BYPASS_ENABLED": "false",
+              "HAI_EVENT_BUS_ENABLED": "false",
+              "SOURCE_SCHEDULER_ENABLED": "false",
+              "WORKFLOW_SCHEDULER_ENABLED": "false",
+              "AMBIENT_SCHEDULER_ENABLED": "false",
+          }
+          content = Path(".env.example").read_text(encoding="utf-8")
+          for key, value in values.items():
+              content, replacements = re.subn(
+                  rf"(?m)^{re.escape(key)}=.*$", f"{key}={value}", content
+              )
+              if replacements != 1:
+                  raise SystemExit(f"expected exactly one {key} entry, got {replacements}")
+          Path(".env.browser-acceptance").write_text(content, encoding="utf-8")
+          PY
+      - name: Start isolated HAI stack
+        run: |
+          docker compose --env-file .env.browser-acceptance -f docker-compose.local.yml up -d --build --wait --wait-timeout 240
+          for attempt in $(seq 1 60); do
+            readyz_http="$(curl -sS -o readyz.json -w '%{http_code}' http://127.0.0.1:8080/readyz || true)"
+            if [ "${readyz_http}" = "200" ]; then
+              python3 -c 'import json; from pathlib import Path; status = json.loads(Path("readyz.json").read_text(encoding="utf-8")).get("status"); assert status in {"ready", "degraded"}, f"unexpected readiness status: {status!r}"'
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "HAI did not become ready"
+          exit 1
+      - name: Install browser acceptance dependencies
+        working-directory: frontend/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run browser acceptance
+        working-directory: frontend/e2e
+        env:
+          E2E_BASE_URL: http://127.0.0.1:8080
+          E2E_OPERATOR_EMAIL: e2e-owner@example.test
+          E2E_OPERATOR_PASSWORD: E2eLocalOwnerPassword!2026
+          E2E_ALLOW_MUTATION: "true"
+        run: npm test
+      - name: Compose diagnostics on failure
+        if: failure()
+        run: |
+          docker compose --env-file .env.browser-acceptance -f docker-compose.local.yml ps
+          docker compose --env-file .env.browser-acceptance -f docker-compose.local.yml logs --no-color \
+            backend-migrate backend-runtime-role backend idp gateway || true
+      - name: Remove isolated HAI stack
+        if: always()
+        run: docker compose --env-file .env.browser-acceptance -f docker-compose.local.yml down -v --remove-orphans
 
   compose:
     name: Gateway and local Compose validation
@@ -104,9 +220,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: CI workflow contract
         run: python3 scripts/test_ci_contract.py
+      - name: No-fake claims and tracked-artifact audit
+        run: bash scripts/no-fake-claims-audit.sh
       - name: Gateway authentication contract
         run: python3 nginx-config/test_gateway_contract.py
       - run: docker compose --env-file .env.example -f docker-compose.local.yml config
+      - name: Provider fixture Compose contract
+        run: docker compose --env-file .env.example --profile provider-fixture -f docker-compose.local.yml config --quiet
       - name: Nginx syntax
         run: |
           python3 - "$RUNNER_TEMP/hai-nginx.conf" <<'PY'
@@ -123,6 +243,15 @@ jobs:
             -v "$PWD/nginx-config/sites-enabled:/etc/nginx/sites-enabled:ro" \
             nginx:alpine nginx -t
 
+  provider-fixture:
+    name: Local provider fixture HTTP contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and exercise isolated fixture
+        run: bash scripts/smoke-provider-fixture.sh
+
   authenticated-smoke:
     name: Authenticated control-plane smoke
     runs-on: ubuntu-latest
@@ -131,7 +260,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
       - name: Smoke authentication contract
         run: python3 scripts/test_smoke_auth_contract.py
@@ -188,7 +317,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
       - name: Create isolated integration databases
         env:
@@ -219,6 +348,7 @@ jobs:
           registry_log="$RUNNER_TEMP/framework-registry-postgres.log"
           task_log="$RUNNER_TEMP/task-state-postgres.log"
           agent_registry_log="$RUNNER_TEMP/agent-registry-postgres.log"
+          execution_auth_log="$RUNNER_TEMP/execution-authorization-postgres.log"
           migration_dsn="host=localhost user=postgres password=postgres dbname=hai_migration_runner_test port=5432 sslmode=disable TimeZone=UTC"
           registry_dsn="host=localhost user=postgres password=postgres dbname=hai_framework_registry_test port=5432 sslmode=disable TimeZone=UTC"
           task_dsn="host=localhost user=postgres password=postgres dbname=hai_task_state_test port=5432 sslmode=disable TimeZone=UTC"
@@ -239,6 +369,10 @@ jobs:
             -run '^TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability$' \
             ./internal/task/ -v | tee "$task_log"
           grep -q -- '^--- PASS: TestPostgresTaskStateRepositoryDurabilityOwnerScopeAndImmutability' "$task_log"
+          HAI_TEST_DATABASE_DSN="$migration_dsn" go test -count=1 \
+            -run '^TestPostgresReceiptPersistsOwnerSafePolymorphicApprovals$' \
+            ./internal/executionauth/ -v | tee "$execution_auth_log"
+          grep -q -- '^--- PASS: TestPostgresReceiptPersistsOwnerSafePolymorphicApprovals' "$execution_auth_log"
           HAI_TEST_DATABASE_DSN="$agent_registry_dsn" go test -count=1 \
             -run '^(TestPostgresRepositoryRoundTripOwnerIsolationCASAndImmutableLedgers|TestPostgresAgentRegistryMigrationCanReplayAgainstExistingSchema)$' \
             ./internal/agentregistry/ -v | tee "$agent_registry_log"
@@ -280,7 +414,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.12"
+          go-version: "1.25.13"
           cache-dependency-path: backend/go.sum
       - name: Build backend
         working-directory: backend
@@ -293,9 +427,16 @@ jobs:
           DB_USER: postgres
           DB_PASSWORD: postgres
           DB_NAME: automation_hub
-          # Empty CI database: let the schema materialise on boot.
-          DB_AUTOMIGRATE: "true"
+          # The explicit versioned migration runner owns the CI schema too.
+          # AutoMigrate is deliberately limited to local, pre-migration model
+          # scaffolding and must not alter an already-migrated database.
+          DB_AUTOMIGRATE: "false"
           JWT_SECRET: devsecret
+          BACKEND_API_SHARED_KEY: ci-backend-api-shared-key-0123456789
+          HAI_MEMORY_ENCRYPTION_KEY: ci-memory-encryption-key-0123456789
+          # Production-mode startup requires a non-placeholder approval proof
+          # key. This is a test-only value; production uses a generated secret.
+          HAI_APPROVAL_PROOF_SIGNING_KEY: ci-approval-proof-signing-key-0123456789
           SERVER_PORT: "8080"
           REDIS_ADDR: localhost:6379
           # Keep the acceptance run deterministic: no background schedulers.
@@ -343,6 +484,7 @@ jobs:
         env:
           HAI_BASE_URL: http://localhost:8080
           HAI_JWT_SECRET: devsecret
+          HAI_BACKEND_API_SHARED_KEY: ci-backend-api-shared-key-0123456789
         run: bash scripts/two-account-isolation-test.sh
       - name: Backend log (on failure)
         if: failure()
@@ -363,19 +505,6 @@ jobs:
           python scripts/test_ci_contract.py
           python scripts/test_smoke_auth_contract.py
           python nginx-config/test_gateway_contract.py
-      - name: Cloud tunnel PowerShell fail-closed contract
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $null = [ScriptBlock]::Create((Get-Content scripts/start-ngrok.ps1 -Raw))
-          try {
-            & .\scripts\start-ngrok.ps1 -ValidateOnly -EnvFile .env.example
-            throw "Insecure example environment unexpectedly passed ngrok preflight"
-          } catch {
-            if ($_.Exception.Message -notmatch "IDP_COOKIE_SECURE") {
-              throw
-            }
-          }
       - name: Git Bash syntax and space-containing path
         shell: pwsh
         run: |

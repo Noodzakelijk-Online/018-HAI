@@ -1,4 +1,6 @@
 import { AgentCoordinationMessage, AgentTeamContract } from '../../models/agent-teams.model'
+import { HttpErrorResponse } from '@angular/common/http'
+import { throwError } from 'rxjs'
 import { AgentTeamsComponent } from './agent-teams.component'
 
 describe('AgentTeamsComponent', () => {
@@ -61,5 +63,19 @@ describe('AgentTeamsComponent', () => {
     fixture.outcomes = [{ correlationId: 'correlation-1' } as never]
 
     expect(fixture.consensusReady).toBeFalse()
+  })
+
+  it('reports an attention refresh failure without hiding a completed decision', () => {
+    const fixture = component()
+    const notification = { error: jasmine.createSpy('error') }
+    fixture.selected = selectedTeam()
+    ;(fixture as any).notification = notification
+    ;(fixture as any).teamsService = {
+      attention: () => throwError(() => new HttpErrorResponse({ error: { error: 'refresh failed' } })),
+    }
+
+    ;(fixture as any).loadAttention()
+
+    expect(notification.error).toHaveBeenCalledWith('Attention queue unavailable', 'refresh failed')
   })
 })

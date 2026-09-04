@@ -1,7 +1,7 @@
-import { Component, Inject, OnInit } from '@angular/core'
+import { Component, Inject, OnDestroy, OnInit, ViewEncapsulation } from '@angular/core'
 import { Router } from '@angular/router'
-import { forkJoin, of } from 'rxjs'
-import { catchError, timeout } from 'rxjs/operators'
+import { forkJoin, of, Subscription } from 'rxjs'
+import { catchError, finalize, timeout } from 'rxjs/operators'
 import { NzNotificationService } from 'ng-zorro-antd/notification'
 import { IAgentCycleRunResult } from '../../models/agent-cycle.model.interface'
 import {
@@ -32,7 +32,6 @@ import { AUTOMATIONS_SERVICE_TOKEN } from '../../services/automations/automation
 import { IAutomationsService } from '../../services/automations.service.interface'
 import { ContextMemoryService } from '../../services/context-memory/context-memory.service'
 import { PursuitService } from '../../services/pursuit.service'
-import { ThemeMode, ThemeService } from '../../services/theme.service'
 import { WorkflowService } from '../../services/workflow/workflow.service'
 
 interface ActivityEntry {
@@ -67,20 +66,17 @@ type ControlCenterSection =
   | 'memory'
   | 'diagnostics'
 
-interface NavigationItem {
-  label: string
-  icon: string
-  route?: string
-  section?: ControlCenterSection
-}
-
 @Component({
-  standalone: false,
-  selector: 'app-control-center',
-  templateUrl: './control-center.component.html',
-  styleUrls: ['./control-center.component.scss'],
+    selector: 'app-control-center',
+    templateUrl: './control-center.component.html',
+    styleUrls: ['./control-center.component.scss'],
+    // The stylesheet contains generic layout class names used by other
+    // operational modules. Keep Angular's component boundary so visiting the
+    // Control Center cannot restyle a later route.
+    encapsulation: ViewEncapsulation.Emulated,
+    standalone: false
 })
-export class ControlCenterComponent implements OnInit {
+export class ControlCenterComponent implements OnInit, OnDestroy {
   readonly currentHour = new Date().getHours()
   automations: IAutomationModel[] = []
   summary?: IAutomationHealthSummary
@@ -98,6 +94,8 @@ export class ControlCenterComponent implements OnInit {
   recentMemoriesView: IContextMemory[] = []
   commandActionsView: CommandAction[] = []
   lastAgentCycle?: IAgentCycleRunResult
+  dashboardLoadErrors: string[] = []
+  diagnosticsLoadErrors: string[] = []
 
   loading = false
   scanning = false
@@ -108,7 +106,8 @@ export class ControlCenterComponent implements OnInit {
   resolvingId = ''
   archivingMemoryId = ''
   diagnosticsExpanded = false
-  mobileNavigationOpen = false
+  private readonly operationTimeoutMs = 30000
+  private dashboardRefreshSubscription?: Subscription
   private checkingIds = new Set<string>()
   private launchingIds = new Set<string>()
 
@@ -118,46 +117,6 @@ export class ControlCenterComponent implements OnInit {
   diagnosticsName = ''
   selectedAction?: CommandAction
   activeSection: ControlCenterSection = 'overview'
-  themeMode: ThemeMode = 'light'
-
-  readonly navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
-    {
-      label: 'Work',
-      items: [
-        { label: 'Command Center', icon: 'appstore', section: 'overview' },
-        { label: 'Background Ops', icon: 'thunderbolt', route: '/background-operations' },
-        { label: 'Pursuits', icon: 'flag', route: '/pursuits' },
-        { label: 'Approvals', icon: 'check-square', section: 'attention' },
-        { label: 'Workflows', icon: 'unordered-list', route: '/workflow-engine' },
-        { label: 'Automations', icon: 'setting', route: '/home' },
-      ],
-    },
-    {
-      label: 'Intelligence',
-      items: [
-        { label: 'Priorities', icon: 'heart', section: 'priorities' },
-        { label: 'Sources', icon: 'cluster', route: '/connected-sources' },
-        { label: 'Account Bridges', icon: 'link', route: '/account-bridges' },
-        { label: 'Memory', icon: 'database', route: '/memory' },
-        { label: 'Task Planning', icon: 'partition', route: '/task-blueprint' },
-        { label: 'Frameworks', icon: 'apartment', route: '/framework-registry' },
-        { label: 'Verified Answers', icon: 'safety-certificate', route: '/grounded-answers' },
-        { label: 'Activity', icon: 'history', section: 'activity' },
-      ],
-    },
-    {
-      label: 'System',
-      items: [
-        { label: 'System Status', icon: 'heart', route: '/system-status' },
-        { label: 'Runtime Control', icon: 'poweroff', route: '/runtime-control' },
-        { label: 'Brain Settings', icon: 'safety-certificate', route: '/ambient-brain' },
-        { label: 'Models', icon: 'deployment-unit', route: '/llm-policy' },
-        { label: 'Model Intelligence', icon: 'experiment', route: '/model-intelligence' },
-        { label: 'Runtime Lab', icon: 'api', route: '/runtime-lab' },
-      ],
-    },
-  ]
-
   constructor(
     @Inject(AUTOMATIONS_SERVICE_TOKEN)
     private automationsService: IAutomationsService,
@@ -167,79 +126,64 @@ export class ControlCenterComponent implements OnInit {
     private agentRuntimeService: AgentRuntimeService,
     private ambientService: AmbientService,
     private memoryService: ContextMemoryService,
-    private themeService: ThemeService,
     private notification: NzNotificationService,
     private router: Router
   ) {}
 
   ngOnInit(): void {
-    this.themeMode = this.themeService.mode()
     this.refresh()
   }
 
-  toggleTheme(): void {
-    this.themeMode = this.themeService.toggle()
-  }
-
-  themeLabel(): string {
-    return this.themeService.label()
-  }
-
-  themeIcon(): string {
-    return this.themeService.icon()
+  ngOnDestroy(): void {
+    this.dashboardRefreshSubscription?.unsubscribe()
   }
 
   refresh(): void {
+    this.dashboardRefreshSubscription?.unsubscribe()
     this.loading = true
-    let pending = 3
-    const done = () => {
-      pending -= 1
-      if (pending <= 0) {
-        this.loading = false
-      }
-    }
-
-    this.workflowService.dashboard().pipe(
+    this.dashboardLoadErrors = []
+    this.dashboardRefreshSubscription = forkJoin({
+      workflow: this.workflowService.dashboard().pipe(
         timeout(2500),
-        catchError(() => of(undefined))
-      ).subscribe({
-        next: (workflow) => {
-          this.workflowDashboard = workflow
-          this.rebuildViewModel()
-          done()
-        },
-        error: () => {
-          done()
-        },
-      })
-
-    this.ambientService.overview().pipe(
+        catchError(() => {
+          this.recordDashboardLoadFailure('Workflow status')
+          return of(undefined)
+        })
+      ),
+      ambient: this.ambientService.overview().pipe(
         timeout(2500),
-        catchError(() => of(undefined))
-      ).subscribe({
-        next: (ambient) => {
-          this.ambientOverview = ambient
-          this.rebuildViewModel()
-          done()
-        },
-        error: () => {
-          done()
-        },
-      })
-
-    this.pursuitService.dashboard().pipe(
+        catchError(() => {
+          this.recordDashboardLoadFailure('Ambient scan')
+          return of(undefined)
+        })
+      ),
+      pursuits: this.pursuitService.dashboard().pipe(
         timeout(1800),
-        catchError(() => of(undefined))
-      ).subscribe({
-        next: (pursuits) => {
-          this.pursuitDashboard = pursuits
-          this.rebuildViewModel()
-          done()
-        },
-        error: () => {
-          done()
-        },
-      })
+        catchError(() => {
+          this.recordDashboardLoadFailure('Pursuit status')
+          return of(undefined)
+        })
+      ),
+    }).subscribe({
+      next: ({ workflow, ambient, pursuits }) => {
+        this.workflowDashboard = workflow
+        this.ambientOverview = ambient
+        this.pursuitDashboard = pursuits
+        this.rebuildViewModel()
+        this.loading = false
+      },
+      error: () => (this.loading = false),
+    })
+  }
+
+  hasDashboardLoadError(): boolean {
+    return this.dashboardLoadErrors.length > 0
+  }
+
+  private recordDashboardLoadFailure(label: string): void {
+    if (!this.dashboardLoadErrors.includes(label)) {
+      this.dashboardLoadErrors = [...this.dashboardLoadErrors, label]
+    }
   }
 
   loadMemories(force = false): void {
@@ -247,15 +191,9 @@ export class ControlCenterComponent implements OnInit {
       return
     }
     this.memoryLoading = true
-    this.memoryService.list(undefined, false).subscribe({
+    this.memoryService.list(undefined, false, 20).subscribe({
       next: (memories) => {
         this.memories = memories
-          .sort(
-            (a, b) =>
-              new Date(b.updatedAt || b.createdAt || 0).getTime() -
-              new Date(a.updatedAt || a.createdAt || 0).getTime()
-          )
-          .slice(0, 20)
         this.memoriesLoaded = true
         this.memoryLoading = false
         this.rebuildViewModel()
@@ -275,16 +213,26 @@ export class ControlCenterComponent implements OnInit {
       return
     }
     this.diagnosticsListLoading = true
+    this.diagnosticsLoadErrors = []
     forkJoin({
       automations: this.automationsService.getAutomations().pipe(
-        catchError(() => of([] as IAutomationModel[]))
+        catchError(() => {
+          this.recordDiagnosticsLoadFailure('Automation registry')
+          return of([] as IAutomationModel[])
+        })
       ),
       summary: this.automationsService.getHealthSummary().pipe(
-        catchError(() => of(undefined))
+        catchError(() => {
+          this.recordDiagnosticsLoadFailure('Automation health')
+          return of(undefined)
+        })
       ),
       runtimes: this.agentRuntimeService.overview().pipe(
         timeout(2500),
-        catchError(() => of({ runtimes: [] as IAgentRuntimeInfo[], health: [] as IAgentRuntimeHealth[] }))
+        catchError(() => {
+          this.recordDiagnosticsLoadFailure('Runtime overview')
+          return of({ runtimes: [] as IAgentRuntimeInfo[], health: [] as IAgentRuntimeHealth[] })
+        })
       ),
     }).subscribe({
       next: (result) => {
@@ -309,8 +257,14 @@ export class ControlCenterComponent implements OnInit {
   }
 
   runScan(): void {
+    if (this.scanning) {
+      return
+    }
     this.scanning = true
-    this.agentCycleService.run({ trigger: 'command-center', limit: 5 }).subscribe({
+    this.agentCycleService.run({ trigger: 'command-center', limit: 5 }).pipe(
+      timeout(this.operationTimeoutMs),
+      finalize(() => (this.scanning = false))
+    ).subscribe({
       next: (result) => {
         this.lastAgentCycle = result
         if (result.dashboard) {
@@ -322,7 +276,6 @@ export class ControlCenterComponent implements OnInit {
             scans: [result.ambientScan, ...(this.ambientOverview.scans || [])].slice(0, 10),
           }
         }
-        this.scanning = false
         this.rebuildViewModel()
         if (result.status === 'completed') {
           this.notification.success(result.executionScope === 'owner_scoped' ? 'Personal operating refresh completed' : 'Agent cycle completed', this.agentCycleSummary(result))
@@ -334,7 +287,6 @@ export class ControlCenterComponent implements OnInit {
         this.refresh()
       },
       error: (error) => {
-        this.scanning = false
         this.notification.error(
           'Agent cycle failed',
           error?.error?.error || 'The operational cycle could not complete.'
@@ -344,6 +296,9 @@ export class ControlCenterComponent implements OnInit {
   }
 
   resolveApproval(item: IWorkflowItem, approved: boolean): void {
+    if (this.resolvingId) {
+      return
+    }
     this.resolvingId = item.id
     this.workflowService
       .resolveApproval(item.id, {
@@ -353,6 +308,7 @@ export class ControlCenterComponent implements OnInit {
           : 'Rejected from the household operations dashboard.',
         actor: 'operator',
       })
+      .pipe(timeout(this.operationTimeoutMs))
       .subscribe({
         next: () => {
           this.resolvingId = ''
@@ -375,6 +331,9 @@ export class ControlCenterComponent implements OnInit {
   }
 
   snooze(item: IWorkflowItem): void {
+    if (this.resolvingId) {
+      return
+    }
     this.resolvingId = item.id
     this.workflowService
       .transition(item.id, {
@@ -382,6 +341,7 @@ export class ControlCenterComponent implements OnInit {
         message: 'Snoozed from the household operations dashboard.',
         actor: 'operator',
       })
+      .pipe(timeout(this.operationTimeoutMs))
       .subscribe({
         next: () => {
           this.resolvingId = ''
@@ -403,8 +363,9 @@ export class ControlCenterComponent implements OnInit {
 
   archiveMemory(memory: IContextMemory): void {
     if (!memory.id) return
+    if (this.archivingMemoryId) return
     this.archivingMemoryId = memory.id
-    this.memoryService.archive(memory.id).subscribe({
+    this.memoryService.archive(memory.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: () => {
         this.archivingMemoryId = ''
         this.memories = this.memories.filter((item) => item.id !== memory.id)
@@ -465,7 +426,17 @@ export class ControlCenterComponent implements OnInit {
   }
 
   hasLiveWork(): boolean {
-    return this.loading || this.attentionItemsView.length > 0 || this.activeItemsView.length > 0
+    return this.loading || this.hasDashboardLoadError() || this.attentionItemsView.length > 0 || this.activeItemsView.length > 0
+  }
+
+  hasDiagnosticsLoadError(): boolean {
+    return this.diagnosticsLoadErrors.length > 0
+  }
+
+  private recordDiagnosticsLoadFailure(label: string): void {
+    if (!this.diagnosticsLoadErrors.includes(label)) {
+      this.diagnosticsLoadErrors = [...this.diagnosticsLoadErrors, label]
+    }
   }
 
   private buildRecentActivity(): ActivityEntry[] {
@@ -567,8 +538,16 @@ export class ControlCenterComponent implements OnInit {
         detail: 'Register a script, service, API, or workflow target.',
         icon: 'plus',
         tone: 'blue',
-        primaryMetric: `${this.automations.length} registered`,
-        secondaryMetric: 'Opens automation registry',
+        primaryMetric: this.hasDiagnosticsLoadError()
+          ? 'Unavailable'
+          : this.diagnosticsLoaded
+          ? `${this.automations.length} registered`
+          : 'Open registry',
+        secondaryMetric: this.hasDiagnosticsLoadError()
+          ? 'Reload technical checks'
+          : this.diagnosticsLoaded
+          ? 'Automation health loaded'
+          : 'Health detail loads on demand',
         context: 'Use this when HAI needs a new controlled runtime target, health check, launch path, dependency note, or automation entry.',
         route: '/home',
       },
@@ -810,7 +789,6 @@ export class ControlCenterComponent implements OnInit {
   }
 
   navigate(route: string): void {
-    this.mobileNavigationOpen = false
     if (route === '/control-center') {
       this.activeSection = 'overview'
       setTimeout(() => this.scrollToSection('overview'))
@@ -818,47 +796,7 @@ export class ControlCenterComponent implements OnInit {
     this.router.navigate([route])
   }
 
-  activateNavigationItem(item: NavigationItem): void {
-    if (item.route) {
-      this.navigate(item.route)
-      return
-    }
-    if (item.section) {
-      this.navigateToSection(item.section)
-    }
-  }
-
-  isNavigationItemActive(item: NavigationItem): boolean {
-    if (item.section && !item.route) {
-      return this.activeSection === item.section
-    }
-    return !!item.route && this.router.url.split('?')[0] === item.route
-  }
-
-  navigationBadge(item: NavigationItem): string | undefined {
-    switch (item.label) {
-      case 'Approvals':
-        return this.attentionItems().length ? `${this.attentionItems().length}` : undefined
-      case 'Pursuits':
-        return this.pursuitAttentionCount() ? `${this.pursuitAttentionCount()}` : undefined
-      case 'Priorities':
-        return this.lifePriorities().length ? `${this.lifePriorities().length}` : undefined
-      case 'Activity':
-        return this.recentActivity().length ? `${this.recentActivity().length}` : undefined
-      default:
-        return undefined
-    }
-  }
-
-  menuKey(label: string): string {
-    return label
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '')
-  }
-
   navigateToSection(section: ControlCenterSection): void {
-    this.mobileNavigationOpen = false
     this.activeSection = section
     this.openContainingDisclosure(section)
     if (section === 'diagnostics' && !this.diagnosticsExpanded) {
@@ -1067,8 +1005,9 @@ export class ControlCenterComponent implements OnInit {
   runHealthCheck(automation: IAutomationModel): void {
     if (!automation.id) return
     const id = automation.id
+    if (this.checkingIds.has(id)) return
     this.checkingIds.add(id)
-    this.automationsService.runHealthCheck(id).subscribe({
+    this.automationsService.runHealthCheck(id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (result) => {
         this.checkingIds.delete(id)
         automation.status = result.status
@@ -1104,8 +1043,9 @@ export class ControlCenterComponent implements OnInit {
   launch(automation: IAutomationModel): void {
     if (!automation.id) return
     const id = automation.id
+    if (this.launchingIds.has(id)) return
     this.launchingIds.add(id)
-    this.automationsService.launchAutomation(id).subscribe({
+    this.automationsService.launchAutomation(id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (result) => {
         this.launchingIds.delete(id)
         automation.lastLaunchAt = result.launchedAt
@@ -1141,7 +1081,7 @@ export class ControlCenterComponent implements OnInit {
     this.diagnosticsLoading = true
     this.diagnostics = undefined
     this.diagnosticsName = automation.name
-    this.automationsService.getDiagnostics(automation.id).subscribe({
+    this.automationsService.getDiagnostics(automation.id).pipe(timeout(this.operationTimeoutMs)).subscribe({
       next: (diagnostics) => {
         this.diagnostics = diagnostics
         this.diagnosticsLoading = false

@@ -262,19 +262,20 @@ type SkippedModel struct {
 }
 
 type Service struct {
-	policy                   Policy
-	mu                       sync.Mutex
-	logs                     []RouteDecision
-	usage                    map[string]UsageCounter
-	probeHistory             ProbeHistoryRepository
-	maintenanceHistory       ModelMaintenanceRepository
-	generationHistory        GenerationHistoryRepository
-	modelTelemetry           modelintelligence.TelemetryRepository
-	finalEffectAuthorizer    FinalEffectAuthorizer
-	emergencyStop            EmergencyStopEvaluator
-	maintenanceEffectContext *EffectContext
-	maintenanceMu            sync.Mutex
-	maintenanceRunning       map[string]*sync.Mutex
+	policy                     Policy
+	mu                         sync.Mutex
+	logs                       []RouteDecision
+	usage                      map[string]UsageCounter
+	probeHistory               ProbeHistoryRepository
+	maintenanceHistory         ModelMaintenanceRepository
+	generationHistory          GenerationHistoryRepository
+	modelTelemetry             modelintelligence.TelemetryRepository
+	finalEffectAuthorizer      FinalEffectAuthorizer
+	emergencyStop              EmergencyStopEvaluator
+	maintenanceEffectContext   *EffectContext
+	maintenanceMu              sync.Mutex
+	maintenanceRunning         map[string]*sync.Mutex
+	maintenanceAttemptSequence uint64
 }
 
 // WithModelTelemetryRepository connects actual routed generations to the same
@@ -2263,7 +2264,7 @@ func defaultPolicy() Policy {
 			},
 			{
 				ID:             "paid-provider",
-				Name:           "Paid provider placeholder",
+				Name:           "Custom paid provider (disabled by policy)",
 				Enabled:        false,
 				Local:          false,
 				Paid:           true,

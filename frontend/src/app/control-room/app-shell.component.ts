@@ -1,5 +1,8 @@
-import { Component, OnDestroy, OnInit } from '@angular/core'
-import { NavigationEnd, Router } from '@angular/router'
+import { CommonModule } from '@angular/common'
+import { Component, OnDestroy, OnInit, ViewEncapsulation } from '@angular/core'
+import { NavigationEnd, Router, RouterModule } from '@angular/router'
+import { NzButtonModule } from 'ng-zorro-antd/button'
+import { NzIconModule } from 'ng-zorro-antd/icon'
 import { Subscription } from 'rxjs'
 import { filter } from 'rxjs/operators'
 import { HAI_MODULE_GROUPS, HAI_MODULES, HaiModuleDefinition, moduleForUrl } from './module-registry'
@@ -7,10 +10,15 @@ import { HaiNavigationMode, HaiViewMode, ModuleViewPreferencesService } from './
 import { ThemeMode, ThemeService } from '../services/theme.service'
 
 @Component({
-  standalone: false,
-  selector: 'app-shell',
-  templateUrl: './app-shell.component.html',
-  styleUrls: ['./app-shell.component.scss'],
+    selector: 'app-shell',
+    templateUrl: './app-shell.component.html',
+    styleUrls: ['./app-shell.component.scss'],
+    // The lazy shell owns shared styles for the authenticated route tree.
+    // Child pages render in their own component scopes, so these selectors
+    // must remain global once the shell is loaded.
+    encapsulation: ViewEncapsulation.None,
+    imports: [CommonModule, RouterModule, NzButtonModule, NzIconModule],
+    standalone: true
 })
 export class AppShellComponent implements OnInit, OnDestroy {
   readonly groups = HAI_MODULE_GROUPS
@@ -21,6 +29,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
   navigationMode: HaiNavigationMode = 'auto'
   mobileNavigationOpen = false
   private routerSubscription?: Subscription
+  private detailRestoreTimer?: number
   private readonly advancedDetailSelector = [
     'details.advanced-section',
     'details.advanced-block',
@@ -48,6 +57,10 @@ export class AppShellComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.routerSubscription?.unsubscribe()
+    if (this.detailRestoreTimer !== undefined) {
+      window.clearTimeout(this.detailRestoreTimer)
+    }
+    document.body.classList.remove('hai-view-advanced')
     document.removeEventListener('toggle', this.onDetailsToggle, true)
   }
 
@@ -93,7 +106,13 @@ export class AppShellComponent implements OnInit, OnDestroy {
     this.viewMode = preferences.mode
     this.navigationMode = preferences.navigationMode
     document.body.classList.toggle('hai-view-advanced', this.viewMode === 'advanced')
-    window.setTimeout(() => this.restoreDetailState())
+    if (this.detailRestoreTimer !== undefined) {
+      window.clearTimeout(this.detailRestoreTimer)
+    }
+    this.detailRestoreTimer = window.setTimeout(() => {
+      this.detailRestoreTimer = undefined
+      this.restoreDetailState()
+    })
   }
 
   private persistDetailState(event: Event): void {

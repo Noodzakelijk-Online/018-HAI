@@ -1,117 +1,4 @@
-<section class="operations-shell" [class.operations-shell--dark]="themeMode === 'dark'">
-  <aside class="side-nav" [class.side-nav--open]="mobileNavigationOpen">
-    <button
-      type="button"
-      class="brand"
-      title="Command Center: return to the main action dashboard"
-      data-testid="brand-command-center"
-      (click)="navigateToSection('overview')"
-    >
-      <span class="brand__mark">HAI</span>
-      <div>
-        <strong>HAI Automation Hub</strong>
-        <span>Personal operations</span>
-      </div>
-    </button>
-
-    <nav aria-label="Main navigation">
-      <section class="nav-group" *ngFor="let group of navigationGroups">
-        <span class="nav-group__label">{{ group.label }}</span>
-        <button
-          type="button"
-          class="nav-item"
-          *ngFor="let item of group.items"
-          [class.nav-item--active]="isNavigationItemActive(item)"
-          [attr.aria-current]="isNavigationItemActive(item) ? 'page' : null"
-          [attr.title]="controlTitle(item.label, item.route ? 'Open the ' + item.label + ' module' : 'Jump to the ' + item.label + ' section')"
-          [attr.data-testid]="'nav-' + menuKey(item.label)"
-          (click)="activateNavigationItem(item)"
-        >
-          <i nz-icon [nzType]="item.icon" nzTheme="outline"></i>
-          <span>{{ item.label }}</span>
-          <strong *ngIf="navigationBadge(item) as badge">
-            {{ badge }}
-          </strong>
-        </button>
-      </section>
-    </nav>
-
-    <button
-      type="button"
-      class="diagnostics-link"
-      data-testid="nav-developer-diagnostics"
-      title="Developer / Diagnostics: inspect automation runtime health and execution controls"
-      [class.diagnostics-link--active]="activeSection === 'diagnostics'"
-      [attr.aria-expanded]="diagnosticsExpanded"
-      (click)="navigateToSection('diagnostics')"
-    >
-      <i nz-icon nzType="code" nzTheme="outline"></i>
-      <span>Developer / Diagnostics</span>
-      <i
-        nz-icon
-        [nzType]="diagnosticsExpanded ? 'up' : 'right'"
-        nzTheme="outline"
-      ></i>
-    </button>
-  </aside>
-
-  <main class="workspace">
-    <header class="top-bar">
-      <button
-        type="button"
-        class="mobile-menu"
-        aria-label="Toggle navigation"
-        data-testid="top-mobile-menu"
-        nz-button
-        nzType="text"
-        (click)="mobileNavigationOpen = !mobileNavigationOpen"
-      >
-        <i nz-icon nzType="menu" nzTheme="outline"></i>
-      </button>
-
-      <div class="system-summary">
-        <button
-          type="button"
-          class="summary-item"
-          title="Safe mode: high-risk work is blocked until approved. Open brain settings."
-          data-testid="summary-safe-mode"
-          (click)="navigate('/ambient-brain')"
-        >
-          <span class="status-dot status-dot--safe"></span>
-          <div>
-            <strong>Safe mode active</strong>
-            <span>High-risk actions require approval</span>
-          </div>
-        </button>
-      </div>
-
-      <div class="top-actions">
-        <button
-          type="button"
-          class="theme-toggle"
-          data-testid="theme-toggle"
-          [attr.title]="themeLabel() + ': switch between light and dark dashboard themes'"
-          (click)="toggleTheme()"
-        >
-          <i nz-icon [nzType]="themeIcon()" nzTheme="outline"></i>
-          {{ themeLabel() }}
-        </button>
-        <button
-          type="button"
-          nz-button
-          nzType="default"
-          data-testid="top-run-scan"
-          title="Run scan now: search for open loops and next actions"
-          (click)="runScan()"
-          [nzLoading]="scanning"
-        >
-          <i nz-icon nzType="scan" nzTheme="outline"></i>
-          Run scan now
-        </button>
-      </div>
-    </header>
-
-    <div class="page-content" id="overview">
+<div class="page-content" id="overview">
       <div class="page-heading">
         <button
           type="button"
@@ -196,7 +83,26 @@
         </section>
       </details>
 
-      <section class="quiet-dashboard" *ngIf="!hasLiveWork()">
+      <section class="dashboard-unavailable" *ngIf="hasDashboardLoadError()" role="status" aria-live="polite">
+        <i nz-icon nzType="warning" nzTheme="outline"></i>
+        <div>
+          <h2>Dashboard data is incomplete</h2>
+          <p>{{ dashboardLoadErrors.join(', ') }} could not be loaded. HAI cannot confirm that there is no work waiting.</p>
+        </div>
+        <button
+          type="button"
+          nz-button
+          nzType="default"
+          data-testid="dashboard-unavailable-refresh"
+          title="Retry the unavailable dashboard requests"
+          (click)="refresh()"
+          [nzLoading]="loading"
+        >
+          Retry
+        </button>
+      </section>
+
+      <section class="quiet-dashboard" *ngIf="!hasLiveWork() && !hasDashboardLoadError()">
         <div class="quiet-dashboard__icon">
           <i nz-icon nzType="check-circle" nzTheme="outline"></i>
         </div>
@@ -650,6 +556,24 @@
           </div>
         </div>
 
+        <section class="dashboard-unavailable" *ngIf="hasDiagnosticsLoadError()" role="status" aria-live="polite">
+          <i nz-icon nzType="warning" nzTheme="outline"></i>
+          <div>
+            <h2>Technical diagnostics are incomplete</h2>
+            <p>{{ diagnosticsLoadErrors.join(', ') }} could not be loaded. HAI cannot confirm that these controls are clear.</p>
+          </div>
+          <button
+            type="button"
+            nz-button
+            nzType="default"
+            data-testid="diagnostics-unavailable-refresh"
+            (click)="loadDiagnosticsData(true)"
+            [nzLoading]="diagnosticsListLoading"
+          >
+            Retry
+          </button>
+        </section>
+
         <div class="health-strip" *ngIf="summary as health">
           <span><strong>{{ health.total }}</strong> registered</span>
           <span class="healthy"><strong>{{ health.healthy }}</strong> healthy</span>
@@ -773,7 +697,7 @@
           </article>
         </div>
 
-        <div class="empty-state compact" *ngIf="!diagnosticsListLoading && !automations.length">
+        <div class="empty-state compact" *ngIf="!diagnosticsListLoading && !automations.length && !hasDiagnosticsLoadError()">
           <i nz-icon nzType="tool" nzTheme="outline"></i>
           <div>
             <strong>No automations registered</strong>
@@ -781,9 +705,7 @@
           </div>
         </div>
       </section>
-    </div>
-  </main>
-</section>
+</div>
 
 <nz-modal
   [(nzVisible)]="isDiagnosticsVisible"

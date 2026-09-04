@@ -2,6 +2,7 @@ package braincatalog
 
 import (
 	"context"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -21,7 +22,7 @@ func StartCatalogRevalidationScheduler(ctx context.Context, service *CatalogMain
 		if backgroundAllowed != nil && !backgroundAllowed() {
 			return
 		}
-		service.RunDueRevalidations()
+		reportCatalogRevalidationRun(service.RunDueRevalidations())
 	}
 	go func() {
 		run()
@@ -36,6 +37,30 @@ func StartCatalogRevalidationScheduler(ctx context.Context, service *CatalogMain
 			}
 		}
 	}()
+}
+
+// reportCatalogRevalidationRun keeps unattended failures visible without
+// logging upstream responses, repository metadata, or any configured secrets.
+func reportCatalogRevalidationRun(run CatalogRevalidationRun) {
+	if !catalogMaintenanceNeedsReport(run) {
+		return
+	}
+	collectionFailed := run.CollectionReview != nil && run.CollectionReview.Failed
+	discoveryFailed := run.RepositoryDiscoveryReview != nil && run.RepositoryDiscoveryReview.Failed
+	log.Printf(
+		"brain catalog maintenance failed=%d checked=%d reused=%d collection_failed=%t discovery_failed=%t",
+		run.Failed,
+		run.Checked,
+		run.Reused,
+		collectionFailed,
+		discoveryFailed,
+	)
+}
+
+func catalogMaintenanceNeedsReport(run CatalogRevalidationRun) bool {
+	return run.Failed > 0 ||
+		(run.CollectionReview != nil && run.CollectionReview.Failed) ||
+		(run.RepositoryDiscoveryReview != nil && run.RepositoryDiscoveryReview.Failed)
 }
 
 func catalogRevalidationSchedulerEnabled() bool {

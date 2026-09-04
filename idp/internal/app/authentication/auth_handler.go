@@ -19,6 +19,14 @@ const (
 	authenticatedTokenContextKey = "hai.authenticated-access-token"
 )
 
+func safeAuthenticationReturnURL(candidate string) string {
+	candidate = strings.TrimSpace(candidate)
+	if !strings.HasPrefix(candidate, "/") || strings.HasPrefix(candidate, "//") || strings.Contains(candidate, "\\") || strings.ContainsAny(candidate, "\r\n") || strings.HasPrefix(candidate, "/login") {
+		return "/"
+	}
+	return candidate
+}
+
 type Handler struct {
 	authService IService
 }
@@ -125,7 +133,9 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/login?error=google_unavailable")
 		return
 	}
-	setGoogleOAuthStateCookie(c.Writer, state, time.Now().Add(10*time.Minute))
+	expires := time.Now().Add(10 * time.Minute)
+	setGoogleOAuthStateCookie(c.Writer, state, expires)
+	setGoogleOAuthReturnURLCookie(c.Writer, safeAuthenticationReturnURL(c.Query("returnUrl")), expires)
 	c.Redirect(http.StatusFound, loginURL)
 }
 
@@ -135,12 +145,15 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 func (h *Handler) GoogleCallback(c *gin.Context) {
 	if c.Query("error") != "" {
 		clearGoogleOAuthStateCookie(c.Writer)
+		clearGoogleOAuthReturnURLCookie(c.Writer)
 		c.Redirect(http.StatusFound, "/login?error=google_denied")
 		return
 	}
 	state := c.Query("state")
 	cookieState, err := c.Cookie(googleOAuthStateCookie)
+	returnURL, returnURLErr := c.Cookie(googleOAuthReturnURLCookie)
 	clearGoogleOAuthStateCookie(c.Writer)
+	clearGoogleOAuthReturnURLCookie(c.Writer)
 	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(cookieState), []byte(state)) != 1 {
 		c.Redirect(http.StatusFound, "/login?error=google_failed")
 		return
@@ -152,7 +165,10 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	}
 	setAccessTokenCookie(c.Writer, tokenDetails.AccessToken, time.Unix(tokenDetails.AtExpires, 0))
 	setRefreshTokenCookie(c.Writer, tokenDetails.RefreshToken, time.Unix(tokenDetails.RtExpires, 0))
-	c.Redirect(http.StatusFound, "/")
+	if returnURLErr != nil {
+		returnURL = "/"
+	}
+	c.Redirect(http.StatusFound, safeAuthenticationReturnURL(returnURL))
 }
 
 // LocalPreview establishes an ordinary signed owner session for the explicit

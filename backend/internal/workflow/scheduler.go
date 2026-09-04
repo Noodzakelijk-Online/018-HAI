@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+const (
+	defaultSchedulerInterval = 10 * time.Minute
+	minSchedulerInterval     = 15 * time.Second
+	maxSchedulerInterval     = 24 * time.Hour
+)
+
 type ScheduledWorkflowService interface {
 	RecoverStaleClaims(request RunDueRequest) (*ClaimRecoverySummary, error)
 	RunDue(request RunDueRequest) (*WorkflowRunSummary, error)
@@ -17,20 +23,21 @@ type ScheduledWorkflowService interface {
 }
 
 type Scheduler struct {
-	service  ScheduledWorkflowService
-	interval time.Duration
-	limit    int
-	running  atomic.Bool
+	service           ScheduledWorkflowService
+	interval          time.Duration
+	limit             int
+	backgroundAllowed func() bool
+	running           atomic.Bool
 }
 
-func NewScheduler(service ScheduledWorkflowService, interval time.Duration, limit int) *Scheduler {
-	if interval < 15*time.Second {
-		interval = 10 * time.Minute
+func NewScheduler(service ScheduledWorkflowService, interval time.Duration, limit int, allowed ...func() bool) *Scheduler {
+	if interval < minSchedulerInterval || interval > maxSchedulerInterval {
+		interval = defaultSchedulerInterval
 	}
 	if limit <= 0 {
 		limit = 2
 	}
-	return &Scheduler{service: service, interval: interval, limit: limit}
+	return &Scheduler{service: service, interval: interval, limit: limit, backgroundAllowed: schedulerBackgroundGate(allowed)}
 }
 
 // StartScheduler starts the workflow sweep.
@@ -38,20 +45,21 @@ func NewScheduler(service ScheduledWorkflowService, interval time.Duration, limi
 // It prefers the durable path (persisted, retried, crash-recovered — see
 // durable_scheduler.go) and falls back to the legacy in-process ticker, saying
 // so, if the durable queue cannot be reached.
-func StartScheduler(ctx context.Context, service ScheduledWorkflowService) {
+func StartScheduler(ctx context.Context, service ScheduledWorkflowService, allowed ...func() bool) {
 	if !schedulerEnabled("WORKFLOW_SCHEDULER_ENABLED", true) {
 		return
 	}
 	interval := schedulerInterval("WORKFLOW_SCHEDULER_INTERVAL_SECONDS")
 	limit := schedulerLimit()
+	backgroundAllowed := schedulerBackgroundGate(allowed)
 	if durableSchedulerEnabled() {
-		if err := startDurableScheduler(ctx, service, interval, limit); err != nil {
+		if err := startDurableScheduler(ctx, service, interval, limit, backgroundAllowed); err != nil {
 			log.Printf("workflow scheduler: durable queue unavailable (%v); falling back to the in-process ticker", err)
 		} else {
 			return
 		}
 	}
-	scheduler := NewScheduler(service, interval, limit)
+	scheduler := NewScheduler(service, interval, limit, backgroundAllowed)
 	go scheduler.Start(ctx)
 }
 
@@ -72,7 +80,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 
 func (s *Scheduler) runOnce() {
-	if s.service == nil || !s.running.CompareAndSwap(false, true) {
+	if s.service == nil || (s.backgroundAllowed != nil && !s.backgroundAllowed()) || !s.running.CompareAndSwap(false, true) {
 		return
 	}
 	defer s.running.Store(false)
@@ -111,6 +119,13 @@ func (s *Scheduler) runOnce() {
 	}
 }
 
+func schedulerBackgroundGate(allowed []func() bool) func() bool {
+	if len(allowed) > 0 && allowed[0] != nil {
+		return allowed[0]
+	}
+	return func() bool { return true }
+}
+
 func schedulerEnabled(name string, defaultEnabled bool) bool {
 	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
 	if value == "" {
@@ -122,11 +137,11 @@ func schedulerEnabled(name string, defaultEnabled bool) bool {
 func schedulerInterval(name string) time.Duration {
 	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
-		return 10 * time.Minute
+		return defaultSchedulerInterval
 	}
 	var seconds int64
-	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < 15 {
-		return 10 * time.Minute
+	if _, err := fmt.Sscanf(value, "%d", &seconds); err != nil || seconds < int64(minSchedulerInterval/time.Second) || seconds > int64(maxSchedulerInterval/time.Second) {
+		return defaultSchedulerInterval
 	}
 	return time.Duration(seconds) * time.Second
 }

@@ -106,6 +106,9 @@ func indexExists(t *testing.T, db *gorm.DB, name string) bool {
 }
 
 func TestRunMigrationsAppliesAndIsIdempotent(t *testing.T) {
+	// The optional development scaffolding must not rewrite any schema that the
+	// versioned migrations just created.
+	t.Setenv("DB_AUTOMIGRATE", "true")
 	db := integrationDB(t)
 
 	if err := RunMigrations(db); err != nil {
@@ -143,11 +146,20 @@ func TestRollbackMigrationReversesPostMigration(t *testing.T) {
 	if err := RunMigrations(db); err != nil {
 		t.Fatalf("RunMigrations: %v", err)
 	}
-	for _, version := range []string{
-		"post/0003_durable_jobs_queue_index",
-		"post/0002_durable_jobs_indexes",
-		"post/0001_conversation_owner_identity",
-	} {
+	beforeRollback, err := Status(db, migrations.Files, "post")
+	if err != nil {
+		t.Fatalf("Status before rollback: %v", err)
+	}
+	if len(beforeRollback.Applied) == 0 {
+		t.Fatal("expected post migrations before rollback")
+	}
+
+	// Rollback is deliberately constrained to newest-first. Derive the current
+	// applied sequence instead of freezing this integration proof to a historic
+	// tail: every future reversible post migration must participate in the real
+	// rollback/reapply exercise.
+	for index := len(beforeRollback.Applied) - 1; index >= 0; index-- {
+		version := beforeRollback.Applied[index]
 		if err := RollbackMigration(db, migrations.Files, "post", version); err != nil {
 			t.Fatalf("RollbackMigration(%s): %v", version, err)
 		}
@@ -173,8 +185,8 @@ func TestRollbackMigrationReversesPostMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-apply post: %v", err)
 	}
-	if count != 3 {
-		t.Fatalf("re-applied %d post migrations, want 3", count)
+	if count != len(beforeRollback.Applied) {
+		t.Fatalf("re-applied %d post migrations, want %d", count, len(beforeRollback.Applied))
 	}
 	if !indexExists(t, db, "idx_ai_conversation_owner_identity") {
 		t.Fatal("index should be restored after re-apply")

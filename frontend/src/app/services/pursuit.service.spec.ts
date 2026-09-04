@@ -2,6 +2,43 @@ import { PursuitService } from './pursuit.service';
 import { of } from 'rxjs';
 
 describe('PursuitService response normalization', () => {
+  it('requests already-loaded active pursuits only when a dashboard consumer needs them', (done) => {
+    const http = {
+      get: jasmine.createSpy('get').and.returnValue(of({ counts: {}, pursuits: [] })),
+    };
+    const service = new PursuitService(http as any);
+
+    service.dashboard(true).subscribe((result) => {
+      expect(result.pursuits).toEqual([]);
+      expect(http.get).toHaveBeenCalledTimes(1);
+      const [url, options] = http.get.calls.mostRecent().args;
+      expect(url).toBe('/api/v1/pursuits/dashboard');
+      expect(options.params.get('includePursuits')).toBe('true');
+      done();
+    });
+  });
+
+  it('normalizes the confirmed create response before the pursuit screen renders it', (done) => {
+    const response = { id: 'pursuit-1', title: 'Confirmed pursuit' };
+    const http = {
+      post: jasmine.createSpy('post').and.returnValue(of(response)),
+    };
+    const service = new PursuitService(http as any);
+    const request = { title: 'Confirmed pursuit' } as any;
+
+    service.create(request).subscribe((result) => {
+      expect(http.post).toHaveBeenCalledOnceWith('/api/v1/pursuits/', request);
+      expect(result).toEqual(jasmine.objectContaining({
+        id: 'pursuit-1',
+        successCriteria: [],
+        stopConditions: [],
+        dependencies: [],
+        resourceLimits: {},
+      }));
+      done();
+    });
+  });
+
   it('submits portfolio planning to the advisory collection endpoint', (done) => {
     const response = { authority: 'advisory_only', canExecute: false, priorities: [], exclusions: [] };
     const http = {

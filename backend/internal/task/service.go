@@ -60,20 +60,30 @@ type IntakeRequest struct {
 	// ExecutionRequested preserves the caller's execution intent during a
 	// side-effect-free preview. It is internal context only and never grants
 	// execution authority.
-	ExecutionRequested    bool                                    `json:"-"`
-	HumanApproved         bool                                    `json:"humanApproved,omitempty"`
-	ApprovalNote          string                                  `json:"approvalNote,omitempty"`
-	ApprovalSourceID      string                                  `json:"-"`
-	ApprovalBindingDigest string                                  `json:"-"`
-	ApprovalActorIdentity string                                  `json:"-"`
-	ApprovalApprovedAt    *time.Time                              `json:"-"`
-	ObservedNeeds         []frameworkregistry.NeedStateAssessment `json:"-"`
-	Capacity              *frameworkregistry.CapacitySnapshot     `json:"-"`
-	AvailableAgents       []frameworkregistry.AgentCard           `json:"-"`
-	CoordinationMode      string                                  `json:"-"`
-	Deadline              *time.Time                              `json:"-"`
-	operationID           string
-	reviewItemID          string
+	ExecutionRequested bool `json:"-"`
+	// FrameworkSelectionHumanApproved carries already-verified approval only
+	// into selector comparison during a side-effect-free preview. It must never
+	// authorize execution: assessRisk and execution boundaries use
+	// HumanApproved and its durable approval provenance exclusively.
+	FrameworkSelectionHumanApproved bool                                    `json:"-"`
+	HumanApproved                   bool                                    `json:"humanApproved,omitempty"`
+	ApprovalNote                    string                                  `json:"approvalNote,omitempty"`
+	ApprovalSourceID                string                                  `json:"-"`
+	ApprovalBindingDigest           string                                  `json:"-"`
+	ApprovalActorIdentity           string                                  `json:"-"`
+	ApprovalApprovedAt              *time.Time                              `json:"-"`
+	ObservedNeeds                   []frameworkregistry.NeedStateAssessment `json:"-"`
+	Capacity                        *frameworkregistry.CapacitySnapshot     `json:"-"`
+	AvailableAgents                 []frameworkregistry.AgentCard           `json:"-"`
+	CoordinationMode                string                                  `json:"-"`
+	Deadline                        *time.Time                              `json:"-"`
+	// agentInventoryEvaluated is set only after the configured owner-scoped
+	// registry provider has returned a complete inventory. It distinguishes an
+	// explicitly empty production inventory from a lightweight constructor that
+	// has no registry dependency at all.
+	agentInventoryEvaluated bool
+	operationID             string
+	reviewItemID            string
 }
 
 type IntakeAnalysis struct {
@@ -1031,7 +1041,7 @@ func (s *service) buildPlan(request IntakeRequest, runMode, allowSourceRefresh b
 		NeedsLocalExecution:       intake.NeedsLocalExecution,
 		NeedsApproval:             intake.NeedsApproval,
 		ExecuteRequested:          request.ExecuteAllowed || request.ExecutionRequested,
-		HumanApproved:             request.HumanApproved,
+		HumanApproved:             request.HumanApproved || request.FrameworkSelectionHumanApproved,
 		ObservedNeeds:             request.ObservedNeeds,
 		Capacity:                  request.Capacity,
 		AvailableAgents:           request.AvailableAgents,
@@ -1273,12 +1283,15 @@ func (s *service) loadOperatingContext(request IntakeRequest) (IntakeRequest, er
 		}
 		request.Capacity = capacity
 	}
-	if s.agentContext != nil && len(request.AvailableAgents) == 0 {
-		agents, err := s.agentContext.LatestAgents(request.OwnerIdentity, now)
-		if err != nil {
-			return request, fmt.Errorf("load available agents: %w", err)
+	if s.agentContext != nil {
+		if len(request.AvailableAgents) == 0 {
+			agents, err := s.agentContext.LatestAgents(request.OwnerIdentity, now)
+			if err != nil {
+				return request, fmt.Errorf("load available agents: %w", err)
+			}
+			request.AvailableAgents = append([]frameworkregistry.AgentCard(nil), agents...)
 		}
-		request.AvailableAgents = append([]frameworkregistry.AgentCard(nil), agents...)
+		request.agentInventoryEvaluated = true
 	}
 	return request, nil
 }
@@ -2765,13 +2778,21 @@ func applyFrameworkRisk(
 			"current human capacity is unavailable; execution must be rescheduled or explicitly re-planned without creating new operator commitments",
 		)
 	}
-	if request.ExecuteAllowed && decision.Coordination.Mode != "single_engine" {
+	// A framework-required specialist is an execution precondition, not merely
+	// a preference for a multi-agent coordination style. Falling back to the
+	// embedded coordinator would otherwise bypass the selected framework.
+	// The framework catalog names governance and specialist roles even when the
+	// selected coordination plan uses only the verified embedded task engine.
+	// A bounded Level 8 automation remains governed by its allowlist, framework
+	// ceiling, evidence preflight, and runtime boundary; an unassigned advisory
+	// role must not turn that runtime into a human approval flow.
+	if request.ExecuteAllowed && request.agentInventoryEvaluated && !usesAdmittedEmbeddedRuntime(risk, request) {
 		for _, delegation := range decision.Delegations {
-			if delegation.State != "ready" {
+			if delegation.State != "ready" && isUnreadyRequiredFrameworkDelegation(*decision, delegation) {
 				risk.AllowedNow = false
 				risk.Reasons = append(
 					risk.Reasons,
-					"multi-agent execution is blocked until every delegated participant has a fresh verified agent card",
+					"execution is blocked until every framework-required delegated participant has a fresh verified agent card",
 				)
 				break
 			}
@@ -2792,6 +2813,43 @@ func applyFrameworkRisk(
 	}
 	risk.Reasons = uniqueStrings(risk.Reasons)
 	return risk
+}
+
+func usesAdmittedEmbeddedRuntime(risk RiskAssessment, request IntakeRequest) bool {
+	return request.ExecuteAllowed &&
+		strings.TrimSpace(request.AutomationID) != "" &&
+		strings.EqualFold(strings.TrimSpace(risk.Level), "low") &&
+		risk.AllowedNow &&
+		!risk.ApprovalRequired &&
+		!risk.ApprovalGranted &&
+		risk.RequiredFrameworkAutonomy >= 8 &&
+		risk.FrameworkAutonomyCeiling >= risk.RequiredFrameworkAutonomy
+}
+
+func isUnreadyRequiredFrameworkDelegation(
+	decision frameworkregistry.SelectionDecision,
+	delegation frameworkregistry.DelegationContract,
+) bool {
+	if len(decision.RequiredAgents) == 0 {
+		return false
+	}
+	required := make(map[string]struct{}, len(decision.RequiredAgents))
+	for _, role := range decision.RequiredAgents {
+		if normalized := strings.ToLower(strings.TrimSpace(role)); normalized != "" {
+			required[normalized] = struct{}{}
+		}
+	}
+	delegatee := strings.ToLower(strings.TrimSpace(delegation.Delegatee))
+	if _, requiredRole := required[delegatee]; requiredRole {
+		return true
+	}
+	for _, card := range decision.AgentCards {
+		if strings.EqualFold(strings.TrimSpace(card.ID), delegatee) {
+			_, requiredRole := required[strings.ToLower(strings.TrimSpace(card.Role))]
+			return requiredRole
+		}
+	}
+	return false
 }
 
 func requiredFrameworkAutonomy(intake IntakeAnalysis, request IntakeRequest) int {

@@ -34,7 +34,7 @@ func fetchFeedBytes(ctx context.Context, feed Feed, opts FetchOptions) ([]byte, 
 		if err != nil {
 			return nil, fmt.Errorf("accountfeed: %w", err)
 		}
-		return os.ReadFile(full)
+		return readBoundedLocalFeed(full)
 	case SourceHTTPJSONFeed:
 		if !opts.AllowHTTP {
 			return nil, fmt.Errorf("accountfeed: HTTP feeds are disabled (set the enable flag to allow %s)", feed.URL)
@@ -46,7 +46,7 @@ func fetchFeedBytes(ctx context.Context, feed Feed, opts FetchOptions) ([]byte, 
 		if err != nil {
 			return nil, err
 		}
-		client := &http.Client{Timeout: 10 * time.Second}
+		client := safeFeedHTTPClient()
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("accountfeed: feed fetch failed: %w", err)
@@ -55,10 +55,33 @@ func fetchFeedBytes(ctx context.Context, feed Feed, opts FetchOptions) ([]byte, 
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("accountfeed: feed HTTP %d", resp.StatusCode)
 		}
-		return io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes+1))
+		if err != nil {
+			return nil, err
+		}
+		if len(body) > maxFeedBytes {
+			return nil, fmt.Errorf("accountfeed: HTTP feed exceeds %d bytes", maxFeedBytes)
+		}
+		return body, nil
 	default:
 		return nil, fmt.Errorf("accountfeed: unsupported sourceType %q", feed.SourceType)
 	}
+}
+
+func readBoundedLocalFeed(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	body, err := io.ReadAll(io.LimitReader(file, maxFeedBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxFeedBytes {
+		return nil, fmt.Errorf("accountfeed: local feed exceeds %d bytes", maxFeedBytes)
+	}
+	return body, nil
 }
 
 // validateFeedURL rejects link-local, metadata, and unspecified hosts. Localhost
@@ -82,16 +105,72 @@ func validateFeedURL(raw string) error {
 		return nil
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		switch {
-		case ip.IsLoopback():
-			return nil
-		case ip.IsUnspecified():
-			return fmt.Errorf("accountfeed: unspecified host not allowed")
-		case ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast():
-			return fmt.Errorf("accountfeed: link-local host not allowed")
-		case ip.String() == "169.254.169.254":
-			return fmt.Errorf("accountfeed: metadata host not allowed")
+		return validateFeedIP(ip, true)
+	}
+	return nil
+}
+
+// safeFeedHTTPClient resolves and dials only safe addresses. Validating the
+// URL string alone is not enough: a hostname can resolve to an internal IP or
+// change resolution between validation and connection. Redirects are disabled
+// too, so one approved URL cannot bounce the worker to a different host.
+func safeFeedHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
 		}
+		if ip := net.ParseIP(host); ip != nil {
+			if err := validateFeedIP(ip, true); err != nil {
+				return nil, err
+			}
+			return dialer.DialContext(ctx, network, address)
+		}
+		addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("accountfeed: resolve feed host: %w", err)
+		}
+		if len(addresses) == 0 {
+			return nil, fmt.Errorf("accountfeed: feed host resolved to no addresses")
+		}
+		for _, resolved := range addresses {
+			if err := validateFeedIP(resolved.IP, strings.EqualFold(host, "localhost")); err != nil {
+				return nil, err
+			}
+		}
+		return dialer.DialContext(ctx, network, net.JoinHostPort(addresses[0].IP.String(), port))
+	}
+	return &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func validateFeedIP(ip net.IP, allowLoopback bool) error {
+	if ip == nil {
+		return fmt.Errorf("accountfeed: invalid IP address")
+	}
+	switch {
+	case ip.IsLoopback():
+		if allowLoopback {
+			return nil
+		}
+		return fmt.Errorf("accountfeed: loopback host not allowed")
+	case ip.IsUnspecified():
+		return fmt.Errorf("accountfeed: unspecified host not allowed")
+	case ip.IsPrivate():
+		return fmt.Errorf("accountfeed: private-network host not allowed")
+	case ip.String() == "169.254.169.254":
+		return fmt.Errorf("accountfeed: metadata host not allowed")
+	case ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast():
+		return fmt.Errorf("accountfeed: link-local host not allowed")
+	case ip.IsMulticast():
+		return fmt.Errorf("accountfeed: multicast host not allowed")
 	}
 	return nil
 }

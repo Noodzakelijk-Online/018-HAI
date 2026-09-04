@@ -1,6 +1,6 @@
 import { FormBuilder } from '@angular/forms';
 import { convertToParamMap } from '@angular/router';
-import { of, throwError } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import {
   IWorkflowFrameworkSelectionDecision,
   IWorkflowFrameworkSelectionProvenance,
@@ -110,6 +110,7 @@ describe('WorkflowEngineComponent', () => {
     notification: jasmine.SpyObj<any>;
     modal: jasmine.SpyObj<any>;
     router: jasmine.SpyObj<any>;
+    changeDetector: jasmine.SpyObj<any>;
   } {
     const workflowService = jasmine.createSpyObj('workflowService', [
       'overview',
@@ -141,10 +142,28 @@ describe('WorkflowEngineComponent', () => {
     const modal = jasmine.createSpyObj('modal', ['confirm']);
     const route = { snapshot: { queryParamMap: convertToParamMap({}) } } as any;
     const router = jasmine.createSpyObj('router', ['navigate']);
-    const component = new WorkflowEngineComponent(new FormBuilder(), workflowService, pursuitService, notification, modal, route, router);
+    const changeDetector = jasmine.createSpyObj('changeDetector', ['detectChanges']);
+    const component = new WorkflowEngineComponent(new FormBuilder(), workflowService, pursuitService, notification, modal, route, router, changeDetector);
     spyOn(component, 'refresh');
-    return { component, workflowService, pursuitService, notification, modal, router };
+    return { component, workflowService, pursuitService, notification, modal, router, changeDetector };
   }
+
+  it('renders returned pursuit matches immediately after an operator requests them', () => {
+    const { component, pursuitService, changeDetector } = createComponent();
+    component.intakeForm.patchValue({ input: 'Prepare the evidence bundle', projectKey: 'vivare' });
+    pursuitService.match.and.returnValue(of([{
+      pursuit: { id: 'pursuit-1', title: 'Vivare evidence bundle' },
+      score: 0.9,
+      confidence: 'high',
+      reasons: ['project key matches'],
+    }]));
+
+    component.matchPursuits();
+
+    expect(component.pursuitMatches.length).toBe(1);
+    expect(component.selectedPursuitMatch?.pursuit.id).toBe('pursuit-1');
+    expect(changeDetector.detectChanges).toHaveBeenCalled();
+  });
 
   it('starts manual intake without executable demo provenance', () => {
     const { component } = createComponent();
@@ -314,6 +333,33 @@ describe('WorkflowEngineComponent', () => {
     expect(component.reminderActivationUnavailable).toBeFalse();
     expect(component.dashboard).toBeDefined();
     expect(notification.error).not.toHaveBeenCalled();
+  });
+
+  it('cancels an obsolete refresh so stale workflows cannot replace the newest queue', () => {
+    const { component, workflowService } = createComponent();
+    const firstItems = new Subject<any[]>();
+    const secondItems = new Subject<any[]>();
+    workflowService.overview.and.returnValue(of({ capabilities: [], states: [], safetyRules: [], rules: [] }));
+    workflowService.dashboard.and.returnValue(of({
+      counts: {}, approvalItems: [], blockedItems: [], readyItems: [], highRiskItems: [],
+      itemsWithoutNextAction: [], dueOpenLoops: [], rules: [],
+    }));
+    workflowService.reminderProposals.and.returnValue(of(undefined));
+    workflowService.reminderActivationHistory.and.returnValue(of(undefined));
+    workflowService.reminderDeliveryHistory.and.returnValue(of(undefined));
+    workflowService.items.and.returnValues(firstItems.asObservable(), secondItems.asObservable());
+    workflowService.approvals.and.returnValue(of([]));
+    (component.refresh as jasmine.Spy).and.callThrough();
+
+    component.refresh();
+    component.refresh();
+
+    secondItems.next([{ id: 'new-workflow' }]);
+    secondItems.complete();
+    firstItems.next([{ id: 'old-workflow' }]);
+    firstItems.complete();
+
+    expect(component.items.map((item) => item.id)).toEqual(['new-workflow']);
   });
 
   it('authorizes exactly one internal reminder from a current approved decision', () => {
@@ -566,6 +612,44 @@ describe('WorkflowEngineComponent', () => {
     expect(component.lastOperation?.name).toBe('Run selected workflow');
     expect(component.lastOperation?.status).toBe('completed');
     expect(notification.success).toHaveBeenCalled();
+  });
+
+  it('allows a ready workflow with no approval requirement to enter the controlled run confirmation', () => {
+    const { component, modal } = createComponent();
+    const ready = workflowRecord([]);
+    ready.item.currentState = 'ready';
+    ready.item.requiresApproval = false;
+    ready.item.approvalStatus = 'not_required';
+    component.applyWorkflowRecord(ready);
+
+    component.runSelectedWorkflow();
+
+    expect(modal.confirm).toHaveBeenCalled();
+  });
+
+  it('keeps a newly selected safe workflow runnable while the list refreshes', () => {
+    const { component, workflowService, modal } = createComponent();
+    const beforeSelection = workflowRecord([]);
+    beforeSelection.item.currentState = 'needs_approval';
+    const ready = workflowRecord([]);
+    ready.item.currentState = 'ready';
+    ready.item.requiresApproval = false;
+    ready.item.approvalStatus = 'not_required';
+    beforeSelection.proposals = [{
+      id: 'proposal-1',
+      status: 'open',
+      recommendedAction: 'Select an automation for controlled execution',
+      options: ['Use E2E readiness probe'],
+    }] as any;
+    workflowService.resolveProposal.and.returnValue(of(ready));
+    component.applyWorkflowRecord(beforeSelection);
+
+    component.resolveProposal('proposal-1', 'approved', 'Use E2E readiness probe');
+
+    expect(component.refresh).toHaveBeenCalledWith(false, true);
+    expect(component.anyActionRunning()).toBeFalse();
+    component.runSelectedWorkflow();
+    expect(modal.confirm).toHaveBeenCalled();
   });
 
   it('records an explicit operator review before retrying interrupted execution', () => {

@@ -203,16 +203,17 @@ func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
 	run.SourcesUsed = sourceLabels(filterEvidence(evidence, true))
 	run.SourcesRejected = sourceLabels(filterRejectedEvidence(evidence))
 	run.MissingSources = missingSources(request, evidence)
-	run, err = s.repo.UpdateRun(run)
-	if err != nil {
-		return nil, err
+	// A verification result is only trustworthy when its evidence, claims, and
+	// final status were durably stored. The Postgres repository performs that
+	// write set atomically; compact test repositories retain fail-closed order.
+	// Callers must not receive a completed-looking result with a missing audit
+	// trail.
+	finalizedRun, finalizeErr := s.persistFinalization(run, evidence, verifiedClaims)
+	if finalizeErr != nil {
+		s.audit(run.ID, "verification.persistence_failed", finalizeErr.Error())
+		return nil, finalizeErr
 	}
-	for _, item := range evidence {
-		_, _ = s.repo.CreateEvidence(&item)
-	}
-	for _, claim := range verifiedClaims {
-		_, _ = s.repo.CreateClaim(&claim)
-	}
+	run = finalizedRun
 	knowledgeClaimIDs := []string(nil)
 	knowledgeError := ""
 	if s.claimProjector != nil {
@@ -257,6 +258,49 @@ func (s *service) Answer(request AnswerRequest) (*VerificationResult, error) {
 	return result, nil
 }
 
+func (s *service) persistFinalization(
+	run *models.VerificationRun,
+	evidence []models.VerificationEvidence,
+	claims []models.VerificationClaim,
+) (*models.VerificationRun, error) {
+	var stored *models.VerificationRun
+	persist := func(repository Repository) error {
+		if err := persistEvidenceAndClaims(repository, evidence, claims); err != nil {
+			return err
+		}
+		updated, err := repository.UpdateRun(run)
+		if err != nil {
+			return fmt.Errorf("finalize verification run: %w", err)
+		}
+		stored = updated
+		return nil
+	}
+	if atomic, ok := s.repo.(AtomicRepository); ok {
+		if err := atomic.WithinTransaction(persist); err != nil {
+			return nil, err
+		}
+		return stored, nil
+	}
+	if err := persist(s.repo); err != nil {
+		return nil, err
+	}
+	return stored, nil
+}
+
+func persistEvidenceAndClaims(repository Repository, evidence []models.VerificationEvidence, claims []models.VerificationClaim) error {
+	for index := range evidence {
+		if _, err := repository.CreateEvidence(&evidence[index]); err != nil {
+			return fmt.Errorf("persist verification evidence: %w", err)
+		}
+	}
+	for index := range claims {
+		if _, err := repository.CreateClaim(&claims[index]); err != nil {
+			return fmt.Errorf("persist verification claim: %w", err)
+		}
+	}
+	return nil
+}
+
 func requestedPursuitID(value string) (uuid.UUID, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -286,20 +330,9 @@ func (s *service) RunDetailsForOwner(ownerIdentity string, id uuid.UUID) (*Verif
 }
 
 func (s *service) runDetailsForOwner(ownerIdentity string, id uuid.UUID) (*VerificationResult, error) {
-	runs, err := s.RunsForOwner(ownerIdentity)
+	run, err := s.runForOwner(ownerIdentity, id)
 	if err != nil {
 		return nil, err
-	}
-	var run *models.VerificationRun
-	for index := range runs {
-		if runs[index].ID == id {
-			copy := runs[index]
-			run = &copy
-			break
-		}
-	}
-	if run == nil {
-		return nil, fmt.Errorf("verification run not found")
 	}
 	claims, err := s.repo.FindClaims(id)
 	if err != nil {
@@ -316,6 +349,23 @@ func (s *service) runDetailsForOwner(ownerIdentity string, id uuid.UUID) (*Verif
 		UnsupportedClaims: unsupportedClaims(claims),
 		Logs:              []string{"loaded persisted verification details"},
 	}, nil
+}
+
+func (s *service) runForOwner(ownerIdentity string, id uuid.UUID) (*models.VerificationRun, error) {
+	if scoped, ok := s.repo.(OwnerScopedRunRepository); ok {
+		return scoped.FindRunForOwner(ownerIdentity, id)
+	}
+	runs, err := s.RunsForOwner(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	for index := range runs {
+		if runs[index].ID == id {
+			copy := runs[index]
+			return &copy, nil
+		}
+	}
+	return nil, fmt.Errorf("verification run not found")
 }
 
 func (s *service) collectEvidence(runID uuid.UUID, request AnswerRequest, questions []string, logs *[]string) []models.VerificationEvidence {

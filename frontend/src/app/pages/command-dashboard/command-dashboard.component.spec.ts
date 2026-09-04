@@ -1,6 +1,6 @@
 import { FormBuilder } from '@angular/forms';
 import { Router } from '@angular/router';
-import { of } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
 import { IPursuitDashboardDecision } from '../../models/pursuit.model.interface';
 import { CommandDashboardComponent } from './command-dashboard.component';
@@ -8,26 +8,39 @@ import { CommandDashboardComponent } from './command-dashboard.component';
 describe('CommandDashboardComponent pursuit candidate decisions', () => {
   function createComponent(): {
     component: CommandDashboardComponent;
+    memoryEngine: jasmine.SpyObj<any>;
+    agentRuntimes: jasmine.SpyObj<any>;
     pursuits: jasmine.SpyObj<any>;
     workflows: jasmine.SpyObj<any>;
+    commands: jasmine.SpyObj<any>;
     notification: jasmine.SpyObj<any>;
   } {
+    const memoryEngine = jasmine.createSpyObj('MemoryEngineService', ['dashboard', 'search', 'deleteConversation']);
+    const agentRuntimes = jasmine.createSpyObj('AgentRuntimeService', [
+      'prepareOpenClawEcosystemPath',
+      'setOpenClawEcosystemPath',
+      'prepareOpenClawEcosystemRefresh',
+      'refreshOpenClawEcosystem',
+      'prepareOpenClawEcosystemUpload',
+      'uploadOpenClawEcosystem',
+    ]);
     const pursuits = jasmine.createSpyObj('PursuitService', ['acceptCandidate', 'archive', 'resolveDecision']);
     const workflows = jasmine.createSpyObj('WorkflowService', ['resolveApproval', 'resolveProposal']);
+    const commands = jasmine.createSpyObj('AssistantCommandService', ['logs']);
     const notification = jasmine.createSpyObj('NzNotificationService', ['success', 'error']);
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
     const component = new CommandDashboardComponent(
       new FormBuilder(),
-      {} as any,
-      {} as any,
-      {} as any,
+      memoryEngine,
+      agentRuntimes,
+      commands,
       pursuits,
       workflows,
       notification as NzNotificationService,
       router,
     );
     spyOn(component, 'refreshPursuits');
-    return { component, pursuits, workflows, notification };
+    return { component, memoryEngine, agentRuntimes, pursuits, workflows, commands, notification };
   }
 
   function candidateDecision(riskLevel: string = 'medium'): IPursuitDashboardDecision {
@@ -134,5 +147,79 @@ describe('CommandDashboardComponent pursuit candidate decisions', () => {
       actor: 'Robert',
     });
     expect(notification.success).toHaveBeenCalledWith('Pursuit completed', 'Verified completion and the Robert decision were recorded in the audit trail.');
+  });
+
+  it('retains confirmed command history when the next ledger read is unavailable', () => {
+    const { component, commands } = createComponent();
+    const history = [{ id: 'command-1', summary: 'Prepared safe next action.' }];
+    component.commandLogs = history as any;
+    commands.logs.and.returnValue(throwError(() => new Error('command ledger unavailable')));
+
+    component.loadCommandLogs();
+
+    expect(component.commandLogs).toEqual(history as any);
+    expect((component as any).commandLogsUnavailable).toBeTrue();
+  });
+
+  it('cancels an obsolete dashboard refresh so stale memory data cannot replace the latest view', () => {
+    const { component, memoryEngine } = createComponent();
+    const first = new Subject<any>();
+    const second = new Subject<any>();
+    memoryEngine.dashboard.and.returnValues(first.asObservable(), second.asObservable());
+
+    component.refresh();
+    component.refresh();
+
+    second.next({ summary: 'new dashboard' });
+    second.complete();
+    first.next({ summary: 'stale dashboard' });
+    first.complete();
+
+    expect(component.dashboard).toEqual({ summary: 'new dashboard' } as any);
+  });
+
+  it('distinguishes a connected OpenClaw discovery gateway from executable runtime readiness', () => {
+    const { component } = createComponent();
+    const openClaw = {
+      id: 'openclaw',
+      enabled: true,
+      configured: false,
+      executionEnabled: false,
+    } as any;
+    component.runtimes = [openClaw];
+    component.runtimeHealth = {
+      openclaw: {
+        runtimeId: 'openclaw',
+        status: 'available',
+        reason: 'OpenClaw Companion gateway health endpoint is live.',
+      },
+    } as any;
+
+    expect(component.openClawPosture(openClaw)).toContain('discovery is connected');
+    expect(component.openClawPosture(openClaw)).toContain('Task execution remains disabled');
+  });
+
+  it('prepares one owner-bound authorization before setting the OpenClaw ecosystem path', () => {
+    const { component, agentRuntimes, notification } = createComponent();
+    const authorization = {
+      idempotencyKey: 'runtime-openclaw:one-time-key',
+      taskId: 'agent-runtime-openclaw-set-path-test',
+      approvalSourceId: 'opscontrol-owner:test',
+      approvalBindingDigest: 'a'.repeat(64),
+    };
+    const updatedRuntime = { id: 'openclaw', ecosystemPath: 'C:\\OpenClaw\\openclaw-main.zip' };
+    agentRuntimes.prepareOpenClawEcosystemPath.and.returnValue(of(authorization));
+    agentRuntimes.setOpenClawEcosystemPath.and.returnValue(of(updatedRuntime));
+    component.runtimes = [{ id: 'openclaw' } as any];
+    component.openClawEcosystemPath = updatedRuntime.ecosystemPath;
+
+    component.setOpenClawEcosystemPath(component.runtimes[0]);
+
+    expect(agentRuntimes.prepareOpenClawEcosystemPath).toHaveBeenCalledWith(updatedRuntime.ecosystemPath);
+    expect(agentRuntimes.setOpenClawEcosystemPath).toHaveBeenCalledWith(updatedRuntime.ecosystemPath, authorization);
+    expect(notification.success).toHaveBeenCalledWith(
+      'OpenClaw ecosystem path updated',
+      `Configured at ${updatedRuntime.ecosystemPath}`,
+    );
   });
 });

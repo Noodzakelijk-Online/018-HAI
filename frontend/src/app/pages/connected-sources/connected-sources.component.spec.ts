@@ -1,21 +1,32 @@
 import { FormBuilder } from '@angular/forms';
+import { ChangeDetectorRef } from '@angular/core';
 import { Router } from '@angular/router';
 import { NzNotificationService } from 'ng-zorro-antd/notification';
-import { IConnectedSource, ISourcePursuitRoutingOutcome } from '../../models/connected-source.model.interface';
+import { Subject, of, throwError } from 'rxjs';
+import { IConnectedSource, ISourceConnectionHealth, ISourcePursuitRoutingOutcome } from '../../models/connected-source.model.interface';
 import { ConnectedSourcesComponent } from './connected-sources.component';
 
 describe('ConnectedSourcesComponent pursuit handoff', () => {
-  function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router> } {
+  function createComponent(): { component: ConnectedSourcesComponent; router: jasmine.SpyObj<Router>; sourceService: jasmine.SpyObj<any>; changeDetector: jasmine.SpyObj<ChangeDetectorRef> } {
     const router = jasmine.createSpyObj<Router>('Router', ['navigate']);
+    const notification = jasmine.createSpyObj<NzNotificationService>('NzNotificationService', ['info', 'success', 'error', 'warning']);
+    const sourceService = jasmine.createSpyObj('ConnectedSourceService', [
+      'createSource', 'sync', 'transcribe', 'extractDocuments', 'runDueScheduledSyncs',
+      'connectors', 'sources', 'extractions', 'auditLogs', 'syncJobs', 'connectionHealth', 'connectionHealths', 'startGoogleOAuth'
+    ]);
+    const changeDetector = jasmine.createSpyObj<ChangeDetectorRef>('ChangeDetectorRef', ['detectChanges']);
     return {
       component: new ConnectedSourcesComponent(
         new FormBuilder(),
-        {} as any,
-        {} as NzNotificationService,
+		sourceService,
+		notification,
         router,
         { mode: () => 'light' } as any,
+        changeDetector,
       ),
       router,
+	  sourceService,
+      changeDetector,
     };
   }
 
@@ -99,5 +110,381 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
 
     component.connectors[4].adapterStatus = 'operational';
     expect(component.googleConnectorMetric()).toBe('4 ready');
+  });
+
+  it('does not offer connector creation before required setup is complete', () => {
+		const { component } = createComponent();
+		expect(component.connectorCanConnect({ enabled: true, adapterStatus: 'configuration_required' } as any)).toBeFalse();
+		expect(component.connectorCanConnect({ enabled: true, adapterStatus: 'not_implemented' } as any)).toBeFalse();
+		expect(component.connectorCanConnect({ enabled: true, adapterStatus: 'operational' } as any)).toBeTrue();
+		expect(component.adapterStatusLabel('configuration_required')).toBe('setup required');
+	});
+
+  it('keeps Google connection controls disabled until that connector is configured', () => {
+    const { component } = createComponent();
+    component.connectors = [
+      { connectorKey: 'gmail', enabled: true, adapterStatus: 'configuration_required' } as any,
+      { connectorKey: 'google-drive', enabled: true, adapterStatus: 'operational' } as any,
+    ];
+
+    expect(component.googleConnectorCanConnect('gmail')).toBeFalse();
+    expect(component.googleConnectorCanConnect('google-drive')).toBeTrue();
+  });
+
+  it('uses a reliable same-tab handoff for Google authorization', () => {
+    const { component, sourceService, changeDetector } = createComponent();
+    sourceService.startGoogleOAuth.and.returnValue(of({ authorizeUrl: 'https://accounts.google.test/authorize' }));
+    const navigate = spyOn<any>(component, 'navigateToGoogleAuthorization');
+
+    component.authorizeGoogleSource({ id: 'source-id', connectorKey: 'gmail' } as IConnectedSource);
+
+    expect(sourceService.startGoogleOAuth).toHaveBeenCalledWith('source-id');
+    expect(navigate).toHaveBeenCalledWith('https://accounts.google.test/authorize');
+  });
+
+  it('records HAI normalized read permissions before Gmail OAuth starts', () => {
+    const { component, sourceService } = createComponent();
+    component.connectors = [{ connectorKey: 'gmail', category: 'email', enabled: true, adapterStatus: 'operational' } as any];
+    sourceService.createSource.and.returnValue(of({ id: 'gmail-source', connectorKey: 'gmail' }));
+    sourceService.startGoogleOAuth.and.returnValue(of({ authorizeUrl: 'https://accounts.google.test/authorize' }));
+    spyOn<any>(component, 'navigateToGoogleAuthorization');
+    spyOn(component, 'refresh');
+
+    component.connectGmail();
+
+    expect(sourceService.createSource).toHaveBeenCalledWith(jasmine.objectContaining({
+      connectorKey: 'gmail',
+      permissions: ['metadata:read', 'email:read'],
+    }));
+  });
+
+  it('uses remote read-only defaults for a Trello board source', () => {
+    const { component } = createComponent();
+
+    component.sourceForm.patchValue({ connectorKey: 'trello' });
+    component.connectorChanged('trello');
+
+    expect(component.sourceForm.value).toEqual(jasmine.objectContaining({
+      name: 'Trello board (read-only)',
+      syncFrequency: '1h',
+      syncTarget: '',
+      localOnly: false,
+    }));
+    expect(component.syncTargetPlaceholder()).toContain('Trello board URL or ID');
+  });
+
+  it('keeps unsupported source schedules out of the connect request', () => {
+    const { component } = createComponent();
+
+    component.sourceForm.patchValue({ syncFrequency: 'after-lunch' });
+    expect(component.sourceForm.invalid).toBeTrue();
+
+    component.sourceForm.patchValue({ syncFrequency: '30s' });
+    expect(component.sourceForm.invalid).toBeTrue();
+
+    component.sourceForm.patchValue({ syncFrequency: '1h30m' });
+    expect(component.sourceForm.valid).toBeTrue();
+  });
+
+  it('keeps manual-only connector schedules out of the connect request', () => {
+    const { component } = createComponent();
+    component.connectors = [{
+      connectorKey: 'docling-documents', enabled: true, adapterStatus: 'local_only',
+      supportedModes: 'manual_import', category: 'document',
+    } as any];
+    component.sourceForm.patchValue({
+      connectorKey: 'docling-documents', syncFrequency: 'hourly', syncTarget: 'legal/vivare', localOnly: true,
+    });
+
+    expect(component.selectedConnectorSupportsScheduledSync()).toBeFalse();
+    expect(component.sourceCanConnect()).toBeFalse();
+
+    component.sourceForm.patchValue({ syncFrequency: 'manual' });
+    expect(component.sourceCanConnect()).toBeTrue();
+  });
+
+  it('uses the same bounded schedule validation for Odoo source setup', () => {
+    const { component } = createComponent();
+
+    component.odooForm.patchValue({ syncFrequency: 'sometimes' });
+    expect(component.odooForm.invalid).toBeTrue();
+
+    component.odooForm.patchValue({ syncFrequency: 'daily' });
+    expect(component.odooForm.valid).toBeTrue();
+  });
+
+  it('requires an explicit folder instead of defaulting local intake to the root', () => {
+    const { component } = createComponent();
+    component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only' } as any];
+
+    component.connectorChanged('local-folder');
+
+    expect(component.sourceForm.value.syncTarget).toBe('');
+    expect(component.sourceCanConnect()).toBeFalse();
+  });
+
+  it('preserves in-progress source inputs when the selected connector emits a duplicate change event', () => {
+    const { component } = createComponent();
+    component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only' } as any];
+    component.sourceForm.patchValue({
+      name: 'E2E local source',
+      syncTarget: 'e2e',
+    });
+
+    component.connectorChanged('local-folder');
+
+    expect(component.sourceForm.value).toEqual(jasmine.objectContaining({
+      name: 'E2E local source',
+      syncTarget: 'e2e',
+    }));
+    expect(component.sourceCanConnect()).toBeTrue();
+  });
+
+  it('applies connector defaults through the reactive form control without ngModel events', () => {
+    const { component, sourceService } = createComponent();
+    sourceService.connectors.and.returnValue(of([]));
+    sourceService.sources.and.returnValue(of([]));
+    sourceService.extractions.and.returnValue(of({ items: [], totalCount: 0, limit: 100 }));
+    sourceService.auditLogs.and.returnValue(of([]));
+    sourceService.syncJobs.and.returnValue(of([]));
+    component.ngOnInit();
+
+    component.sourceForm.patchValue({ connectorKey: 'github' });
+
+    expect(component.sourceForm.value).toEqual(jasmine.objectContaining({
+      connectorKey: 'github',
+      name: 'GitHub repository',
+      syncTarget: 'Noodzakelijk-Online/018-HAI',
+      localOnly: false,
+    }));
+    component.ngOnDestroy();
+  });
+
+  it('does not prefill a manual import with synthetic source content', () => {
+    const { component } = createComponent();
+
+    expect(component.importForm.invalid).toBeTrue();
+    expect(component.importForm.value).toEqual(jasmine.objectContaining({
+      externalId: '',
+      title: '',
+      sourceUri: '',
+      content: '',
+    }));
+  });
+
+  it('keeps actionable server errors while removing control characters', () => {
+    const { component } = createComponent();
+
+    expect((component as any).operationErrorMessage(
+      { error: { error: 'Trello credentials are not configured\nSet the read-only token.' } },
+      'fallback'
+    )).toBe('Trello credentials are not configured Set the read-only token.');
+  });
+
+  it('explains a timed-out operation without exposing a raw transport error', () => {
+    const { component } = createComponent();
+
+    expect((component as any).operationErrorMessage({ name: 'TimeoutError' }, 'fallback'))
+      .toBe('No response within 15 seconds. Check system status and retry.');
+  });
+
+  it('requires a real selected WhatsApp export before it can be imported', () => {
+    const { component, sourceService } = createComponent();
+
+    component.importWhatsAppPaste();
+
+    expect(component.whatsappForm.invalid).toBeTrue();
+    expect(sourceService.sync).not.toHaveBeenCalled();
+  });
+
+	it('marks generic source creation as in progress until the request completes', () => {
+		const { component, sourceService } = createComponent();
+		component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only', category: 'local_folder' } as any];
+		component.sourceForm.patchValue({ connectorKey: 'local-folder', syncTarget: 'projects/018-hai' });
+		const pending = new Subject<any>();
+		sourceService.createSource.and.returnValue(pending.asObservable());
+		component.connectSource();
+		expect(sourceService.createSource).toHaveBeenCalled();
+		expect(component.connecting).toBeTrue();
+		pending.complete();
+		expect(component.connecting).toBeFalse();
+	});
+
+  it('keeps a server-confirmed source visible while preserving existing sources', () => {
+    const { component, sourceService, changeDetector } = createComponent();
+    const created = {
+      id: 'created-source',
+      connectorKey: 'local-folder',
+      name: 'New local source',
+    } as IConnectedSource;
+    component.sources = [{ id: 'existing-source', name: 'Existing source' } as IConnectedSource];
+    component.connectors = [{ connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only', category: 'local_folder' } as any];
+    component.sourceForm.patchValue({ connectorKey: 'local-folder', syncTarget: 'projects/018-hai' });
+    sourceService.createSource.and.returnValue(of(created));
+    sourceService.connectionHealths.and.returnValue(of([]));
+
+    component.connectSource();
+
+    expect(component.sources.map((source) => source.id)).toEqual(['created-source', 'existing-source']);
+    expect(component.selectedSourceId).toBe('created-source');
+    expect(changeDetector.detectChanges).toHaveBeenCalled();
+  });
+
+  it('does not start duplicate source work while another sync is running', () => {
+    const { component, sourceService } = createComponent();
+    const pending = new Subject<any>();
+    sourceService.sync.and.returnValue(pending.asObservable());
+    sourceService.transcribe.and.returnValue(pending.asObservable());
+    sourceService.extractDocuments.and.returnValue(pending.asObservable());
+    sourceService.runDueScheduledSyncs.and.returnValue(pending.asObservable());
+    component.importForm.patchValue({ sourceId: 'import-source' });
+    component.folderForm.patchValue({ sourceId: 'folder-source' });
+    component.syncing = true;
+
+    component.sync();
+    component.syncFolder();
+    component.runDueScheduledSyncs();
+    component.syncSource({ id: 'github-source', connectorKey: 'github' } as IConnectedSource);
+    component.syncSource({ id: 'audio-source', connectorKey: 'whisper-audio' } as IConnectedSource);
+    component.syncSource({ id: 'document-source', connectorKey: 'docling-documents' } as IConnectedSource);
+
+    expect(sourceService.sync).not.toHaveBeenCalled();
+    expect(sourceService.transcribe).not.toHaveBeenCalled();
+    expect(sourceService.extractDocuments).not.toHaveBeenCalled();
+    expect(sourceService.runDueScheduledSyncs).not.toHaveBeenCalled();
+  });
+
+  it('keeps failed auxiliary records visible instead of presenting them as empty', () => {
+    const { component, sourceService } = createComponent();
+    sourceService.connectors.and.returnValue(of([]));
+    sourceService.sources.and.returnValue(of([]));
+    sourceService.extractions.and.returnValue(throwError(() => new Error('extractions unavailable')));
+    sourceService.auditLogs.and.returnValue(throwError(() => new Error('audit unavailable')));
+    sourceService.syncJobs.and.returnValue(throwError(() => new Error('jobs unavailable')));
+
+    component.refresh();
+
+    expect(component.loadWarnings).toEqual([
+      'Extracted records',
+      'Audit history',
+      'Sync jobs',
+    ]);
+    expect(component.hasLoadWarnings()).toBeTrue();
+  });
+
+  it('loads the connector catalog before unrelated source records finish loading', () => {
+    const { component, sourceService } = createComponent();
+    const delayedSources = new Subject<IConnectedSource[]>();
+    sourceService.connectors.and.returnValue(of([
+      { connectorKey: 'local-folder', enabled: true, adapterStatus: 'local_only' },
+    ]));
+    sourceService.sources.and.returnValue(delayedSources.asObservable());
+    sourceService.extractions.and.returnValue(of({ items: [], totalCount: 0, limit: 100 }));
+    sourceService.auditLogs.and.returnValue(of([]));
+    sourceService.syncJobs.and.returnValue(of([]));
+
+    component.refresh();
+    component.sourceForm.patchValue({ name: 'Local evidence', syncTarget: 'evidence' });
+
+    expect(component.sourceCanConnect()).toBeTrue();
+    delayedSources.complete();
+  });
+
+  it('cancels an obsolete refresh so stale sources cannot replace the newest view', () => {
+    const { component, sourceService } = createComponent();
+    const firstSources = new Subject<IConnectedSource[]>();
+    const secondSources = new Subject<IConnectedSource[]>();
+    sourceService.connectors.and.returnValue(of([]));
+    sourceService.sources.and.returnValues(firstSources.asObservable(), secondSources.asObservable());
+    sourceService.extractions.and.returnValue(of({ items: [], totalCount: 0, limit: 100 }));
+    sourceService.auditLogs.and.returnValue(of([]));
+    sourceService.syncJobs.and.returnValue(of([]));
+    sourceService.connectionHealths.and.returnValue(of([]));
+
+    component.refresh();
+    component.refresh();
+
+    secondSources.next([{ id: 'new-source', name: 'Newest source' } as IConnectedSource]);
+    secondSources.complete();
+    firstSources.next([{ id: 'old-source', name: 'Stale source' } as IConnectedSource]);
+    firstSources.complete();
+
+    expect(component.sources.map((source) => source.id)).toEqual(['new-source']);
+  });
+
+  it('marks an unavailable source health batch instead of treating it as absent health', () => {
+    const { component, sourceService } = createComponent();
+    const source = { id: 'gmail-source', connectorKey: 'gmail', name: 'Personal Gmail' } as IConnectedSource;
+    sourceService.connectionHealths.and.returnValue(throwError(() => new Error('health unavailable')));
+
+    (component as any).loadConnectionHealth([source]);
+
+    expect(sourceService.connectionHealths).toHaveBeenCalledTimes(1);
+    expect(component.sourceHealthUnavailable(source)).toBeTrue();
+    expect(component.sourceHealth(source)).toBeUndefined();
+  });
+
+  it('cancels obsolete source health requests so stale health cannot replace a newer refresh', () => {
+    const { component, sourceService } = createComponent();
+    const firstHealth = new Subject<ISourceConnectionHealth[]>();
+    const secondHealth = new Subject<ISourceConnectionHealth[]>();
+    const source = { id: 'gmail-source', connectorKey: 'gmail', name: 'Personal Gmail' } as IConnectedSource;
+    sourceService.connectionHealths.and.returnValues(firstHealth.asObservable(), secondHealth.asObservable());
+
+    (component as any).loadConnectionHealth([source]);
+    (component as any).loadConnectionHealth([source]);
+
+    secondHealth.next([{ sourceId: source.id, status: 'ready' } as ISourceConnectionHealth]);
+    secondHealth.complete();
+    firstHealth.next([{ sourceId: source.id, status: 'blocked' } as ISourceConnectionHealth]);
+    firstHealth.complete();
+
+    expect(component.sourceHealth(source)?.status).toBe('ready');
+  });
+
+  it('builds constant-time source record and latest-job lookups', () => {
+    const { component } = createComponent();
+    const source = { id: 'gmail-source', connectorKey: 'gmail', name: 'Personal Gmail' } as IConnectedSource;
+    component.extractions = [
+      { id: 'record-1', sourceId: source.id } as any,
+      { id: 'record-2', sourceId: source.id } as any,
+    ];
+    component.syncJobs = [
+      { id: 'newest-job', sourceId: source.id, status: 'completed' } as any,
+      { id: 'older-job', sourceId: source.id, status: 'failed' } as any,
+    ];
+
+    (component as any).rebuildSourceIndexes();
+
+    expect(component.sourceExtractionCount(source)).toBe(2);
+    expect(component.latestJobFor(source)?.id).toBe('newest-job');
+  });
+
+  it('preserves extracted records when an action-triggered reload fails', () => {
+    const { component, sourceService } = createComponent();
+    component.extractions = [{ id: 'existing-record' } as any];
+    sourceService.extractions.and.returnValue(throwError(() => new Error('records unavailable')));
+
+    (component as any).loadExtractions();
+
+    expect(component.extractions.map((item) => item.id)).toEqual(['existing-record']);
+    expect(component.loadWarnings).toContain('Extracted records');
+  });
+
+  it('keeps an exact extraction count while loading only the recent page', () => {
+    const { component, sourceService } = createComponent();
+    sourceService.connectors.and.returnValue(of([]));
+    sourceService.sources.and.returnValue(of([]));
+    sourceService.extractions.and.returnValue(of({ items: [{ id: 'recent-record' }], totalCount: 245, limit: 100 }));
+    sourceService.auditLogs.and.returnValue(of([]));
+    sourceService.syncJobs.and.returnValue(of([]));
+    sourceService.connectionHealths.and.returnValue(of([]));
+
+    component.refresh();
+
+    expect(component.extractions.length).toBe(1);
+    expect(component.extractionTotalCount).toBe(245);
+    expect(component.extractionPageIsTruncated()).toBeTrue();
+    expect(sourceService.extractions).toHaveBeenCalledWith('018-HAI', false, 100);
   });
 });

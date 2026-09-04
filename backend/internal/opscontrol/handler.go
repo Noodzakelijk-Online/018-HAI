@@ -1,6 +1,7 @@
 package opscontrol
 
 import (
+	"automation-hub-backend/internal/apierror"
 	"errors"
 	"net/http"
 
@@ -57,6 +58,65 @@ type controlAuthorizationRequest struct {
 	ApprovalBindingDigest string `json:"approvalBindingDigest"`
 }
 
+// PrepareResume obtains an explicit, short-lived owner approval bound to the
+// exact persisted emergency-stop revision. The approval cannot itself change
+// state; Resume consumes it immediately.
+func (h *Handler) PrepareResume(c *gin.Context) {
+	actor, ok := h.actor(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated actor is required"})
+		return
+	}
+	authorization, err := h.svc.PrepareEmergencyStopResume(actor)
+	if err != nil {
+		c.JSON(controlErrorStatus(err), gin.H{"error": publicControlError(err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"idempotencyKey":        authorization.IdempotencyKey,
+		"taskId":                authorization.TaskID,
+		"approvalSourceId":      authorization.ApprovalSourceID,
+		"approvalBindingDigest": authorization.ApprovalBindingDigest,
+	})
+}
+
+type prepareModeRequest struct {
+	Mode string `json:"mode"`
+}
+
+// PrepareModeChange returns an approval only for an autonomy escalation.
+// Restrictive transitions deliberately remain usable without a fresh approval.
+func (h *Handler) PrepareModeChange(c *gin.Context) {
+	var request prepareModeRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode is required"})
+		return
+	}
+	actor, ok := h.actor(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "an authenticated actor is required"})
+		return
+	}
+	authorization, err := h.svc.PrepareAutonomyModeChange(actor, request.Mode)
+	if err != nil {
+		c.JSON(controlErrorStatus(err), gin.H{"error": publicControlError(err)})
+		return
+	}
+	if authorization.IdempotencyKey == "" {
+		c.JSON(http.StatusOK, gin.H{"authorizationRequired": false})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"authorizationRequired": true,
+		"authorization": gin.H{
+			"idempotencyKey":        authorization.IdempotencyKey,
+			"taskId":                authorization.TaskID,
+			"approvalSourceId":      authorization.ApprovalSourceID,
+			"approvalBindingDigest": authorization.ApprovalBindingDigest,
+		},
+	})
+}
+
 func (h *Handler) controlAuthorization(
 	c *gin.Context,
 	req controlAuthorizationRequest,
@@ -84,7 +144,8 @@ func (h *Handler) Resume(c *gin.Context) {
 	)
 	if err != nil {
 		c.JSON(controlErrorStatus(err), gin.H{
-			"error":         err.Error(),
+			"error":         publicControlError(err),
+			"reasonCode":    publicControlReasonCode(err),
 			"emergencyStop": h.svc.Control().EmergencyState(),
 		})
 		return
@@ -110,7 +171,10 @@ func (h *Handler) SetMode(c *gin.Context) {
 		h.controlAuthorization(c, req.controlAuthorizationRequest),
 	)
 	if err != nil {
-		c.JSON(controlErrorStatus(err), gin.H{"error": err.Error()})
+		c.JSON(controlErrorStatus(err), gin.H{
+			"error":      publicControlError(err),
+			"reasonCode": publicControlReasonCode(err),
+		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"mode": mode})
@@ -149,7 +213,7 @@ func (h *Handler) Recovery(c *gin.Context) {
 func (h *Handler) VerifyEmergencyStop(c *gin.Context) {
 	v, err := h.svc.VerifyEmergencyStop(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": publicControlError(err)})
 		return
 	}
 	code := http.StatusOK
@@ -157,4 +221,48 @@ func (h *Handler) VerifyEmergencyStop(c *gin.Context) {
 		code = http.StatusInternalServerError // a non-halting emergency stop is a hard failure
 	}
 	c.JSON(code, v)
+}
+
+func publicControlError(err error) string {
+	switch {
+	case errors.Is(err, ErrUnauthenticated):
+		return "an authenticated actor is required"
+	case errors.Is(err, ErrAuthorizationDenied):
+		return "safety-control authorization was denied"
+	case errors.Is(err, ErrAuthorizationMismatch):
+		return "safety-control authorization does not match this change"
+	case errors.Is(err, ErrAuthorizationUnavailable):
+		return "safety-control authorization is unavailable"
+	case errors.Is(err, ErrControlPersistence):
+		return "safety-control state could not be persisted"
+	case errors.Is(err, ErrEmergencyStopStateChanged), errors.Is(err, ErrAutonomyModeStateChanged):
+		return "safety-control state changed; refresh and retry"
+	default:
+		return apierror.PublicMessage(err, "safety-control request could not be completed")
+	}
+}
+
+// publicControlReasonCode gives authenticated clients a stable recovery hint
+// without disclosing the wrapped authorization error or approval material.
+func publicControlReasonCode(err error) string {
+	var failure *controlAuthorizationFailure
+	if errors.As(err, &failure) && failure.code != "" {
+		return failure.code
+	}
+	switch {
+	case errors.Is(err, ErrUnauthenticated):
+		return "control.authorization.actor_missing"
+	case errors.Is(err, ErrAuthorizationMismatch):
+		return "control.authorization.effect_mismatch"
+	case errors.Is(err, ErrAuthorizationUnavailable):
+		return "control.authorization.unavailable"
+	case errors.Is(err, ErrAuthorizationDenied):
+		return "control.authorization.denied"
+	case errors.Is(err, ErrControlPersistence):
+		return "control.persistence_failed"
+	case errors.Is(err, ErrEmergencyStopStateChanged), errors.Is(err, ErrAutonomyModeStateChanged):
+		return "control.state_changed"
+	default:
+		return "control.request_failed"
+	}
 }

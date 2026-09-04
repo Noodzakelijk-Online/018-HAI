@@ -2,6 +2,7 @@ package agentruntime
 
 import (
 	"archive/zip"
+	"automation-hub-backend/internal/apierror"
 	"automation-hub-backend/internal/identity"
 	"automation-hub-backend/internal/safety"
 	"context"
@@ -11,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path"
@@ -30,11 +32,16 @@ const (
 	maxOpenClawZipEntries           = 100_000
 	maxOpenClawZipUncompressedBytes = uint64(1 << 30)
 	maxOpenClawZipCompressionRatio  = uint64(200)
+	maxOpenClawEcosystemUploadBytes = int64(750 * 1024 * 1024)
+	// Multipart framing and the small approval fields need limited overhead in
+	// addition to the archive itself.
+	maxOpenClawEcosystemRequestBytes = maxOpenClawEcosystemUploadBytes + (1 << 20)
 )
 
 type Handler struct {
 	registry   *Registry
 	authorizer EcosystemMutationAuthorizer
+	preparer   EcosystemMutationApprovalPreparer
 	now        func() time.Time
 	mutationMu sync.Mutex
 }
@@ -47,15 +54,37 @@ func NewHandlerWithEcosystemMutationAuthorizer(
 	registry *Registry,
 	authorizer EcosystemMutationAuthorizer,
 ) *Handler {
+	return NewHandlerWithEcosystemMutationAuthorization(
+		registry,
+		authorizer,
+		nil,
+	)
+}
+
+// NewHandlerWithEcosystemMutationAuthorization wires both halves of a
+// governed mutation. The preparer creates an exact, short-lived owner
+// approval; the authorizer consumes it immediately before the effect.
+func NewHandlerWithEcosystemMutationAuthorization(
+	registry *Registry,
+	authorizer EcosystemMutationAuthorizer,
+	preparer EcosystemMutationApprovalPreparer,
+) *Handler {
 	return &Handler{
 		registry:   registry,
 		authorizer: authorizer,
+		preparer:   preparer,
 		now:        time.Now,
 	}
 }
 
 func (h *Handler) Registry(c *gin.Context) {
 	c.JSON(http.StatusOK, h.registry.List())
+}
+
+func (h *Handler) Overview(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
+	defer cancel()
+	c.JSON(http.StatusOK, h.registry.Overview(ctx))
 }
 
 func (h *Handler) Health(c *gin.Context) {
@@ -70,7 +99,7 @@ func (h *Handler) Skills(c *gin.Context) {
 	defer cancel()
 	skills, err := h.registry.Skills(ctx, runtimeID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent runtime is not registered"})
 		return
 	}
 	c.JSON(http.StatusOK, skills)
@@ -131,7 +160,7 @@ func (h *Handler) SetOpenClawEcosystem(c *gin.Context) {
 	}
 	prepared, err := openClaw.prepareEcosystemPath(path, false)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "OpenClaw ecosystem path is unavailable or does not meet configured safety requirements"})
 		return
 	}
 	authorization := mergeEcosystemAuthorization(c, request.EcosystemMutationAuthorization)
@@ -154,6 +183,44 @@ func (h *Handler) SetOpenClawEcosystem(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, openClaw.Info())
+}
+
+// PrepareSetOpenClawEcosystem derives the exact validated archive/directory
+// change and returns the short-lived authorization required to apply it. It
+// never changes the configured ecosystem path.
+func (h *Handler) PrepareSetOpenClawEcosystem(c *gin.Context) {
+	owner, ok := runtimeOwner(c)
+	if !ok {
+		return
+	}
+	var request openClawEcosystemRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body for openclaw ecosystem path"})
+		return
+	}
+	path := strings.TrimSpace(request.EcosystemPath)
+	if path == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ecosystemPath is required"})
+		return
+	}
+	openClaw, ok := h.registry.OpenClawAdapter()
+	if !ok || openClaw == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "openclaw runtime is not registered"})
+		return
+	}
+	prepared, err := openClaw.prepareEcosystemPath(path, false)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "OpenClaw ecosystem path is unavailable or does not meet configured safety requirements"})
+		return
+	}
+	h.prepareEcosystemMutationApproval(c, owner, openClawEcosystemEffect{
+		Action:            openClawSetPathAction,
+		CurrentPath:       prepared.previousPath,
+		CurrentSignature:  prepared.previousSignature,
+		TargetPath:        prepared.targetPath,
+		TargetSignature:   prepared.targetSignature,
+		DeleteManagedPath: prepared.deleteManagedPath,
+	})
 }
 
 func (h *Handler) RefreshOpenClawEcosystem(c *gin.Context) {
@@ -190,60 +257,44 @@ func (h *Handler) RefreshOpenClawEcosystem(c *gin.Context) {
 	c.JSON(http.StatusOK, openClaw.Info())
 }
 
+// PrepareRefreshOpenClawEcosystem returns approval references for refreshing
+// the current exact ecosystem revision without making any change itself.
+func (h *Handler) PrepareRefreshOpenClawEcosystem(c *gin.Context) {
+	owner, ok := runtimeOwner(c)
+	if !ok {
+		return
+	}
+	openClaw, ok := h.registry.OpenClawAdapter()
+	if !ok || openClaw == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "openclaw runtime is not registered"})
+		return
+	}
+	currentPath, currentSignature := openClaw.ecosystemState()
+	h.prepareEcosystemMutationApproval(c, owner, openClawEcosystemEffect{
+		Action:           openClawRefreshAction,
+		CurrentPath:      currentPath,
+		CurrentSignature: currentSignature,
+		TargetPath:       currentPath,
+		TargetSignature:  currentSignature,
+	})
+}
+
 func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 	owner, ok := runtimeOwner(c)
 	if !ok {
 		return
 	}
-	file, err := c.FormFile("ecosystem")
+	inspection, err := inspectOpenClawEcosystemUpload(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing ecosystem zip upload field 'ecosystem'"})
+		writeOpenClawEcosystemUploadError(c, err)
 		return
 	}
-
-	filename := strings.TrimSpace(file.Filename)
-	if filename == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing uploaded ecosystem filename"})
-		return
-	}
-	if !strings.EqualFold(filepath.Ext(filename), ".zip") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "openclaw ecosystem upload must be a zip file"})
-		return
-	}
-	if file.Size <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "openclaw ecosystem upload is empty"})
-		return
-	}
-	if file.Size > 750*1024*1024 {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "openclaw ecosystem zip is too large"})
-		return
-	}
-
-	source, err := file.Open()
+	source, err := inspection.file.Open()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to open uploaded ecosystem file"})
 		return
 	}
 	defer source.Close()
-	if err := validateOpenClawZipReader(source, file.Size); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to inspect uploaded ecosystem file"})
-		return
-	}
-	contentHash := sha256.New()
-	inspected, err := io.Copy(contentHash, io.LimitReader(source, 750*1024*1024+1))
-	if err != nil || inspected != file.Size || inspected > 750*1024*1024 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to inspect uploaded ecosystem file"})
-		return
-	}
-	contentDigest := hex.EncodeToString(contentHash.Sum(nil))
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to inspect uploaded ecosystem file"})
-		return
-	}
 
 	h.mutationMu.Lock()
 	defer h.mutationMu.Unlock()
@@ -258,7 +309,7 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 		"openclaw-ecosystem-"+uuid.NewString()+".zip",
 	)
 	deleteManagedPath := ""
-	if isOpenClawUploadArtifactPath(currentPath) && !sameFilePath(currentPath, dest) {
+	if isOpenClawUploadArtifactPath(currentPath) {
 		deleteManagedPath = currentPath
 	}
 	authorization := mergeEcosystemAuthorization(c, EcosystemMutationAuthorization{
@@ -271,9 +322,9 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 		Action:                openClawUploadAction,
 		CurrentPath:           currentPath,
 		CurrentSignature:      currentSignature,
-		TargetPath:            dest,
-		UploadedContentDigest: contentDigest,
-		UploadedSize:          inspected,
+		TargetPath:            openClawManagedArchiveTarget,
+		UploadedContentDigest: inspection.contentDigest,
+		UploadedSize:          inspection.size,
 		DeleteManagedPath:     deleteManagedPath,
 	}
 	if !h.authorizeEcosystemMutation(c, owner, authorization, effect) {
@@ -291,8 +342,8 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 	copiedHash := sha256.New()
 	copied, copyErr := io.Copy(io.MultiWriter(f, copiedHash), source)
 	closeErr := f.Close()
-	if copyErr != nil || closeErr != nil || copied != inspected ||
-		hex.EncodeToString(copiedHash.Sum(nil)) != contentDigest {
+	if copyErr != nil || closeErr != nil || copied != inspection.size ||
+		hex.EncodeToString(copiedHash.Sum(nil)) != inspection.contentDigest {
 		_ = os.Remove(dest)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "uploaded ecosystem changed while it was being persisted"})
 		return
@@ -304,7 +355,7 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 	prepared, err := openClaw.prepareEcosystemPath(dest, true)
 	if err != nil {
 		_ = os.Remove(dest)
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "uploaded OpenClaw ecosystem is invalid or does not meet safety requirements"})
 		return
 	}
 	if prepared.previousPath != currentPath ||
@@ -320,6 +371,152 @@ func (h *Handler) UploadOpenClawEcosystem(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, openClaw.Info())
+}
+
+// PrepareUploadOpenClawEcosystem validates and hashes the submitted archive
+// without persisting it, then returns an approval bound to that exact content
+// and the current configured ecosystem revision. The browser immediately
+// submits the same File again to the mutation endpoint after preparation.
+func (h *Handler) PrepareUploadOpenClawEcosystem(c *gin.Context) {
+	owner, ok := runtimeOwner(c)
+	if !ok {
+		return
+	}
+	inspection, err := inspectOpenClawEcosystemUpload(c)
+	if err != nil {
+		writeOpenClawEcosystemUploadError(c, err)
+		return
+	}
+	openClaw, ok := h.registry.OpenClawAdapter()
+	if !ok || openClaw == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "openclaw runtime is not registered"})
+		return
+	}
+	currentPath, currentSignature := openClaw.ecosystemState()
+	deleteManagedPath := ""
+	if isOpenClawUploadArtifactPath(currentPath) {
+		deleteManagedPath = currentPath
+	}
+	h.prepareEcosystemMutationApproval(c, owner, openClawEcosystemEffect{
+		Action:                openClawUploadAction,
+		CurrentPath:           currentPath,
+		CurrentSignature:      currentSignature,
+		TargetPath:            openClawManagedArchiveTarget,
+		UploadedContentDigest: inspection.contentDigest,
+		UploadedSize:          inspection.size,
+		DeleteManagedPath:     deleteManagedPath,
+	})
+}
+
+type openClawEcosystemUploadInspection struct {
+	file          *multipart.FileHeader
+	contentDigest string
+	size          int64
+}
+
+type openClawEcosystemUploadError struct {
+	status  int
+	message string
+}
+
+func (e *openClawEcosystemUploadError) Error() string { return e.message }
+
+func inspectOpenClawEcosystemUpload(c *gin.Context) (openClawEcosystemUploadInspection, error) {
+	if c.Request.ContentLength > maxOpenClawEcosystemRequestBytes {
+		return openClawEcosystemUploadInspection{}, &openClawEcosystemUploadError{http.StatusRequestEntityTooLarge, "openclaw ecosystem upload is too large"}
+	}
+	// Content-Length is optional for chunked requests, so enforce the same
+	// bound while Gin parses the multipart stream.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxOpenClawEcosystemRequestBytes)
+	file, err := c.FormFile("ecosystem")
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return openClawEcosystemUploadInspection{}, &openClawEcosystemUploadError{http.StatusRequestEntityTooLarge, "openclaw ecosystem upload is too large"}
+		}
+		return openClawEcosystemUploadInspection{}, &openClawEcosystemUploadError{http.StatusBadRequest, "missing ecosystem zip upload field 'ecosystem'"}
+	}
+	filename := strings.TrimSpace(file.Filename)
+	if filename == "" {
+		return openClawEcosystemUploadInspection{}, &openClawEcosystemUploadError{http.StatusBadRequest, "missing uploaded ecosystem filename"}
+	}
+	if !strings.EqualFold(filepath.Ext(filename), ".zip") {
+		return openClawEcosystemUploadInspection{}, &openClawEcosystemUploadError{http.StatusBadRequest, "openclaw ecosystem upload must be a zip file"}
+	}
+	if file.Size <= 0 {
+		return openClawEcosystemUploadInspection{}, &openClawEcosystemUploadError{http.StatusBadRequest, "openclaw ecosystem upload is empty"}
+	}
+	if file.Size > maxOpenClawEcosystemUploadBytes {
+		return openClawEcosystemUploadInspection{}, &openClawEcosystemUploadError{http.StatusRequestEntityTooLarge, "openclaw ecosystem zip is too large"}
+	}
+	source, err := file.Open()
+	if err != nil {
+		return openClawEcosystemUploadInspection{}, &openClawEcosystemUploadError{http.StatusBadRequest, "failed to open uploaded ecosystem file"}
+	}
+	defer source.Close()
+	if err := validateOpenClawZipReader(source, file.Size); err != nil {
+		return openClawEcosystemUploadInspection{}, &openClawEcosystemUploadError{http.StatusBadRequest, "openclaw ecosystem zip is invalid or does not meet safety requirements"}
+	}
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return openClawEcosystemUploadInspection{}, &openClawEcosystemUploadError{http.StatusBadRequest, "failed to inspect uploaded ecosystem file"}
+	}
+	contentHash := sha256.New()
+	inspected, err := io.Copy(contentHash, io.LimitReader(source, maxOpenClawEcosystemUploadBytes+1))
+	if err != nil || inspected != file.Size || inspected > maxOpenClawEcosystemUploadBytes {
+		return openClawEcosystemUploadInspection{}, &openClawEcosystemUploadError{http.StatusBadRequest, "failed to inspect uploaded ecosystem file"}
+	}
+	return openClawEcosystemUploadInspection{
+		file:          file,
+		contentDigest: hex.EncodeToString(contentHash.Sum(nil)),
+		size:          inspected,
+	}, nil
+}
+
+func writeOpenClawEcosystemUploadError(c *gin.Context, err error) {
+	var uploadErr *openClawEcosystemUploadError
+	if errors.As(err, &uploadErr) {
+		c.JSON(uploadErr.status, gin.H{"error": uploadErr.message})
+		return
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"error": "failed to inspect uploaded ecosystem file"})
+}
+
+func (h *Handler) prepareEcosystemMutationApproval(
+	c *gin.Context,
+	owner string,
+	effect openClawEcosystemEffect,
+) {
+	if h.preparer == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "OpenClaw ecosystem approval preparation is unavailable",
+		})
+		return
+	}
+	digest, err := ecosystemMutationEffectDigest(owner, owner, effect)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "OpenClaw ecosystem mutation could not be prepared safely",
+		})
+		return
+	}
+	// The task ID is assigned on the server. It is an execution-ledger
+	// correlation key, not a caller-controlled source of authority.
+	taskID := "agent-runtime-openclaw-" + strings.ReplaceAll(effect.Action, ".", "-") + "-" + uuid.NewString()
+	authorization, err := h.preparer.PrepareEcosystemMutationApproval(owner, taskID, digest)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "OpenClaw ecosystem approval preparation is unavailable",
+		})
+		return
+	}
+	authorization, err = normalizeEcosystemAuthorization(authorization)
+	if err != nil || authorization.TaskID != taskID || authorization.ApprovalBindingDigest != digest {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "OpenClaw ecosystem approval preparation is unavailable",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, authorization)
 }
 
 func mergeEcosystemAuthorization(
@@ -389,11 +586,11 @@ func recheckEcosystemEmergencyStop(c *gin.Context) bool {
 }
 
 func writeEcosystemMutationError(c *gin.Context, err error) {
-	status := http.StatusBadRequest
 	if errors.Is(err, ErrEcosystemMutationConflict) {
-		status = http.StatusConflict
+		c.JSON(http.StatusConflict, gin.H{"error": ErrEcosystemMutationConflict.Error()})
+		return
 	}
-	c.JSON(status, gin.H{"error": err.Error()})
+	c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "runtime ecosystem mutation could not be completed")})
 }
 
 func runtimeOwner(c *gin.Context) (string, bool) {

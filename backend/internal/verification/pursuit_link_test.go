@@ -1,6 +1,7 @@
 package verification
 
 import (
+	"fmt"
 	"testing"
 
 	"automation-hub-backend/internal/models"
@@ -97,6 +98,24 @@ func TestVerificationRunsAndDetailsAreScopedToOwner(t *testing.T) {
 	}
 }
 
+func TestVerificationDetailsUseDirectOwnerScopedRepositoryLookupWhenAvailable(t *testing.T) {
+	repo := &ownerScopedVerificationRepository{fakeVerificationRepository: &fakeVerificationRepository{}}
+	service := NewService(repo, nil, nil)
+	result, err := service.Answer(AnswerRequest{
+		OwnerIdentity: "alice", Question: "What does the record establish?",
+		ExternalEvidence: []EvidenceInput{{SourceType: "document", Snippet: "The record supports the request."}},
+	})
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if _, err := service.RunDetailsForOwner("alice", result.Run.ID); err != nil {
+		t.Fatalf("RunDetailsForOwner: %v", err)
+	}
+	if repo.directLookups != 1 || repo.ownerListCalls != 0 {
+		t.Fatalf("detail lookup used history scan: direct=%d list=%d", repo.directLookups, repo.ownerListCalls)
+	}
+}
+
 type capturingPursuitLinker struct {
 	ownerIdentity  string
 	pursuitID      uuid.UUID
@@ -114,6 +133,32 @@ type fakeVerificationRepository struct {
 	runs     []models.VerificationRun
 	claims   []models.VerificationClaim
 	evidence []models.VerificationEvidence
+}
+
+type ownerScopedVerificationRepository struct {
+	*fakeVerificationRepository
+	directLookups  int
+	ownerListCalls int
+}
+
+func (r *ownerScopedVerificationRepository) FindRunsForOwner(ownerIdentity string) ([]models.VerificationRun, error) {
+	r.ownerListCalls++
+	return r.fakeVerificationRepository.FindRunsForOwner(ownerIdentity)
+}
+
+func (r *ownerScopedVerificationRepository) FindRunForOwner(ownerIdentity string, id uuid.UUID) (*models.VerificationRun, error) {
+	r.directLookups++
+	runs, err := r.fakeVerificationRepository.FindRunsForOwner(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	for index := range runs {
+		if runs[index].ID == id {
+			copy := runs[index]
+			return &copy, nil
+		}
+	}
+	return nil, fmt.Errorf("verification run not found")
 }
 
 func (r *fakeVerificationRepository) CreateRun(run *models.VerificationRun) (*models.VerificationRun, error) {

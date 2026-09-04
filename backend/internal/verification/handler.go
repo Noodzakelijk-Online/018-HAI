@@ -1,6 +1,7 @@
 package verification
 
 import (
+	"automation-hub-backend/internal/apierror"
 	"automation-hub-backend/internal/identity"
 	"net/http"
 	"strings"
@@ -24,7 +25,7 @@ func DefaultHandler() *Handler {
 func (h *Handler) Answer(c *gin.Context) {
 	var request AnswerRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid verification request"})
 		return
 	}
 	if request.Question == "" {
@@ -45,7 +46,7 @@ func (h *Handler) Answer(c *gin.Context) {
 	request.OwnerIdentity = verifiedOwner(c)
 	result, err := h.service.Answer(request)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": apierror.PublicMessage(err, "verification could not be completed")})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -54,7 +55,7 @@ func (h *Handler) Answer(c *gin.Context) {
 func (h *Handler) Runs(c *gin.Context) {
 	runs, err := h.service.RunsForOwner(verifiedOwner(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "verification runs are unavailable"})
 		return
 	}
 	c.JSON(http.StatusOK, runs)

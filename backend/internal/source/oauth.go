@@ -142,6 +142,9 @@ func (s *service) StartGoogleOAuth(sourceID uuid.UUID) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := googleOAuthSourceAllowed(source); err != nil {
+		return "", err
+	}
 	cfg, err := googleOAuthConfigForConnector(source.ConnectorKey)
 	if err != nil {
 		return "", err
@@ -170,6 +173,12 @@ func (s *service) CompleteGoogleOAuth(ctx context.Context, code, state string) (
 	if err != nil {
 		return uuid.Nil, err
 	}
+	// Revocation is destructive and deletes the stored refresh token. A user
+	// can revoke a source while their browser is at Google consent, so verify
+	// the source state again before exchanging and persisting a new grant.
+	if err := googleOAuthSourceAllowed(source); err != nil {
+		return uuid.Nil, err
+	}
 	cfg, err := googleOAuthConfigForConnector(source.ConnectorKey)
 	if err != nil {
 		return uuid.Nil, err
@@ -183,6 +192,16 @@ func (s *service) CompleteGoogleOAuth(ctx context.Context, code, state string) (
 	}
 	s.audit(sourceID, "source.oauth_connected", "google account connected with least-privilege "+source.ConnectorKey+" read scope")
 	return sourceID, nil
+}
+
+func googleOAuthSourceAllowed(source *models.ConnectedSource) error {
+	if source == nil {
+		return fmt.Errorf("connected source is required")
+	}
+	if source.RevokedAt != nil || strings.EqualFold(strings.TrimSpace(source.Status), "revoked") {
+		return ErrSourceRevoked
+	}
+	return nil
 }
 
 func (s *service) storeToken(sourceID uuid.UUID, token *googleoauth.Token) error {

@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"mime/multipart"
@@ -81,7 +83,7 @@ func TestOpenClawEcosystemHandlers(t *testing.T) {
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPatch, "/agent-runtimes/openclaw/ecosystem", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
-	addEcosystemAuthorizationHeaders(req)
+	addExactEcosystemAuthorizationHeaders(t, req, exactSetPathEffect(t, handler, updatedPath))
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("PATCH /openclaw/ecosystem status = %d, body=%s", w.Code, w.Body.String())
@@ -119,7 +121,7 @@ func TestOpenClawEcosystemHandlers(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/agent-runtimes/openclaw/ecosystem/refresh", nil)
-	addEcosystemAuthorizationHeaders(req)
+	addExactEcosystemAuthorizationHeaders(t, req, exactRefreshEffect(t, handler))
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("POST /openclaw/ecosystem/refresh status = %d", w.Code)
@@ -182,7 +184,7 @@ func TestOpenClawEcosystemHandlers(t *testing.T) {
 	}
 	req = httptest.NewRequest(http.MethodPost, "/agent-runtimes/openclaw/ecosystem/upload", zipBody)
 	req.Header.Set("Content-Type", zipWriter.FormDataContentType())
-	addEcosystemAuthorizationHeaders(req)
+	addExactEcosystemAuthorizationHeaders(t, req, exactUploadEffect(t, handler, zipPayload))
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -193,6 +195,116 @@ func TestOpenClawEcosystemHandlers(t *testing.T) {
 	}
 	if info.EcosystemPath == "" {
 		t.Fatalf("expected upload to update ecosystem path")
+	}
+}
+
+func TestWriteEcosystemMutationErrorDoesNotExposeUnexpectedFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	writeEcosystemMutationError(context, errors.New(`write failed: password=runtime-secret C:\\private`))
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	for _, forbidden := range []string{"password", "runtime-secret", "C:\\\\private"} {
+		if strings.Contains(strings.ToLower(recorder.Body.String()), strings.ToLower(forbidden)) {
+			t.Fatalf("response leaked %q: %s", forbidden, recorder.Body.String())
+		}
+	}
+	if !strings.Contains(recorder.Body.String(), "runtime ecosystem mutation could not be completed") {
+		t.Fatalf("unexpected response: %s", recorder.Body.String())
+	}
+}
+
+func TestOpenClawEcosystemPathErrorDoesNotExposeLocalPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root := t.TempDir()
+	handler := NewHandlerWithEcosystemMutationAuthorizer(
+		NewRegistry(testOpenClawAdapter(root, "")),
+		allowingEcosystemMutationAuthorizer(nil),
+	)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.PATCH("/agent-runtimes/openclaw/ecosystem", handler.SetOpenClawEcosystem)
+
+	privatePath := filepath.Join(root, "private", "missing-openclaw.zip")
+	body, err := json.Marshal(map[string]string{"ecosystemPath": privatePath})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPatch, "/agent-runtimes/openclaw/ecosystem", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	addEcosystemAuthorizationHeaders(request)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	for _, forbidden := range []string{root, "missing-openclaw.zip"} {
+		if strings.Contains(response.Body.String(), forbidden) {
+			t.Fatalf("response leaked %q: %s", forbidden, response.Body.String())
+		}
+	}
+	if !strings.Contains(response.Body.String(), "does not meet configured safety requirements") {
+		t.Fatalf("unexpected response: %s", response.Body.String())
+	}
+}
+
+func TestOverviewReturnsRuntimeMetadataAndHealthInOneResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	root := t.TempDir()
+	registry := NewRegistry(&deepSeekHarnessAdapter{
+		enabled:       false,
+		executable:    "dsh",
+		workspace:     root,
+		workspaceRoot: root,
+	})
+	handler := NewHandler(registry)
+	router := gin.New()
+	router.GET("/agent-runtimes/overview", handler.Overview)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/agent-runtimes/overview", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET /agent-runtimes/overview status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var overview RuntimeOverview
+	if err := json.Unmarshal(response.Body.Bytes(), &overview); err != nil {
+		t.Fatalf("decode runtime overview: %v", err)
+	}
+	if len(overview.Runtimes) != 1 || overview.Runtimes[0].ID != "deepseek-harness" {
+		t.Fatalf("unexpected runtime overview metadata: %#v", overview.Runtimes)
+	}
+	if len(overview.Health) != 1 || overview.Health[0].RuntimeID != "deepseek-harness" {
+		t.Fatalf("unexpected runtime overview health: %#v", overview.Health)
+	}
+}
+
+func TestOpenClawUploadRejectsOversizeRequestBeforeMultipartParsing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(NewRegistry(testOpenClawAdapter(t.TempDir(), "")))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(identity.ContextSubjectKey, "alice")
+		c.Next()
+	})
+	router.POST("/agent-runtimes/openclaw/ecosystem/upload", handler.UploadOpenClawEcosystem)
+
+	req := httptest.NewRequest(http.MethodPost, "/agent-runtimes/openclaw/ecosystem/upload", strings.NewReader("not-read"))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=test")
+	req.ContentLength = maxOpenClawEcosystemRequestBytes + 1
+	addExactEcosystemAuthorizationHeaders(t, req, exactRefreshEffect(t, handler))
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, req)
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize upload status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 
@@ -283,7 +395,7 @@ func TestOpenClawMutationFailsClosedWithoutAuthorizer(t *testing.T) {
 		"/agent-runtimes/openclaw/ecosystem/refresh",
 		nil,
 	)
-	addEcosystemAuthorizationHeaders(req)
+	addExactEcosystemAuthorizationHeaders(t, req, exactRefreshEffect(t, handler))
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 
@@ -387,7 +499,7 @@ func TestOpenClawExactAuthorizedMutationSucceeds(t *testing.T) {
 		bytes.NewReader(body),
 	)
 	req.Header.Set("Content-Type", "application/json")
-	addEcosystemAuthorizationHeaders(req)
+	addExactEcosystemAuthorizationHeaders(t, req, exactSetPathEffect(t, handler, target))
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 
@@ -411,6 +523,86 @@ func TestOpenClawExactAuthorizedMutationSucceeds(t *testing.T) {
 	}
 	if !sameFilePath(info.EcosystemPath, target) {
 		t.Fatalf("ecosystem path=%q want=%q", info.EcosystemPath, target)
+	}
+}
+
+func TestOpenClawPreparationBindsOneValidatedPathWithoutMutating(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	root := t.TempDir()
+	initial := filepath.Join(root, "openclaw-main.zip")
+	target := filepath.Join(root, "openclaw-next.zip")
+	other := filepath.Join(root, "openclaw-other.zip")
+	for _, archive := range []string{initial, target, other} {
+		if err := writeMinimalOpenClawZip(archive); err != nil {
+			t.Fatalf("write OpenClaw archive: %v", err)
+		}
+	}
+	handler := NewHandlerWithEcosystemMutationAuthorization(
+		NewRegistry(testOpenClawAdapter(root, initial)),
+		allowingEcosystemMutationAuthorizer(nil),
+		EcosystemMutationApprovalPreparerFunc(func(owner, taskID, digest string) (EcosystemMutationAuthorization, error) {
+			return EcosystemMutationAuthorization{
+				IdempotencyKey:        "prepared-openclaw-mutation",
+				TaskID:                taskID,
+				ApprovalSourceID:      "opscontrol-owner:test",
+				ApprovalBindingDigest: digest,
+			}, nil
+		}),
+	)
+	router := mutationTestRouter(handler)
+	body, _ := json.Marshal(map[string]string{"ecosystemPath": target})
+	preparedResponse := httptest.NewRecorder()
+	preparedRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/agent-runtimes/openclaw/ecosystem/approval/set-path",
+		bytes.NewReader(body),
+	)
+	preparedRequest.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(preparedResponse, preparedRequest)
+	if preparedResponse.Code != http.StatusOK {
+		t.Fatalf("prepare set-path status=%d body=%s", preparedResponse.Code, preparedResponse.Body.String())
+	}
+	var approval EcosystemMutationAuthorization
+	if err := json.Unmarshal(preparedResponse.Body.Bytes(), &approval); err != nil {
+		t.Fatalf("decode prepared authorization: %v", err)
+	}
+	if approval.TaskID == "" || approval.ApprovalSourceID == "" || !isLowerSHA256(approval.ApprovalBindingDigest) {
+		t.Fatalf("prepared authorization is incomplete: %#v", approval)
+	}
+	current, _ := testOpenClawAdapterState(handler)
+	if !sameFilePath(current, initial) {
+		t.Fatalf("prepare changed ecosystem path to %q", current)
+	}
+
+	applyResponse := httptest.NewRecorder()
+	applyRequest := httptest.NewRequest(
+		http.MethodPatch,
+		"/agent-runtimes/openclaw/ecosystem",
+		bytes.NewReader(body),
+	)
+	applyRequest.Header.Set("Content-Type", "application/json")
+	addPreparedEcosystemAuthorizationHeaders(applyRequest, approval)
+	router.ServeHTTP(applyResponse, applyRequest)
+	if applyResponse.Code != http.StatusOK {
+		t.Fatalf("apply prepared path status=%d body=%s", applyResponse.Code, applyResponse.Body.String())
+	}
+
+	otherBody, _ := json.Marshal(map[string]string{"ecosystemPath": other})
+	replayResponse := httptest.NewRecorder()
+	replayRequest := httptest.NewRequest(
+		http.MethodPatch,
+		"/agent-runtimes/openclaw/ecosystem",
+		bytes.NewReader(otherBody),
+	)
+	replayRequest.Header.Set("Content-Type", "application/json")
+	addPreparedEcosystemAuthorizationHeaders(replayRequest, approval)
+	router.ServeHTTP(replayResponse, replayRequest)
+	if replayResponse.Code != http.StatusForbidden {
+		t.Fatalf("replayed approval status=%d body=%s", replayResponse.Code, replayResponse.Body.String())
+	}
+	current, _ = testOpenClawAdapterState(handler)
+	if !sameFilePath(current, target) {
+		t.Fatalf("replayed authorization changed ecosystem path to %q", current)
 	}
 }
 
@@ -451,7 +643,7 @@ func TestOpenClawMismatchedAuthorizationReceiptIsDenied(t *testing.T) {
 		bytes.NewReader(body),
 	)
 	req.Header.Set("Content-Type", "application/json")
-	addEcosystemAuthorizationHeaders(req)
+	addExactEcosystemAuthorizationHeaders(t, req, exactSetPathEffect(t, handler, target))
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 
@@ -496,7 +688,7 @@ func TestOpenClawEmergencyStopAfterConsumptionBlocksEffect(t *testing.T) {
 		bytes.NewReader(body),
 	)
 	req.Header.Set("Content-Type", "application/json")
-	addEcosystemAuthorizationHeaders(req)
+	addExactEcosystemAuthorizationHeaders(t, req, exactSetPathEffect(t, handler, target))
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 
@@ -560,7 +752,7 @@ func TestOpenClawAuthorizedUploadReplacesAndDeletesManagedArchive(t *testing.T) 
 		body,
 	)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	addEcosystemAuthorizationHeaders(req)
+	addExactEcosystemAuthorizationHeaders(t, req, exactUploadEffect(t, handler, payload))
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 
@@ -729,6 +921,9 @@ func mutationTestRouter(handler *Handler) *gin.Engine {
 		c.Next()
 	})
 	router.GET("/agent-runtimes/openclaw/ecosystem", handler.OpenClawEcosystem)
+	router.POST("/agent-runtimes/openclaw/ecosystem/approval/set-path", handler.PrepareSetOpenClawEcosystem)
+	router.POST("/agent-runtimes/openclaw/ecosystem/approval/refresh", handler.PrepareRefreshOpenClawEcosystem)
+	router.POST("/agent-runtimes/openclaw/ecosystem/approval/upload", handler.PrepareUploadOpenClawEcosystem)
 	router.PATCH("/agent-runtimes/openclaw/ecosystem", handler.SetOpenClawEcosystem)
 	router.POST("/agent-runtimes/openclaw/ecosystem/refresh", handler.RefreshOpenClawEcosystem)
 	router.POST("/agent-runtimes/openclaw/ecosystem/upload", handler.UploadOpenClawEcosystem)
@@ -766,6 +961,83 @@ func addEcosystemAuthorizationHeaders(request *http.Request) {
 		"X-HAI-Approval-Binding-Digest",
 		strings.Repeat("a", 64),
 	)
+}
+
+func addExactEcosystemAuthorizationHeaders(
+	t *testing.T,
+	request *http.Request,
+	effect openClawEcosystemEffect,
+) {
+	t.Helper()
+	digest, err := ecosystemMutationEffectDigest("alice", "alice", effect)
+	if err != nil {
+		t.Fatalf("derive ecosystem approval digest: %v", err)
+	}
+	request.Header.Set("X-HAI-Idempotency-Key", "openclaw-mutation-test")
+	request.Header.Set("X-HAI-Task-ID", "task-openclaw-mutation")
+	request.Header.Set("X-HAI-Approval-Source", "opscontrol-owner:test")
+	request.Header.Set("X-HAI-Approval-Binding-Digest", digest)
+}
+
+func addPreparedEcosystemAuthorizationHeaders(
+	request *http.Request,
+	authorization EcosystemMutationAuthorization,
+) {
+	request.Header.Set("X-HAI-Idempotency-Key", authorization.IdempotencyKey)
+	request.Header.Set("X-HAI-Task-ID", authorization.TaskID)
+	request.Header.Set("X-HAI-Approval-Source", authorization.ApprovalSourceID)
+	request.Header.Set("X-HAI-Approval-Binding-Digest", authorization.ApprovalBindingDigest)
+}
+
+func exactSetPathEffect(t *testing.T, handler *Handler, target string) openClawEcosystemEffect {
+	t.Helper()
+	adapter, ok := handler.registry.OpenClawAdapter()
+	if !ok || adapter == nil {
+		t.Fatal("OpenClaw adapter is unavailable")
+	}
+	prepared, err := adapter.prepareEcosystemPath(target, false)
+	if err != nil {
+		t.Fatalf("prepare ecosystem path: %v", err)
+	}
+	return openClawEcosystemEffect{
+		Action:            openClawSetPathAction,
+		CurrentPath:       prepared.previousPath,
+		CurrentSignature:  prepared.previousSignature,
+		TargetPath:        prepared.targetPath,
+		TargetSignature:   prepared.targetSignature,
+		DeleteManagedPath: prepared.deleteManagedPath,
+	}
+}
+
+func exactRefreshEffect(t *testing.T, handler *Handler) openClawEcosystemEffect {
+	t.Helper()
+	currentPath, currentSignature := testOpenClawAdapterState(handler)
+	return openClawEcosystemEffect{
+		Action:           openClawRefreshAction,
+		CurrentPath:      currentPath,
+		CurrentSignature: currentSignature,
+		TargetPath:       currentPath,
+		TargetSignature:  currentSignature,
+	}
+}
+
+func exactUploadEffect(t *testing.T, handler *Handler, payload []byte) openClawEcosystemEffect {
+	t.Helper()
+	currentPath, currentSignature := testOpenClawAdapterState(handler)
+	contentHash := sha256.Sum256(payload)
+	deleteManagedPath := ""
+	if isOpenClawUploadArtifactPath(currentPath) {
+		deleteManagedPath = currentPath
+	}
+	return openClawEcosystemEffect{
+		Action:                openClawUploadAction,
+		CurrentPath:           currentPath,
+		CurrentSignature:      currentSignature,
+		TargetPath:            openClawManagedArchiveTarget,
+		UploadedContentDigest: hex.EncodeToString(contentHash[:]),
+		UploadedSize:          int64(len(payload)),
+		DeleteManagedPath:     deleteManagedPath,
+	}
 }
 
 func allowingEcosystemMutationAuthorizer(

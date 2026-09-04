@@ -1,6 +1,7 @@
 package source
 
 import (
+	"automation-hub-backend/internal/docling"
 	"automation-hub-backend/internal/memory"
 	"automation-hub-backend/internal/models"
 	"automation-hub-backend/internal/pursuit"
@@ -32,13 +33,22 @@ import (
 )
 
 const (
-	ModeManualImport       = "manual_import"
-	ModeScheduledSync      = "scheduled_sync"
-	ModeWebhookSync        = "webhook_sync"
-	ModeFolderWatcher      = "folder_watcher"
-	ModeHistoricalBackfill = "historical_backfill"
-	ModeIncrementalSync    = "incremental_sync"
+	ModeManualImport             = "manual_import"
+	ModeScheduledSync            = "scheduled_sync"
+	ModeWebhookSync              = "webhook_sync"
+	ModeFolderWatcher            = "folder_watcher"
+	ModeHistoricalBackfill       = "historical_backfill"
+	ModeIncrementalSync          = "incremental_sync"
+	doclingDocumentsConnectorKey = "docling-documents"
 )
+
+var sharedSourceHTTPTransport struct {
+	sync.Mutex
+	key       string
+	transport *http.Transport
+}
+
+var sourceFailureWindowsPath = regexp.MustCompile(`(?i)(^|[\s"'=(])[a-z]:[\\/][^\s"']+`)
 
 type CreateSourceRequest struct {
 	OwnerIdentity     string   `json:"-"`
@@ -83,9 +93,12 @@ type ImportRequest struct {
 	// controlledTranscription is deliberately package-private. Only the
 	// server-side whisper handler can mark runner output as audio-derived.
 	controlledTranscription bool
-	ProjectKey              string `json:"projectKey,omitempty"`
-	Limit                   int    `json:"limit,omitempty"`
-	MaxBytes                int64  `json:"maxBytes,omitempty"`
+	// controlledDocumentExtraction is deliberately package-private. Only the
+	// server-side Docling handler can mark runner output as document-derived.
+	controlledDocumentExtraction bool
+	ProjectKey                   string `json:"projectKey,omitempty"`
+	Limit                        int    `json:"limit,omitempty"`
+	MaxBytes                     int64  `json:"maxBytes,omitempty"`
 }
 
 type SyncResult struct {
@@ -156,6 +169,33 @@ type ConnectionHealthService interface {
 	ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error)
 }
 
+// ConnectionHealthBatchService derives overview health from sources already
+// loaded for the authenticated owner. It avoids one HTTP request per source.
+type ConnectionHealthBatchService interface {
+	ConnectionHealths(sources []models.ConnectedSource) ([]ConnectionHealth, error)
+}
+
+type ContextSyncService interface {
+	SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error)
+}
+
+type ExtractionPage struct {
+	Items      []models.SourceExtraction `json:"items"`
+	TotalCount int64                     `json:"totalCount"`
+	Limit      int                       `json:"limit"`
+}
+
+type ExtractionPageService interface {
+	ExtractionPageForOwner(ownerIdentity, projectKey string, includeArchived bool, limit int) (*ExtractionPage, error)
+}
+
+func syncSourceWithContext(ctx context.Context, service Service, sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
+	if contextual, ok := service.(ContextSyncService); ok {
+		return contextual.SyncContext(ctx, sourceID, request)
+	}
+	return service.Sync(sourceID, request)
+}
+
 type Service interface {
 	Connectors() ([]models.SourceConnector, error)
 	CreateSource(request CreateSourceRequest) (*models.ConnectedSource, error)
@@ -193,6 +233,13 @@ type service struct {
 	emergencyStop         func() safety.EmergencyStopDecision
 	syncMu                sync.Mutex
 	activeSyncs           map[uuid.UUID]bool
+}
+
+// sourceSyncLeaseRepository is deliberately optional so focused services and
+// in-memory tests retain their lightweight process-local behaviour. The GORM
+// repository supplies a PostgreSQL-backed lease for deployed backend workers.
+type sourceSyncLeaseRepository interface {
+	AcquireSourceSyncLease(ctx context.Context, sourceID uuid.UUID) (release func(), acquired bool, err error)
 }
 
 type pursuitAutoLinker interface {
@@ -271,7 +318,7 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 	if !googleOAuthReady() {
 		for i := range connectors {
 			if isGoogleOAuthConnector(connectors[i].ConnectorKey) {
-				connectors[i].AdapterStatus = AdapterNotImplemented
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
 				connectors[i].StatusReason = "real read-only Google OAuth adapter is implemented but GOOGLE_OAUTH_* or the dedicated HAI OAuth encryption/signing keys are not set"
 			}
 		}
@@ -281,7 +328,7 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 	if !trelloConfigured() {
 		for i := range connectors {
 			if connectors[i].ConnectorKey == trelloConnectorKey {
-				connectors[i].AdapterStatus = AdapterNotImplemented
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
 				connectors[i].StatusReason = "real read-only Trello REST adapter is implemented but TRELLO_API_KEY/TRELLO_READ_TOKEN are not set, so it cannot connect yet"
 			}
 		}
@@ -326,6 +373,22 @@ func (s *service) Connectors() ([]models.SourceConnector, error) {
 			}
 		}
 	}
+	if _, err := workerControlConfigFromEnv(); err != nil {
+		for i := range connectors {
+			if connectors[i].ConnectorKey == workerControlConnectorKey {
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
+				connectors[i].StatusReason = "read-only Worker Control adapter is implemented but configuration is incomplete: " + err.Error()
+			}
+		}
+	}
+	if status := docling.DefaultService().Status(); !status.Configured {
+		for i := range connectors {
+			if connectors[i].ConnectorKey == doclingDocumentsConnectorKey {
+				connectors[i].AdapterStatus = AdapterConfigurationRequired
+				connectors[i].StatusReason = "local Docling extraction is implemented but configuration is incomplete: " + status.ConfigError
+			}
+		}
+	}
 	return connectors, nil
 }
 
@@ -344,6 +407,11 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 	connector, err := s.connectorByKey(connectorKey)
 	if err != nil {
 		return nil, err
+	}
+	if connectorKey == trelloConnectorKey {
+		if err := validateTrelloSourceRequest(request, connector); err != nil {
+			return nil, err
+		}
 	}
 	if connectorKey == odooJSON2ConnectorKey {
 		if _, err := odooJSON2ConfigFromEnv(); err != nil {
@@ -412,6 +480,37 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 			return nil, fmt.Errorf("LARO endpoint is configured only through HAI_LARO_BASE_URL; syncTarget must be empty")
 		}
 	}
+	if connectorKey == workerControlConnectorKey {
+		if _, err := workerControlConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("Worker Control connector requires explicit configuration: %w", err)
+		}
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("Worker Control must use the operations category")
+		}
+		if request.LocalOnly {
+			return nil, fmt.Errorf("Worker Control is an authenticated account bridge; localOnly must be false")
+		}
+		if strings.TrimSpace(request.SyncTarget) != "" {
+			return nil, fmt.Errorf("Worker Control endpoint is configured only through HAI_WORKER_CONTROL_BASE_URL; syncTarget must be empty")
+		}
+	}
+	if connectorKey == doclingDocumentsConnectorKey {
+		if status := docling.DefaultService().Status(); !status.Configured {
+			return nil, fmt.Errorf("Docling document extraction requires an enabled, configured local runner")
+		}
+		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+			return nil, fmt.Errorf("Docling documents must use the %s category", connector.Category)
+		}
+		if !request.LocalOnly {
+			return nil, fmt.Errorf("Docling document extraction is local-only; localOnly must be true")
+		}
+		if strings.TrimSpace(request.SyncTarget) == "" {
+			return nil, fmt.Errorf("Docling document extraction requires an explicit selected folder under CONNECTED_SOURCE_LOCAL_ROOT")
+		}
+		if _, err := resolveAllowedFolder(firstNonEmpty(os.Getenv("CONNECTED_SOURCE_LOCAL_ROOT"), "/root/connected-sources"), request.SyncTarget); err != nil {
+			return nil, fmt.Errorf("Docling document folder is not allowed: %w", err)
+		}
+	}
 	if connectorKey == openSpecArtifactConnectorKey {
 		if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
 			return nil, fmt.Errorf("OpenSpec artifacts must use the code_spec category")
@@ -444,12 +543,22 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 			return nil, fmt.Errorf("%s folder is not allowed: %w", label, err)
 		}
 	}
-	if !connector.Enabled || !adapterIsUsable(connector.AdapterStatus) {
+	if !connector.Enabled {
+		return nil, fmt.Errorf("connector %s is disabled", connectorKey)
+	}
+	if connector.AdapterStatus == AdapterConfigurationRequired {
+		return nil, fmt.Errorf("connector %s requires configuration before it can be connected", connectorKey)
+	}
+	if !adapterIsUsable(connector.AdapterStatus) {
 		return nil, fmt.Errorf("connector %s is registered but its real adapter is not implemented yet", connectorKey)
 	}
 	category := firstNonEmpty(request.Category, connector.Category)
 	if category == "" {
 		return nil, fmt.Errorf("category is required")
+	}
+	syncFrequency, err := validatedSyncFrequency(connectorKey, request.SyncFrequency)
+	if err != nil {
+		return nil, err
 	}
 	source := &models.ConnectedSource{
 		OwnerIdentity:     strings.TrimSpace(request.OwnerIdentity),
@@ -458,7 +567,7 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 		Category:          category,
 		Enabled:           request.Enabled,
 		LocalOnly:         request.LocalOnly,
-		SyncFrequency:     firstNonEmpty(request.SyncFrequency, "manual"),
+		SyncFrequency:     syncFrequency,
 		SyncTarget:        strings.TrimSpace(request.SyncTarget),
 		DefaultProjectKey: strings.TrimSpace(request.DefaultProjectKey),
 		IngestionModes:    joinValues(defaultModes(request.IngestionModes)),
@@ -466,8 +575,8 @@ func (s *service) CreateSource(request CreateSourceRequest) (*models.ConnectedSo
 		ExcludePatterns:   joinValues(request.ExcludePatterns),
 		Status:            "active",
 	}
-	if sourceUsesLocalFolder(connectorKey) && source.SyncTarget == "" {
-		source.SyncTarget = "."
+	if sourceUsesLocalFolder(connectorKey) && strings.TrimSpace(source.SyncTarget) == "" {
+		return nil, fmt.Errorf("connector %s requires an explicit selected folder under CONNECTED_SOURCE_LOCAL_ROOT", connectorKey)
 	}
 	if !request.Enabled {
 		source.Status = "paused"
@@ -484,16 +593,8 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 	if err != nil {
 		return nil, err
 	}
-	if source.ConnectorKey == cloudQuerySummaryConnectorKey {
-		if _, err := cloudQuerySummaryConfigFromEnv(); err != nil {
-			return nil, fmt.Errorf("CloudQuery sync-summary connector requires explicit configuration: %w", err)
-		}
-		if request.LocalOnly != nil && !*request.LocalOnly {
-			return nil, fmt.Errorf("CloudQuery sync summaries are local-only; localOnly must remain true")
-		}
-		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
-			return nil, fmt.Errorf("CloudQuery summary path is configured only through HAI_CLOUDQUERY_SUMMARY_PATH; syncTarget must remain empty")
-		}
+	if source.RevokedAt != nil || strings.EqualFold(strings.TrimSpace(source.Status), "revoked") {
+		return nil, ErrSourceRevoked
 	}
 	if source.ConnectorKey == shareTConnectorKey {
 		if _, err := shareTConfigFromEnv(); err != nil {
@@ -504,6 +605,17 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 		}
 		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
 			return nil, fmt.Errorf("ShareT endpoint is configured only through HAI_SHARET_BASE_URL; syncTarget must remain empty")
+		}
+	}
+	if source.ConnectorKey == cloudQuerySummaryConnectorKey {
+		if _, err := cloudQuerySummaryConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("CloudQuery sync-summary connector requires explicit configuration: %w", err)
+		}
+		if request.LocalOnly != nil && !*request.LocalOnly {
+			return nil, fmt.Errorf("CloudQuery sync summaries are local-only; localOnly must remain true")
+		}
+		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
+			return nil, fmt.Errorf("CloudQuery summary path is configured only through HAI_CLOUDQUERY_SUMMARY_PATH; syncTarget must remain empty")
 		}
 	}
 	if source.ConnectorKey == airbyteInventoryConnectorKey {
@@ -526,6 +638,17 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 		}
 		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
 			return nil, fmt.Errorf("LARO endpoint is configured only through HAI_LARO_BASE_URL; syncTarget must remain empty")
+		}
+	}
+	if source.ConnectorKey == workerControlConnectorKey {
+		if _, err := workerControlConfigFromEnv(); err != nil {
+			return nil, fmt.Errorf("Worker Control connector requires explicit configuration: %w", err)
+		}
+		if request.LocalOnly != nil && *request.LocalOnly {
+			return nil, fmt.Errorf("Worker Control is an authenticated account bridge; localOnly must remain false")
+		}
+		if request.SyncTarget != nil && strings.TrimSpace(*request.SyncTarget) != "" {
+			return nil, fmt.Errorf("Worker Control endpoint is configured only through HAI_WORKER_CONTROL_BASE_URL; syncTarget must remain empty")
 		}
 	}
 	if source.ConnectorKey == openSpecArtifactConnectorKey {
@@ -573,7 +696,11 @@ func (s *service) UpdateSource(id uuid.UUID, request UpdateSourceRequest) (*mode
 		source.LocalOnly = *request.LocalOnly
 	}
 	if request.SyncFrequency != "" {
-		source.SyncFrequency = request.SyncFrequency
+		syncFrequency, err := validatedSyncFrequency(source.ConnectorKey, request.SyncFrequency)
+		if err != nil {
+			return nil, err
+		}
+		source.SyncFrequency = syncFrequency
 	}
 	if request.SyncTarget != nil {
 		source.SyncTarget = strings.TrimSpace(*request.SyncTarget)
@@ -598,8 +725,24 @@ func (s *service) Sources(includeDisabled bool) ([]models.ConnectedSource, error
 	return s.repo.FindSources(includeDisabled)
 }
 
+func (s *service) SourcesForOwner(ownerIdentity string, includeDisabled bool) ([]models.ConnectedSource, error) {
+	return s.repo.FindSourcesVisibleToOwner(ownerIdentity, includeDisabled)
+}
+
+func (s *service) MutableSourceForOwner(id uuid.UUID, ownerIdentity string) (*models.ConnectedSource, error) {
+	return s.repo.FindMutableSourceForOwner(id, ownerIdentity)
+}
+
+func (s *service) MutableExtractionForOwner(id uuid.UUID, ownerIdentity string) (*models.SourceExtraction, error) {
+	return s.repo.FindMutableExtractionForOwner(id, ownerIdentity)
+}
+
 func (s *service) SyncJobs(sourceID *uuid.UUID) ([]models.SourceSyncJob, error) {
 	return s.repo.FindSyncJobs(sourceID)
+}
+
+func (s *service) SyncJobsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceSyncJob, error) {
+	return s.repo.FindSyncJobsForSources(sourceIDs, limit)
 }
 
 func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error) {
@@ -607,6 +750,49 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 	if err != nil {
 		return nil, err
 	}
+	return s.connectionHealthForSource(*source)
+}
+
+func (s *service) ConnectionHealths(sources []models.ConnectedSource) ([]ConnectionHealth, error) {
+	googleSourceIDs := make([]uuid.UUID, 0, len(sources))
+	if googleOAuthReady() {
+		for _, source := range sources {
+			if isGoogleOAuthConnector(source.ConnectorKey) && source.Status != "revoked" && source.RevokedAt == nil {
+				googleSourceIDs = append(googleSourceIDs, source.ID)
+			}
+		}
+	}
+	tokens, err := s.repo.FindOAuthTokensForSources(googleSourceIDs)
+	if err != nil {
+		return nil, err
+	}
+	tokensBySourceID := make(map[uuid.UUID]*models.SourceOAuthToken, len(tokens))
+	for index := range tokens {
+		tokensBySourceID[tokens[index].SourceID] = &tokens[index]
+	}
+	health := make([]ConnectionHealth, 0, len(sources))
+	for _, source := range sources {
+		item, err := s.connectionHealthForSourceWithToken(source, tokensBySourceID[source.ID])
+		if err != nil {
+			return nil, err
+		}
+		health = append(health, *item)
+	}
+	return health, nil
+}
+
+func (s *service) connectionHealthForSource(source models.ConnectedSource) (*ConnectionHealth, error) {
+	var token *models.SourceOAuthToken
+	if isGoogleOAuthConnector(source.ConnectorKey) && googleOAuthReady() && source.Status != "revoked" && source.RevokedAt == nil {
+		stored, err := s.repo.FindOAuthToken(source.ID)
+		if err == nil {
+			token = stored
+		}
+	}
+	return s.connectionHealthForSourceWithToken(source, token)
+}
+
+func (s *service) connectionHealthForSourceWithToken(source models.ConnectedSource, token *models.SourceOAuthToken) (*ConnectionHealth, error) {
 	health := &ConnectionHealth{
 		SourceID: source.ID, ConnectorKey: source.ConnectorKey,
 		Status: source.Status, Configured: true, LastSyncedAt: source.LastSyncedAt,
@@ -614,6 +800,54 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 	if source.Status == "revoked" || source.RevokedAt != nil {
 		health.Status = "revoked"
 		health.Reason = "source access was revoked"
+		return health, nil
+	}
+	if source.ConnectorKey == trelloConnectorKey {
+		health.Configured = trelloConfigured()
+		if !health.Configured {
+			health.Status = "configuration_required"
+			health.Reason = "Trello read-only credentials are not configured"
+			return health, nil
+		}
+		if source.LocalOnly {
+			health.Status = "configuration_required"
+			health.Reason = "Trello board sources must remain remote read-only; reconnect with local-only disabled"
+			return health, nil
+		}
+		if _, err := trelloBoardID(source.SyncTarget); err != nil {
+			health.Status = "configuration_required"
+			health.Reason = "Trello board target needs review: " + err.Error()
+			return health, nil
+		}
+		// Environment variables and a syntactically valid board id prove only
+		// that the connector can be attempted. They do not prove that Trello
+		// accepted the token or that it can read this board, so do not surface a
+		// false "ready" state before an explicit sync provides evidence.
+		health.Authorized = false
+		if source.Enabled {
+			health.Status = "configuration_ready"
+			health.Reason = "least-privilege read-only Trello credentials and board target are configured; run a sync to verify live board access"
+		} else {
+			health.Reason = "Trello source is paused"
+		}
+		return health, nil
+	}
+	if source.ConnectorKey == doclingDocumentsConnectorKey {
+		status := docling.DefaultService().Status()
+		health.Configured = status.Configured
+		if !health.Configured {
+			health.Status = "configuration_required"
+			health.Reason = "local Docling runner is not configured"
+			return health, nil
+		}
+		if !source.LocalOnly || strings.TrimSpace(source.SyncTarget) == "" {
+			health.Status = "configuration_required"
+			health.Reason = "Docling sources require one explicit local-only document folder"
+			return health, nil
+		}
+		health.Authorized = source.Enabled
+		health.Status = "configuration_ready"
+		health.Reason = "local Docling runner and selected document folder are configured; run extraction to verify the local runner"
 		return health, nil
 	}
 	if !isGoogleOAuthConnector(source.ConnectorKey) {
@@ -627,8 +861,7 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 		health.Reason = "Google OAuth client, token encryption key, or state signing key is not configured"
 		return health, nil
 	}
-	token, err := s.repo.FindOAuthToken(sourceID)
-	if err != nil {
+	if token == nil {
 		health.Status = "disconnected"
 		health.Reason = "no Google account grant is stored for this source"
 		return health, nil
@@ -667,11 +900,63 @@ func (s *service) ConnectionHealth(sourceID uuid.UUID) (*ConnectionHealth, error
 	return health, nil
 }
 
+func validateTrelloSourceRequest(request CreateSourceRequest, connector models.SourceConnector) error {
+	if !trelloConfigured() {
+		return fmt.Errorf("Trello connector requires %s and a least-privilege read-only %s before a board can be connected", trelloAPIKeyEnv, trelloReadTokenEnv)
+	}
+	if request.LocalOnly {
+		return fmt.Errorf("Trello is a remote read-only source; localOnly must be false")
+	}
+	if category := strings.TrimSpace(request.Category); category != "" && category != connector.Category {
+		return fmt.Errorf("Trello must use the %s category", connector.Category)
+	}
+	if _, err := trelloBoardID(request.SyncTarget); err != nil {
+		return err
+	}
+	if _, err := trelloBaseURL(); err != nil {
+		return fmt.Errorf("Trello API configuration is invalid: %w", err)
+	}
+	return nil
+}
+
 func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, error) {
+	return s.SyncContext(context.Background(), sourceID, request)
+}
+
+func (s *service) SyncContext(ctx context.Context, sourceID uuid.UUID, request ImportRequest) (result *SyncResult, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			resultErr = redactSourceError(resultErr)
+		}
+	}()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Individual connector requests already have tight network timeouts, but a
+	// full sync can involve several requests plus bounded extraction and
+	// persistence work. Give every invocation an overall deadline as well so a
+	// slow upstream or database cannot retain a durable worker indefinitely.
+	// A caller-provided deadline remains authoritative when it is sooner.
+	syncCtx, cancel := context.WithTimeout(ctx, sourceSyncTimeout())
+	defer cancel()
+	ctx = syncCtx
 	if !s.beginSync(sourceID) {
 		return nil, ErrSyncInProgress
 	}
 	defer s.endSync(sourceID)
+	if leaseRepo, ok := s.repo.(sourceSyncLeaseRepository); ok {
+		release, acquired, err := leaseRepo.AcquireSourceSyncLease(ctx, sourceID)
+		if err != nil {
+			return nil, fmt.Errorf("acquire source sync lease: %w", err)
+		}
+		if !acquired {
+			return nil, ErrSyncInProgress
+		}
+		defer release()
+	}
 
 	source, err := s.repo.FindSource(sourceID)
 	if err != nil {
@@ -680,8 +965,14 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 	if !source.Enabled || source.Status == "paused" || source.Status == "revoked" {
 		return nil, fmt.Errorf("source is not enabled for sync")
 	}
+	if source.ConnectorKey == trelloConnectorKey && len(request.Items) != 0 {
+		return nil, fmt.Errorf("Trello items are read only from the configured Trello API; caller-supplied items are not accepted")
+	}
 	if source.ConnectorKey == "whisper-audio" && !request.controlledTranscription {
 		return nil, fmt.Errorf("whisper-audio sources must use the controlled transcription route")
+	}
+	if source.ConnectorKey == doclingDocumentsConnectorKey && !request.controlledDocumentExtraction {
+		return nil, fmt.Errorf("Docling document sources must use the controlled document extraction route")
 	}
 	if source.ConnectorKey == cloudQuerySummaryConnectorKey {
 		if !source.LocalOnly || strings.TrimSpace(source.SyncTarget) != "" {
@@ -777,119 +1068,119 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == "json-feed" {
-		items, adapterCursor, err = fetchJSONFeed(source)
+		items, adapterCursor, err = fetchJSONFeed(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == "github" {
-		items, adapterCursor, err = fetchGitHubSource(source)
+		items, adapterCursor, err = fetchGitHubSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == gmailConnectorKey {
-		items, adapterCursor, err = s.fetchGmailSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchGmailSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == driveConnectorKey {
-		items, adapterCursor, err = s.fetchDriveSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchDriveSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == contactsConnectorKey {
-		items, adapterCursor, err = s.fetchContactsSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchContactsSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == calendarConnectorKey {
-		items, adapterCursor, err = s.fetchCalendarSource(context.Background(), source)
+		items, adapterCursor, err = s.fetchCalendarSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == trelloConnectorKey {
-		items, adapterCursor, err = fetchTrelloSource(source)
+		items, adapterCursor, err = fetchTrelloSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
 	if len(items) == 0 && source.ConnectorKey == odooJSON2ConnectorKey {
-		items, adapterCursor, err = fetchOdooJSON2Source(context.Background(), source)
+		items, adapterCursor, err = fetchOdooJSON2Source(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.odoo_json2_read", fmt.Sprintf("read %d bounded Odoo JSON-2 record(s) through the configured model allowlist", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == shareTConnectorKey {
-		items, adapterCursor, err = fetchShareTSource(context.Background(), source)
+		items, adapterCursor, err = fetchShareTSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.sharet_read", fmt.Sprintf("read %d bounded ShareT link record(s) through a read-only connector credential", len(items)))
@@ -899,49 +1190,62 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.cloudquery_summary_read", fmt.Sprintf("read %d bounded CloudQuery sync summary record(s) from the configured local summary file", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == airbyteInventoryConnectorKey {
-		items, adapterCursor, err = fetchAirbyteInventory(context.Background(), source)
+		items, adapterCursor, err = fetchAirbyteInventory(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.airbyte_inventory_read", fmt.Sprintf("read %d bounded Airbyte source and connection inventory record(s) from approved workspaces", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == laroConnectorKey {
-		items, adapterCursor, err = fetchLAROSource(context.Background(), source)
+		items, adapterCursor, err = fetchLAROSource(ctx, source)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.laro_read", fmt.Sprintf("read %d bounded, owner-scoped LARO legal record(s)", len(items)))
+	}
+	if len(items) == 0 && source.ConnectorKey == workerControlConnectorKey {
+		items, adapterCursor, err = fetchWorkerControlSource(ctx, source.Cursor, source.DefaultProjectKey)
+		if err != nil {
+			now := time.Now().UTC()
+			job.Status = "failed"
+			job.Message = sourceOperationalFailureMessage(err)
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
+			return nil, err
+		}
+		s.audit(sourceID, "source.worker_control_read", fmt.Sprintf("read %d bounded, owner-scoped Worker Control event(s)", len(items)))
 	}
 	if len(items) == 0 && source.ConnectorKey == openSpecArtifactConnectorKey {
 		items, err = s.openSpecArtifactItems(source, request)
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.openspec_artifacts_read", fmt.Sprintf("read %d bounded OpenSpec change artifact bundle(s) from the selected local project", len(items)))
@@ -951,10 +1255,10 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.project_instructions_read", fmt.Sprintf("read %d untrusted project instruction file(s) from the selected local project", len(items)))
@@ -964,10 +1268,10 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 		s.audit(sourceID, "source.fabric_patterns_read", fmt.Sprintf("read %d bounded untrusted Fabric prompt pattern(s) from the selected local folder", len(items)))
@@ -977,10 +1281,10 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		if err != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = err.Error()
+			job.Message = sourceOperationalFailureMessage(err)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
-			s.audit(sourceID, "source.sync_failed", err.Error())
+			s.audit(sourceID, "source.sync_failed", sourceOperationalFailureMessage(err))
 			return nil, err
 		}
 	}
@@ -993,7 +1297,7 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		if errExisting != nil {
 			now := time.Now().UTC()
 			job.Status = "failed"
-			job.Message = "calendar conflict planning could not read cached event records: " + errExisting.Error()
+			job.Message = sourceOperationalFailureMessage(errExisting)
 			job.CompletedAt = &now
 			_, _ = s.repo.UpdateSyncJob(job)
 			s.audit(sourceID, "source.sync_failed", job.Message)
@@ -1007,6 +1311,15 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 		}
 	}
 	for index, item := range items {
+		if err := ctx.Err(); err != nil {
+			now := time.Now().UTC()
+			job.Status = "cancelled"
+			job.Message = "sync cancelled before all source items were processed; the cursor was retained"
+			job.CompletedAt = &now
+			_, _ = s.repo.UpdateSyncJob(job)
+			s.audit(sourceID, "source.sync_cancelled", job.Message)
+			return nil, err
+		}
 		if shouldExclude(source.ExcludePatterns, item.Title+" "+item.SourceURI) {
 			continue
 		}
@@ -1025,11 +1338,11 @@ func (s *service) Sync(sourceID uuid.UUID, request ImportRequest) (*SyncResult, 
 			recordFailure(item, "extraction failed", errExtract)
 			continue
 		}
-		if errIndex := s.indexExtraction(extraction); errIndex != nil {
+		if errIndex := s.indexExtractionContext(ctx, extraction); errIndex != nil {
 			recordFailure(item, "index update failed", errIndex)
 			continue
 		}
-		projection, errProjection := s.projectExtractionToLifeGraph(context.Background(), source, extraction)
+		projection, errProjection := s.projectExtractionToLifeGraph(ctx, source, extraction)
 		if errProjection != nil {
 			warning := itemFailure(item, "life graph projection failed", errProjection)
 			if len(warnings) < maxSyncErrorDetails {
@@ -1146,7 +1459,7 @@ func (s *service) RunDueScheduledSyncsForOwner(now time.Time, ownerIdentity stri
 	if ownerIdentity == "" {
 		return s.RunDueScheduledSyncs(now)
 	}
-	sources, err := s.repo.FindSources(false)
+	sources, err := s.repo.FindSourcesVisibleToOwner(ownerIdentity, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1273,6 +1586,9 @@ func (s *service) Pause(sourceID uuid.UUID, paused bool) (*models.ConnectedSourc
 	if err != nil {
 		return nil, err
 	}
+	if source.RevokedAt != nil || strings.EqualFold(strings.TrimSpace(source.Status), "revoked") {
+		return nil, ErrSourceRevoked
+	}
 	source.Enabled = !paused
 	if paused {
 		source.Status = "paused"
@@ -1391,7 +1707,7 @@ func (s *service) visibleSourceIDs(ownerIdentity string) (map[uuid.UUID]bool, er
 }
 
 func (s *service) visibleSourceIDsExcluding(ownerIdentity string, excludedConnectorKeys []string) (map[uuid.UUID]bool, error) {
-	sources, err := s.repo.FindSources(true)
+	sources, err := s.repo.FindSourcesVisibleToOwner(ownerIdentity, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1435,6 +1751,18 @@ func (s *service) ExtractionsForOwner(ownerIdentity, projectKey string, includeA
 		return nil, err
 	}
 	return s.repo.FindExtractionsForSources(sourceIDsFromSet(visibleSourceIDs), projectKey, includeArchived)
+}
+
+func (s *service) ExtractionPageForOwner(ownerIdentity, projectKey string, includeArchived bool, limit int) (*ExtractionPage, error) {
+	visibleSourceIDs, err := s.visibleSourceIDs(ownerIdentity)
+	if err != nil {
+		return nil, err
+	}
+	items, totalCount, err := s.repo.FindExtractionPageForSources(sourceIDsFromSet(visibleSourceIDs), projectKey, includeArchived, limit)
+	if err != nil {
+		return nil, err
+	}
+	return &ExtractionPage{Items: items, TotalCount: totalCount, Limit: limit}, nil
 }
 
 func (s *service) UpdateExtraction(id uuid.UUID, request models.SourceExtraction) (*models.SourceExtraction, error) {
@@ -1557,6 +1885,10 @@ func (s *service) DeleteExtractionAuthorized(
 
 func (s *service) AuditLogs(sourceID *uuid.UUID) ([]models.SourceAuditLog, error) {
 	return s.repo.FindAuditLogs(sourceID)
+}
+
+func (s *service) AuditLogsForSources(sourceIDs []uuid.UUID, limit int) ([]models.SourceAuditLog, error) {
+	return s.repo.FindAuditLogsForSources(sourceIDs, limit)
 }
 
 func (s *service) localFolderItems(source *models.ConnectedSource, request ImportRequest) ([]ImportItem, error) {
@@ -1906,8 +2238,8 @@ func (s *service) extractAndStore(source *models.ConnectedSource, raw *models.So
 	existing.SourceURI = raw.SourceURI
 	existing.SourceLabel = raw.Title
 	existing.ContentHash = raw.ContentHash
-	existing.Sensitive = source.ConnectorKey == "whatsapp-export" || source.ConnectorKey == laroConnectorKey || containsAny(strings.ToLower(clean), "password", "secret", "token", "bank", "invoice", "contract", "legal", "medical", "juridisch", "medisch", "rekening", "factuur")
-	existing.Uncertain = isManualPlanningContextOnlyConnector(source.ConnectorKey) || sourceRawItemRequiresReview(raw) || len(clean) < 40 || containsAny(strings.ToLower(clean), "maybe", "unclear", "unknown")
+	existing.Sensitive = source.ConnectorKey == "whatsapp-export" || source.ConnectorKey == laroConnectorKey || source.ConnectorKey == workerControlConnectorKey || containsAny(strings.ToLower(clean), "password", "secret", "token", "bank", "invoice", "contract", "legal", "medical", "juridisch", "medisch", "rekening", "factuur")
+	existing.Uncertain = isManualPlanningContextOnlyConnector(source.ConnectorKey) || sourceRawItemRequiresReview(raw) || sourceContentRequiresReview(clean) || len(clean) < 40 || containsAny(strings.ToLower(clean), "maybe", "unclear", "unknown")
 	existing.LastIndexedAt = &now
 	return s.repo.SaveExtraction(existing)
 }
@@ -2260,6 +2592,9 @@ func extractionReviewReason(extraction *models.SourceExtraction) string {
 	if extraction.Sensitive {
 		reasons = append(reasons, "extraction contains sensitive content")
 	}
+	if sourceContentRequiresReview(extraction.Text) {
+		reasons = append(reasons, "source content contains instruction-like or policy-bypass language")
+	}
 	return strings.Join(reasons, "; ")
 }
 
@@ -2301,6 +2636,21 @@ func (s *service) retractWorkflowForExtraction(extraction *models.SourceExtracti
 }
 
 func (s *service) indexExtraction(extraction *models.SourceExtraction) error {
+	return s.indexExtractionContext(context.Background(), extraction)
+}
+
+// indexExtractionContext keeps optional semantic enrichment inside the source
+// sync deadline. A cancelled durable job must release embedding and database
+// work instead of continuing after the source-sync worker has been reclaimed.
+// Non-sync correction flows retain the background wrapper above because they
+// have no request-scoped cancellation contract.
+func (s *service) indexExtractionContext(ctx context.Context, extraction *models.SourceExtraction) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	keywords := strings.Join(mapKeys(tokenSet(extraction.Text+" "+extraction.Summary+" "+extraction.Entities+" "+extraction.Tasks)), ",")
 	if _, err := s.repo.SaveIndexEntry(&models.SourceIndexEntry{
 		SourceID:     extraction.SourceID,
@@ -2317,7 +2667,7 @@ func (s *service) indexExtraction(extraction *models.SourceExtraction) error {
 	if s.semanticService == nil || !s.semanticService.Enabled() {
 		return nil
 	}
-	if err := s.semanticService.Index(context.Background(), extraction); err != nil {
+	if err := s.semanticService.Index(ctx, extraction); err != nil {
 		// Semantic indexing is optional enrichment. Preserve the extracted record
 		// and keyword index, then expose the degraded state in the source audit.
 		s.audit(extraction.SourceID, "semantic.index_failed", "local semantic index was not updated: "+compact(err.Error(), 240))
@@ -2351,15 +2701,49 @@ func (s *service) endSync(sourceID uuid.UUID) {
 
 func itemFailure(item ImportItem, stage string, err error) string {
 	label := firstNonEmpty(item.ExternalID, item.Title, "unknown item")
-	return compact(fmt.Sprintf("%s: %s: %v", label, stage, err), 320)
+	return compact(safety.RedactSecrets(fmt.Sprintf("%s: %s: %v", label, stage, err)), 320)
 }
 
 func (s *service) audit(sourceID uuid.UUID, action, message string) {
 	_, _ = s.repo.SaveAuditLog(&models.SourceAuditLog{
 		SourceID: sourceID,
 		Action:   action,
-		Message:  message,
+		Message:  safety.RedactSecrets(message),
 	})
+}
+
+// sourceOperationalFailureMessage is used for durable job and audit state.
+// Preserve explicit policy guidance such as allowlist or consent failures, but
+// remove secrets and Windows filesystem locations from connector diagnostics.
+func sourceOperationalFailureMessage(err error) string {
+	if err == nil {
+		return "source synchronization failed"
+	}
+	message := compact(safety.RedactSecrets(err.Error()), 320)
+	message = sourceFailureWindowsPath.ReplaceAllString(message, "${1}[LOCAL_PATH]")
+	if strings.TrimSpace(message) == "" {
+		return "source synchronization failed; review the source connection and configuration"
+	}
+	return message
+}
+
+type redactedSourceError struct {
+	message string
+	cause   error
+}
+
+func (e redactedSourceError) Error() string { return e.message }
+
+func (e redactedSourceError) Unwrap() error { return e.cause }
+
+func redactSourceError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return redactedSourceError{
+		message: sourceOperationalFailureMessage(err),
+		cause:   err,
+	}
 }
 
 // Adapter status values. These describe honestly what a connector actually does,
@@ -2412,12 +2796,14 @@ func defaultConnectors() []models.SourceConnector {
 		{ConnectorKey: "json-feed", Name: "Allowlisted JSON feed", Category: "generic_feed", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live scheduled and incremental fetch of a normalized JSON feed over HTTP, with host allowlisting and bounded responses"},
 		{ConnectorKey: "whatsapp-export", Name: "WhatsApp exported chats", Category: "chat", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-chat-export-read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "parses local WhatsApp .txt export files into bounded, sensitive, review-gated records; does not connect to WhatsApp"},
 		{ConnectorKey: "whisper-audio", Name: "Selected audio folders (whisper.cpp)", Category: "audio", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-audio-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local transcription from an explicit selected folder through whisper.cpp; no microphone capture, cloud upload, scheduled scan, or raw-audio retention"},
+		{ConnectorKey: doclingDocumentsConnectorKey, Name: "Selected document folders (Docling)", Category: "document", SupportedModes: joinValues([]string{ModeManualImport}), RequiredScopes: "selected-folder-read,explicit-consent", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "operator-triggered local extraction from an explicit selected folder through Docling; no browser uploads, scheduled scan, model download, cloud parser, or source-file retention"},
 		{ConnectorKey: "odoo-herp", Name: "Odoo / HERP operations", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "metadata,read,herp:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterModeled, StatusReason: "generates built-in Odoo app-domain models from manual selection; no live Odoo connection; write-back disabled by default"},
 		{ConnectorKey: odooJSON2ConnectorKey, Name: "Odoo JSON-2 (read only)", Category: "herp", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "odoo-api-key,read-only-model-access", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only Odoo JSON-2 sync for a fixed model and field allowlist; requires HAI_ODOO_* configuration and never writes back"},
 		{ConnectorKey: shareTConnectorKey, Name: "ShareT links (read only)", Category: "project_board", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "connector:read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "live read-only ShareT link inventory through a scoped connector token; fetches every page within an explicit completeness limit, excludes participant email addresses, and never creates, changes, comments on, or revokes links"},
 		{ConnectorKey: cloudQuerySummaryConnectorKey, Name: "CloudQuery sync summaries (local read only)", Category: "cloud_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,cloud_inventory:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only a fixed, operator-produced local CloudQuery JSONL sync summary; never starts CloudQuery, reads its configuration or credentials, or accesses source/destination data"},
 		{ConnectorKey: airbyteInventoryConnectorKey, Name: "Airbyte source and connection inventory (local read only)", Category: "connector_inventory", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "airbyte-api-key,approved-workspace:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only bounded source and connection metadata from a configured local Airbyte API and fixed workspace allowlist; never reads credentials/configuration/records or creates, changes, starts, stops, or deletes a sync"},
 		{ConnectorKey: laroConnectorKey, Name: "LARO legal case intelligence (read only)", Category: "legal_case", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "laro:hai:read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "reads bounded, owner-scoped case summaries and source-linked legal analyses from LARO with a revocable connector credential; source bytes and client contact details are excluded and HAI never writes back"},
+		{ConnectorKey: workerControlConnectorKey, Name: "Worker Control commitments (read only)", Category: "operations", SupportedModes: joinValues([]string{ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "worker_control:read", LocalOnlyCapable: false, Enabled: true, AdapterStatus: AdapterOperational, StatusReason: "reads bounded owner-scoped commitment and reminder events through a revocable dashboard key; all records remain sensitive and review-gated, and HAI has no write path"},
 		{ConnectorKey: openSpecArtifactConnectorKey, Name: "OpenSpec change artifacts (local read only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeHistoricalBackfill, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only proposal.md, design.md, tasks.md, and specs Markdown below a selected local openspec/changes folder; never installs or runs OpenSpec, edits a repository, or authorizes code changes"},
 		{ConnectorKey: projectInstructionsConnectorKey, Name: "Project instructions (manual context only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only root AGENTS.md and CLAUDE.md from a selected local project; stores untrusted review context and never authorizes execution"},
 		{ConnectorKey: fabricPatternsConnectorKey, Name: "Fabric patterns (manual context only)", Category: "code_spec", SupportedModes: joinValues([]string{ModeManualImport, ModeScheduledSync, ModeIncrementalSync}), RequiredScopes: "selected-folder-read,code_spec:read", LocalOnlyCapable: true, Enabled: true, AdapterStatus: AdapterLocalOnly, StatusReason: "reads only bounded immediate-child system.md pattern files from a selected local folder; never runs or auto-attaches patterns"},
@@ -2431,6 +2817,21 @@ func categoryForConnector(connectorKey string) string {
 		}
 	}
 	return ""
+}
+
+func connectorSupportsMode(connectorKey, mode string) bool {
+	for _, connector := range defaultConnectors() {
+		if connector.ConnectorKey != strings.TrimSpace(connectorKey) {
+			continue
+		}
+		for _, supported := range strings.Split(connector.SupportedModes, ",") {
+			if strings.TrimSpace(supported) == mode {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
 
 func defaultModes(values []string) []string {
@@ -2450,7 +2851,7 @@ func sourceUsesLocalFolder(connectorKey string) bool {
 }
 
 func sourceHasNativeAdapter(connectorKey string) bool {
-	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || isGoogleOAuthConnector(connectorKey) || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == shareTConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == laroConnectorKey || connectorKey == openSpecArtifactConnectorKey || isManualPlanningContextOnlyConnector(connectorKey)
+	return sourceUsesLocalFolder(connectorKey) || connectorKey == "json-feed" || connectorKey == "github" || isGoogleOAuthConnector(connectorKey) || connectorKey == trelloConnectorKey || connectorKey == "whatsapp-export" || connectorKey == "whisper-audio" || connectorKey == "odoo-herp" || connectorKey == odooJSON2ConnectorKey || connectorKey == shareTConnectorKey || connectorKey == cloudQuerySummaryConnectorKey || connectorKey == airbyteInventoryConnectorKey || connectorKey == laroConnectorKey || connectorKey == workerControlConnectorKey || connectorKey == openSpecArtifactConnectorKey || isManualPlanningContextOnlyConnector(connectorKey)
 }
 
 func filterConnectorLocalItems(items []ImportItem, connectorKey string) []ImportItem {
@@ -2524,6 +2925,21 @@ func scoreExtraction(extraction models.SourceExtraction, request SearchRequest) 
 }
 
 func scheduledSourceDue(source models.ConnectedSource, now time.Time) (bool, string) {
+	// Scheduling must honour the source lifecycle before considering an
+	// adapter or frequency. A paused, revoked, or disabled source is retained
+	// for audit/history, but must never create recurring failed sync jobs.
+	if !source.Enabled {
+		return false, "source is disabled"
+	}
+	switch strings.ToLower(strings.TrimSpace(source.Status)) {
+	case "paused":
+		return false, "source is paused"
+	case "revoked":
+		return false, "source access was revoked"
+	}
+	if source.RevokedAt != nil {
+		return false, "source access was revoked"
+	}
 	if source.ConnectorKey == "whisper-audio" {
 		return false, "whisper-audio transcription is operator-triggered only"
 	}
@@ -2548,7 +2964,7 @@ type jsonFeedEnvelope struct {
 	NextCursor string       `json:"nextCursor,omitempty"`
 }
 
-func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error) {
+func fetchJSONFeed(ctx context.Context, source *models.ConnectedSource) ([]ImportItem, string, error) {
 	if source == nil {
 		return nil, "", fmt.Errorf("source is required")
 	}
@@ -2573,7 +2989,7 @@ func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error)
 		query.Set("cursor", source.Cursor)
 		target.RawQuery = query.Encode()
 	}
-	request, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("create json-feed request: %w", err)
 	}
@@ -2619,7 +3035,9 @@ func fetchJSONFeed(source *models.ConnectedSource) ([]ImportItem, string, error)
 	return normalizeFeedItems(envelope.Items, source), firstNonEmpty(strings.TrimSpace(envelope.NextCursor), source.Cursor), nil
 }
 
-func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, error) {
+const githubSourcePageSize = 100
+
+func fetchGitHubSource(ctx context.Context, source *models.ConnectedSource) ([]ImportItem, string, error) {
 	if source == nil {
 		return nil, "", fmt.Errorf("source is required")
 	}
@@ -2648,31 +3066,45 @@ func fetchGitHubSource(source *models.ConnectedSource) ([]ImportItem, string, er
 	}
 	items := []ImportItem{}
 	latest := strings.TrimSpace(source.Cursor)
+	maxPages := githubSourceMaxPages()
 	for _, endpoint := range endpoints {
-		value, err := fetchGitHubJSON(parsedBase, endpoint.path, source.Cursor)
-		if err != nil {
-			return nil, "", fmt.Errorf("fetch github %s: %w", endpoint.kind, err)
-		}
-		records := githubRecords(value, endpoint.kind)
-		for _, record := range records {
-			item, updated := githubImportItem(record, endpoint.kind, source.DefaultProjectKey, repository)
-			if item.ExternalID == "" || item.Content == "" {
-				continue
+		for page := 1; page <= maxPages; page++ {
+			if err := ctx.Err(); err != nil {
+				return nil, "", err
 			}
-			items = append(items, item)
-			if updated > latest {
-				latest = updated
+			value, err := fetchGitHubJSON(ctx, parsedBase, endpoint.path, source.Cursor, page)
+			if err != nil {
+				return nil, "", fmt.Errorf("fetch github %s page %d: %w", endpoint.kind, page, err)
+			}
+			pageRecordCount := githubRecordCount(value, endpoint.kind)
+			records := githubRecords(value, endpoint.kind)
+			for _, record := range records {
+				item, updated := githubImportItem(record, endpoint.kind, source.DefaultProjectKey, repository)
+				if item.ExternalID == "" || item.Content == "" {
+					continue
+				}
+				items = append(items, item)
+				if updated > latest {
+					latest = updated
+				}
+			}
+			if pageRecordCount < githubSourcePageSize {
+				break
+			}
+			if page == maxPages {
+				return nil, "", fmt.Errorf("github %s sync reached the %d-page safety limit; raise GITHUB_SOURCE_MAX_PAGES (maximum 20) and retry to avoid an incomplete import", endpoint.kind, maxPages)
 			}
 		}
 	}
 	return items, latest, nil
 }
 
-func fetchGitHubJSON(base *url.URL, resourcePath, cursor string) (any, error) {
+func fetchGitHubJSON(ctx context.Context, base *url.URL, resourcePath, cursor string, page int) (any, error) {
 	target := *base
 	target.Path = strings.TrimRight(base.Path, "/") + resourcePath
 	query := target.Query()
-	query.Set("per_page", "100")
+	query.Set("per_page", strconv.Itoa(githubSourcePageSize))
+	query.Set("page", strconv.Itoa(page))
 	query.Set("state", "all")
 	query.Set("sort", "updated")
 	query.Set("direction", "asc")
@@ -2682,7 +3114,7 @@ func fetchGitHubJSON(base *url.URL, resourcePath, cursor string) (any, error) {
 		}
 	}
 	target.RawQuery = query.Encode()
-	request, err := http.NewRequest(http.MethodGet, target.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2715,6 +3147,14 @@ func fetchGitHubJSON(base *url.URL, resourcePath, cursor string) (any, error) {
 	return value, nil
 }
 
+func githubSourceMaxPages() int {
+	pages, err := strconv.Atoi(strings.TrimSpace(os.Getenv("GITHUB_SOURCE_MAX_PAGES")))
+	if err != nil || pages < 1 || pages > 20 {
+		return 5
+	}
+	return pages
+}
+
 func githubRecords(value any, kind string) []map[string]any {
 	if object, ok := value.(map[string]any); ok {
 		if kind == "workflow_run" {
@@ -2722,12 +3162,45 @@ func githubRecords(value any, kind string) []map[string]any {
 				return githubRecordSlice(runs)
 			}
 		}
+		if kind == "issue" && isGitHubPullRequest(object) {
+			return nil
+		}
 		return []map[string]any{object}
 	}
 	if list, ok := value.([]any); ok {
-		return githubRecordSlice(list)
+		records := githubRecordSlice(list)
+		if kind != "issue" {
+			return records
+		}
+		issues := make([]map[string]any, 0, len(records))
+		for _, record := range records {
+			if !isGitHubPullRequest(record) {
+				issues = append(issues, record)
+			}
+		}
+		return issues
 	}
 	return nil
+}
+
+func githubRecordCount(value any, kind string) int {
+	if object, ok := value.(map[string]any); ok {
+		if kind == "workflow_run" {
+			if runs, ok := object["workflow_runs"].([]any); ok {
+				return len(runs)
+			}
+		}
+		return 1
+	}
+	if list, ok := value.([]any); ok {
+		return len(list)
+	}
+	return 0
+}
+
+func isGitHubPullRequest(record map[string]any) bool {
+	_, found := record["pull_request"]
+	return found
 }
 
 func githubRecordSlice(items []any) []map[string]any {
@@ -2824,9 +3297,30 @@ func sourceHTTPAddressBlocked(host string) bool {
 }
 
 func sourceHTTPTransport() *http.Transport {
-	dialer := &net.Dialer{Timeout: sourceHTTPTimeout()}
-	return &http.Transport{
-		Proxy: nil,
+	key := strings.Join([]string{
+		strings.TrimSpace(os.Getenv("CONNECTED_SOURCE_HTTP_ALLOWED_HOSTS")),
+		strings.TrimSpace(os.Getenv("CONNECTED_SOURCE_HTTP_ALLOW_LINK_LOCAL")),
+		sourceHTTPTimeout().String(),
+	}, "|")
+
+	sharedSourceHTTPTransport.Lock()
+	defer sharedSourceHTTPTransport.Unlock()
+	if sharedSourceHTTPTransport.transport != nil && sharedSourceHTTPTransport.key == key {
+		return sharedSourceHTTPTransport.transport
+	}
+	if sharedSourceHTTPTransport.transport != nil {
+		// Do not retain connections created under a previous network policy.
+		sharedSourceHTTPTransport.transport.CloseIdleConnections()
+	}
+
+	transport := &http.Transport{
+		Proxy:                 nil,
+		MaxIdleConns:          16,
+		MaxIdleConnsPerHost:   4,
+		MaxConnsPerHost:       8,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: sourceHTTPTimeout(),
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(address)
 			if err != nil {
@@ -2844,15 +3338,27 @@ func sourceHTTPTransport() *http.Transport {
 			if len(resolved) == 0 {
 				return nil, fmt.Errorf("json-feed host resolved to no addresses")
 			}
+			dialer := &net.Dialer{Timeout: sourceHTTPTimeout()}
 			return dialer.DialContext(ctx, network, net.JoinHostPort(resolved[0].IP.String(), port))
 		},
 	}
+	sharedSourceHTTPTransport.key = key
+	sharedSourceHTTPTransport.transport = transport
+	return transport
 }
 
 func sourceHTTPTimeout() time.Duration {
 	seconds, err := strconv.Atoi(strings.TrimSpace(os.Getenv("CONNECTED_SOURCE_HTTP_TIMEOUT_SECONDS")))
 	if err != nil || seconds < 1 || seconds > 120 {
 		seconds = 20
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func sourceSyncTimeout() time.Duration {
+	seconds, err := strconv.Atoi(strings.TrimSpace(os.Getenv("CONNECTED_SOURCE_SYNC_TIMEOUT_SECONDS")))
+	if err != nil || seconds < 30 || seconds > 30*60 {
+		seconds = 10 * 60
 	}
 	return time.Duration(seconds) * time.Second
 }
@@ -2891,6 +3397,24 @@ func parseSyncFrequency(value string) (time.Duration, bool) {
 		return 0, false
 	}
 	return duration, true
+}
+
+// validatedSyncFrequency prevents a source from displaying a scheduled
+// interval that the scheduler cannot understand. Manual aliases are persisted
+// consistently, while operator-triggered transcription remains manual-only.
+func validatedSyncFrequency(connectorKey, value string) (string, error) {
+	clean := strings.TrimSpace(strings.ToLower(value))
+	switch clean {
+	case "", "manual", "off", "disabled", "none":
+		return "manual", nil
+	}
+	if !connectorSupportsMode(connectorKey, ModeScheduledSync) {
+		return "", fmt.Errorf("connector %s is operator-triggered only and must use manual sync frequency", connectorKey)
+	}
+	if _, ok := parseSyncFrequency(clean); !ok {
+		return "", fmt.Errorf("sync frequency %q is unsupported; use manual, hourly, daily, weekly, or a duration of at least one minute", value)
+	}
+	return strings.TrimSpace(value), nil
 }
 
 type whatsAppMessage struct {
@@ -3247,7 +3771,7 @@ func resolveAllowedFolder(root, requested string) (string, error) {
 		return "", err
 	}
 	if rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("folder path must stay inside allowlisted root %s", rootAbs)
+		return "", fmt.Errorf("folder path must stay inside the configured local source root")
 	}
 	info, err := os.Stat(folderAbs)
 	if err != nil {
@@ -3269,7 +3793,7 @@ func resolveAllowedFolder(root, requested string) (string, error) {
 		return "", err
 	}
 	if rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("folder path must not resolve outside allowlisted root %s", rootAbs)
+		return "", fmt.Errorf("folder path must not resolve outside the configured local source root")
 	}
 	return folderAbs, nil
 }

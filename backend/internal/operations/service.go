@@ -1,6 +1,7 @@
 package operations
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -34,7 +35,9 @@ type IngestResult struct {
 // duplicate (§10.9 step 7-9).
 func (s *Service) Ingest(in NewOperationInput) (IngestResult, error) {
 	now := s.now().UTC()
-	if existing, found, err := s.repo.FindByDedupeKey(firstNonEmpty(in.WorkspaceID, "local"), in.DedupeKey); err != nil {
+	owner := strings.TrimSpace(in.OwnerUserID)
+	workspace := firstNonEmpty(in.WorkspaceID, "local")
+	if existing, found, err := s.repo.FindByDedupeKey(owner, workspace, in.DedupeKey); err != nil {
 		return IngestResult{}, err
 	} else if found {
 		if j := strings.TrimSpace(in.EvidenceJSON); j != "" && j != "{}" {
@@ -53,6 +56,15 @@ func (s *Service) Ingest(in NewOperationInput) (IngestResult, error) {
 	}
 	created, err := s.repo.Create(&op)
 	if err != nil {
+		if errors.Is(err, ErrDuplicateDedupeKey) {
+			existing, found, lookupErr := s.repo.FindByDedupeKey(owner, workspace, in.DedupeKey)
+			if lookupErr != nil {
+				return IngestResult{}, lookupErr
+			}
+			if found {
+				return IngestResult{Operation: *existing, Created: false}, nil
+			}
+		}
 		return IngestResult{}, err
 	}
 	_ = s.repo.AppendEvent(&models.OperationEvent{

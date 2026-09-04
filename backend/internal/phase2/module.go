@@ -216,6 +216,11 @@ func (m *Module) evidencePackRepository() (EvidencePackRepository, error) {
 // registers the background runner used by emergency-stop verification.
 func (m *Module) OpsControl() *opscontrol.Service {
 	svc := opscontrol.NewService(m.cfg.StateDir, m.broker, m.svc, m.cfg.OwnerUserID, m.cfg.WorkspaceID)
+	// Environment values establish only the first persistent state. If seeding
+	// fails, Controller and EmergencyStopStore remain fail-closed and surface
+	// the persistence fault through readiness/status rather than weakening a
+	// prior operator decision.
+	_ = svc.SeedInitialState(m.cfg.Mode, m.cfg.EmergencyStop, m.cfg.OwnerUserID)
 	m.control = svc.Control()
 	m.worker.WithControl(m.control)
 	svc.SetBackgroundRunner(func(ctx context.Context) (int, error) {
@@ -237,7 +242,9 @@ func (m *Module) RunBackgroundForOwner(ctx context.Context, ownerIdentity string
 		return background.Report{}, fmt.Errorf("phase2: authenticated owner identity required")
 	}
 
-	m.runMu.Lock()
+	if !m.runMu.TryLock() {
+		return background.Report{}, background.ErrBusy
+	}
 	defer m.runMu.Unlock()
 
 	worker := m.newOwnerWorker(ownerIdentity)
@@ -247,7 +254,9 @@ func (m *Module) RunBackgroundForOwner(ctx context.Context, ownerIdentity string
 // RunConfiguredBackground is the distinct internal scheduler path. It is not
 // called by the HTTP handler and always uses the explicitly configured owner.
 func (m *Module) RunConfiguredBackground(ctx context.Context) (background.Report, error) {
-	m.runMu.Lock()
+	if !m.runMu.TryLock() {
+		return background.Report{}, background.ErrBusy
+	}
 	defer m.runMu.Unlock()
 	return m.worker.RunOnce(ctx)
 }

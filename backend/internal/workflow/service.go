@@ -579,9 +579,13 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 				selectionRequired = true
 				automationSelectionReason = "automation selection failed: " + selectionErr.Error()
 			case len(candidates) == 1:
-				request.AutomationID = candidates[0].ID
 				selectionCandidates = candidates
 				automationSelectionReason = candidates[0].Reason
+				if workflowExplicitlyNamesAutomationSelection(input) {
+					selectionRequired = true
+				} else {
+					request.AutomationID = candidates[0].ID
+				}
 			default:
 				selectionRequired = true
 				selectionCandidates = candidates
@@ -594,12 +598,19 @@ func (s *service) Intake(request IntakeRequest) (*WorkflowRecord, error) {
 		}
 	}
 	if selectionRequired {
-		analysis.requiresApproval = true
-		analysis.approvalReason = automationSelectionReason
+		if analysis.requiresApproval {
+			analysis.approvalReason = firstNonEmpty(analysis.approvalReason, "approval required") + "; exact automation selection: " + automationSelectionReason
+		} else {
+			// Choosing between safe runtimes is a routing decision, not a human
+			// approval for the action itself. Keep it in the existing decision queue
+			// until a runtime is chosen, then remove the temporary gate.
+			analysis.requiresApproval = true
+			analysis.approvalReason = automationSelectionOnlyApprovalPrefix + automationSelectionReason
+		}
 		analysis.autonomyLevel = "approve_before_execute"
 		analysis.initialState = StateNeedsApproval
 		analysis.nextAction = "select the exact automation before controlled execution"
-		analysis.ruleApplied += "; exact automation selection required before approval"
+		analysis.ruleApplied += "; exact automation selection required before controlled execution"
 	}
 	projectKey := firstNonEmpty(request.ProjectKey, analysis.projectKey)
 	item := &models.WorkflowItem{
@@ -1644,13 +1655,22 @@ func (s *service) ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request Pr
 	if err != nil {
 		return nil, err
 	}
+	selectionOnly := status == "approved" && isAutomationSelectionProposal(proposal) && isAutomationSelectionOnlyApproval(item)
 	if status == "approved" && isAutomationSelectionProposal(proposal) {
 		automationID, selectionErr := selectedAutomationID(proposal.Options, request.SelectedOption)
 		if selectionErr != nil {
 			return nil, selectionErr
 		}
 		item.AutomationID = automationID
-		item.NextAction = "approve the exact automation action and queue controlled execution"
+		if selectionOnly {
+			item.RequiresApproval = false
+			item.ApprovalStatus = approvalStatus(false)
+			item.ApprovalReason = ""
+			item.AutonomyLevel = "autonomous_safe"
+			item.NextAction = "run the selected low-risk automation through workflow worker"
+		} else {
+			item.NextAction = "approve the exact automation action and queue controlled execution"
+		}
 		if item.RequiresApproval {
 			if _, bindingErr := s.approvalDecisionRule(item); bindingErr != nil {
 				return nil, fmt.Errorf("selected automation cannot be bound to approval: %w", bindingErr)
@@ -1675,23 +1695,31 @@ func (s *service) ResolveProposal(id uuid.UUID, proposalID uuid.UUID, request Pr
 
 	switch status {
 	case "approved":
-		if item.CurrentState == StateNeedsApproval || item.RequiresApproval {
+		if item.RequiresApproval {
 			return s.ResolveApproval(id, ApprovalResolutionRequest{
 				Approved: true,
 				Note:     firstNonEmpty(request.Note, proposal.RecommendedAction),
 				Actor:    firstNonEmpty(request.Actor, "operator"),
 			})
 		}
-		if item.CurrentState == StateBlocked || item.CurrentState == StateWaitingInput {
+		if item.CurrentState == StateNeedsApproval || item.CurrentState == StateBlocked || item.CurrentState == StateWaitingInput {
 			from := item.CurrentState
 			item.CurrentState = StateReady
 			item.BlockedReason = ""
-			item.NextAction = "execute approved proposal through workflow worker"
+			if selectionOnly {
+				item.NextAction = "run the selected low-risk automation through workflow worker"
+			} else {
+				item.NextAction = "execute approved proposal through workflow worker"
+			}
 			if _, err := s.repo.UpdateItem(item); err != nil {
 				return nil, err
 			}
-			s.recordTransition(item.ID, from, StateReady, "proposal_resolution", firstNonEmpty(request.Actor, "operator"), true, firstNonEmpty(request.Note, "proposal approved"))
-			s.audit(item.ID, "workflow.transition", from, StateReady, "proposal approved and workflow made ready", "proposal_resolution", "proposal approved", item.SourceURI, firstNonEmpty(request.Actor, "operator"))
+			s.recordTransition(item.ID, from, StateReady, "proposal_resolution", firstNonEmpty(request.Actor, "operator"), !selectionOnly, firstNonEmpty(request.Note, "proposal approved"))
+			rule := "proposal approved"
+			if selectionOnly {
+				rule = "low-risk automation selection completed without action approval"
+			}
+			s.audit(item.ID, "workflow.transition", from, StateReady, "proposal approved and workflow made ready", "proposal_resolution", rule, item.SourceURI, firstNonEmpty(request.Actor, "operator"))
 		}
 	case "changes_requested":
 		from := item.CurrentState
@@ -3423,7 +3451,10 @@ func proposalForAnalysis(workflowID uuid.UUID, analysis inputAnalysis) *models.W
 	}
 }
 
-const automationSelectionProposalAction = "Select an automation for controlled execution"
+const (
+	automationSelectionProposalAction     = "Select an automation for controlled execution"
+	automationSelectionOnlyApprovalPrefix = "automation selection only: "
+)
 
 func automationSelectionProposal(workflowID uuid.UUID, candidates []AutomationCandidate) *models.WorkflowProposal {
 	options := make([]string, 0, len(candidates))
@@ -3452,6 +3483,13 @@ func automationSelectionProposal(workflowID uuid.UUID, candidates []AutomationCa
 
 func isAutomationSelectionProposal(proposal *models.WorkflowProposal) bool {
 	return proposal != nil && strings.TrimSpace(proposal.RecommendedAction) == automationSelectionProposalAction
+}
+
+func isAutomationSelectionOnlyApproval(item *models.WorkflowItem) bool {
+	return item != nil && strings.HasPrefix(
+		strings.ToLower(strings.TrimSpace(item.ApprovalReason)),
+		automationSelectionOnlyApprovalPrefix,
+	)
 }
 
 func selectedAutomationID(options string, selectedOption string) (string, error) {
@@ -3502,6 +3540,13 @@ func workflowNeedsAutomation(input string, analysis inputAnalysis) bool {
 		"script", "test", "tests",
 	)
 	return action && target
+}
+
+func workflowExplicitlyNamesAutomationSelection(input string) bool {
+	return workflowContainsWordOrPhrase(input,
+		"run the selected", "execute the selected", "launch the selected", "invoke the selected",
+		"selected runtime", "selected automation", "choose the runtime", "choose an automation", "select the exact",
+	)
 }
 
 func workflowContainsWordOrPhrase(value string, terms ...string) bool {

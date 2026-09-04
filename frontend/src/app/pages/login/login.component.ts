@@ -3,13 +3,13 @@ import { FormBuilder, FormGroup, Validators } from "@angular/forms";
 import { NzNotificationService } from "ng-zorro-antd/notification";
 import { AUTH_SERVICE_TOKEN } from "../../services/auth/auth.service.token";
 import { IAuthService } from "../../services/auth.service.interface";
-import { Router } from "@angular/router";
+import { ActivatedRoute, Router } from "@angular/router";
 
 @Component({
-  standalone: false,
-  selector: "app-login",
-  templateUrl: "./login.component.html",
-  styleUrls: ["./login.component.scss"],
+    selector: "app-login",
+    templateUrl: "./login.component.html",
+    styleUrls: ["./login.component.scss"],
+    standalone: false
 })
 export class LoginComponent implements OnInit {
   readonly minimumRegistrationPasswordLength = 12;
@@ -30,6 +30,7 @@ export class LoginComponent implements OnInit {
     private fb: FormBuilder,
     private notification: NzNotificationService,
     private router: Router,
+    private route: ActivatedRoute,
     @Inject(AUTH_SERVICE_TOKEN) private authService: IAuthService
   ) {}
 
@@ -67,13 +68,17 @@ export class LoginComponent implements OnInit {
   // browser must follow Google's redirects and land back on the app with the
   // session cookies set by the callback.
   loginWithGoogle(): void {
-    window.location.href = '/api/v1/auth/google/login';
+    window.location.href = this.googleLoginURL();
+  }
+
+  private googleLoginURL(): string {
+    return `/api/v1/auth/google/login?returnUrl=${encodeURIComponent(this.authenticationDestination())}`;
   }
 
   openLocalPreview(): void {
     this.openingLocalPreview = true;
     this.authService.openLocalPreview().subscribe({
-      next: () => this.router.navigate(['/control-center']),
+      next: () => this.router.navigateByUrl(this.authenticationDestination()),
       error: () => {
         this.openingLocalPreview = false;
         this.notification.error('Local preview unavailable', 'This device is not configured for login-free local access.');
@@ -106,7 +111,7 @@ export class LoginComponent implements OnInit {
       .login(this.validateForm.value.userName, this.validateForm.value.password)
       .subscribe({
         next: () => {
-          this.router.navigate(["/control-center"]);
+          this.router.navigateByUrl(this.authenticationDestination());
         },
         error: (error) => {
           if (error.status === 401) {
@@ -124,6 +129,22 @@ export class LoginComponent implements OnInit {
           }
         },
       });
+  }
+
+  // Only route within this Angular application after authentication. The value
+  // comes from the route guard, but validating it here prevents a hand-edited
+  // login URL from becoming an open redirect.
+  private authenticationDestination(): string {
+    const candidate = this.route.snapshot.queryParamMap.get('returnUrl') || '';
+    if (
+      candidate.startsWith('/') &&
+      !candidate.startsWith('//') &&
+      !candidate.includes('\\') &&
+      !candidate.startsWith('/login')
+    ) {
+      return candidate;
+    }
+    return '/control-center';
   }
 
   toggleRegistration(): void {

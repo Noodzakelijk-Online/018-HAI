@@ -21,17 +21,21 @@ import (
 	"sync"
 	"time"
 
+	"automation-hub-backend/internal/hostruntime"
 	"automation-hub-backend/internal/pathsafety"
 	"automation-hub-backend/internal/safety"
 
 	"github.com/google/uuid"
+	"golang.org/x/net/websocket"
 )
 
 const (
-	defaultTimeoutSeconds = 120
-	defaultOutputLimit    = 64 * 1024
-	maxOutputLimit        = 1024 * 1024
-	maxTaskPromptBytes    = 50 * 1024
+	defaultTimeoutSeconds          = 120
+	defaultOutputLimit             = 64 * 1024
+	maxOutputLimit                 = 1024 * 1024
+	maxTaskPromptBytes             = 50 * 1024
+	openClawGatewayProtocolVersion = 4
+	openClawGatewayTaskLedgerLimit = 50
 )
 
 type Task struct {
@@ -45,14 +49,18 @@ type Task struct {
 }
 
 type Result struct {
-	RuntimeID   string      `json:"runtimeId"`
-	Status      string      `json:"status"`
-	Message     string      `json:"message,omitempty"`
-	Output      string      `json:"output,omitempty"`
-	RouteTrace  *RouteTrace `json:"routeTrace,omitempty"`
-	ExitCode    int         `json:"exitCode"`
-	DurationMs  int64       `json:"durationMs"`
-	AuditEvents []string    `json:"auditEvents"`
+	RuntimeID string `json:"runtimeId"`
+	// ExecutionReference identifies durable work created outside the backend
+	// process, such as a host-runtime job. It is an opaque audit reference, not
+	// a user-supplied target or command.
+	ExecutionReference string      `json:"executionReference,omitempty"`
+	Status             string      `json:"status"`
+	Message            string      `json:"message,omitempty"`
+	Output             string      `json:"output,omitempty"`
+	RouteTrace         *RouteTrace `json:"routeTrace,omitempty"`
+	ExitCode           int         `json:"exitCode"`
+	DurationMs         int64       `json:"durationMs"`
+	AuditEvents        []string    `json:"auditEvents"`
 }
 
 type RouteTrace struct {
@@ -70,11 +78,25 @@ type RouteTrace struct {
 }
 
 type Health struct {
-	RuntimeID string    `json:"runtimeId"`
-	Status    string    `json:"status"`
-	Reason    string    `json:"reason"`
-	CheckedAt time.Time `json:"checkedAt"`
-	LatencyMs int64     `json:"latencyMs"`
+	RuntimeID string `json:"runtimeId"`
+	Status    string `json:"status"`
+	Reason    string `json:"reason"`
+	// Version is populated only from a validated authenticated runtime response.
+	// Health-only probes deliberately leave it empty rather than inferring identity.
+	Version           string                    `json:"version,omitempty"`
+	GatewayTaskLedger *GatewayTaskLedgerSummary `json:"gatewayTaskLedger,omitempty"`
+	CheckedAt         time.Time                 `json:"checkedAt"`
+	LatencyMs         int64                     `json:"latencyMs"`
+}
+
+// GatewayTaskLedgerSummary is a bounded, non-persistent projection obtained
+// only through the optional operator.read task-ledger discovery. It contains
+// status counts only: task titles, IDs, prompts, owner data, and errors never
+// cross the HAI gateway boundary.
+type GatewayTaskLedgerSummary struct {
+	SampledTasks int            `json:"sampledTasks"`
+	StatusCounts map[string]int `json:"statusCounts"`
+	Truncated    bool           `json:"truncated"`
 }
 
 type Info struct {
@@ -188,9 +210,18 @@ func DefaultRegistry() *Registry {
 // DefaultRegistryWithFinalEffectVerifier is the production composition point
 // for enabling runtime effects without exporting concrete adapter types.
 func DefaultRegistryWithFinalEffectVerifier(verifier FinalEffectProofVerifier) *Registry {
+	return DefaultRegistryWithFinalEffectVerifierAndHostRuntime(verifier, nil)
+}
+
+// DefaultRegistryWithFinalEffectVerifierAndHostRuntime is the production
+// composition point for runtimes that need a Windows-host execution bridge.
+// A nil dispatcher leaves DeepSeek Harness unavailable rather than allowing
+// the backend container to execute a host-oriented runtime directly.
+func DefaultRegistryWithFinalEffectVerifierAndHostRuntime(verifier FinalEffectProofVerifier, dispatcher hostruntime.Dispatcher) *Registry {
 	return NewRegistryWithFinalEffectVerifier(
 		verifier,
 		newHermesAdapterFromEnv(),
+		newDeepSeekHarnessAdapterFromEnv(dispatcher),
 		newOdysseusAdapterFromEnv(),
 		newOpenClawAdapterFromEnv(),
 	)
@@ -198,7 +229,7 @@ func DefaultRegistryWithFinalEffectVerifier(verifier FinalEffectProofVerifier) *
 
 func (r *Registry) List() []Info {
 	result := []Info{}
-	for _, id := range []string{"hermes", "odysseus", "openclaw"} {
+	for _, id := range []string{"hermes", "deepseek-harness", "odysseus", "openclaw"} {
 		if adapter := r.adapters[id]; adapter != nil {
 			result = append(result, adapter.Info())
 		}
@@ -206,14 +237,41 @@ func (r *Registry) List() []Info {
 	return result
 }
 
+// RuntimeOverview combines the stable runtime registry with its bounded health
+// probe. Dashboard callers need both values together, so serving them from one
+// endpoint avoids duplicate request setup while keeping probe state explicit.
+type RuntimeOverview struct {
+	Runtimes []Info   `json:"runtimes"`
+	Health   []Health `json:"health"`
+}
+
+func (r *Registry) Overview(ctx context.Context) RuntimeOverview {
+	return RuntimeOverview{
+		Runtimes: r.List(),
+		Health:   r.Health(ctx),
+	}
+}
+
 func (r *Registry) Health(ctx context.Context) []Health {
 	result := []Health{}
-	for _, id := range []string{"hermes", "odysseus", "openclaw"} {
-		if adapter := r.adapters[id]; adapter != nil {
-			result = append(result, adapter.HealthCheck(ctx))
+	for _, id := range []string{"hermes", "deepseek-harness", "odysseus", "openclaw"} {
+		if health, ok := r.HealthFor(ctx, id); ok {
+			result = append(result, health)
 		}
 	}
 	return result
+}
+
+// HealthFor probes exactly one registered runtime. Callers that render a
+// single runtime must use this instead of Health so unrelated provider and
+// local-runtime checks are not started as a side effect.
+func (r *Registry) HealthFor(ctx context.Context, runtimeID string) (Health, bool) {
+	runtimeID = strings.ToLower(strings.TrimSpace(runtimeID))
+	adapter := r.adapters[runtimeID]
+	if adapter == nil {
+		return Health{}, false
+	}
+	return adapter.HealthCheck(ctx), true
 }
 
 func (r *Registry) Skills(ctx context.Context, runtimeID string) ([]Skill, error) {
@@ -300,11 +358,12 @@ func (r *Registry) StopTask(_ context.Context, runtimeID string, taskID string, 
 		return StopResult{
 			RuntimeID: runtimeID,
 			TaskID:    taskID,
-			Status:    "stopping",
-			Message:   "HAI cancellation signal was sent to the active runtime task",
+			Status:    "cancellation_requested",
+			Message:   "HAI requested cancellation of the active runtime task; downstream delivery is not yet verified",
 			AuditEvents: []string{
 				"running runtime task located",
 				"HAI-managed context cancellation requested",
+				"runtime cancellation delivery is not yet verified",
 			},
 		}
 	}
@@ -805,7 +864,7 @@ func (a *hermesAdapter) ExecuteTask(parent context.Context, task Task) Result {
 		status = "failed"
 		message = safety.RedactSecrets(strings.TrimSpace(stderr.String()))
 		if message == "" {
-			message = err.Error()
+			message = "Hermes process failed without diagnostic output"
 		}
 		exitCode = -1
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -958,38 +1017,41 @@ type openClawAdapter struct {
 	envAllow       []string
 	allowedHost    map[string]bool
 
-	agentCLIEnabled    bool
-	gatewayEnabled     bool
-	messagesEnabled    bool
-	skillsEnabled      bool
-	pluginsEnabled     bool
-	mcpEnabled         bool
-	memoryEnabled      bool
-	cronEnabled        bool
-	browserEnabled     bool
-	canvasEnabled      bool
-	nodesEnabled       bool
-	voiceEnabled       bool
-	talkEnabled        bool
-	webchatEnabled     bool
-	pairingEnabled     bool
-	execApprovals      bool
-	hostToolsEnabled   bool
-	publicPosting      bool
-	webSearchEnabled   bool
-	multiAgentEnabled  bool
-	appSDKEnabled      bool
-	pluginSDKEnabled   bool
-	localModelsEnabled bool
-	highRiskExecution  bool
-	sandboxRequired    bool
-	sandboxMode        string
-	sandboxDocker      bool
-	sandboxSSH         bool
-	sandboxOpenShell   bool
-	channelsEnabled    []string
-	providersEnabled   []string
-	companionApps      []string
+	agentCLIEnabled                      bool
+	gatewayEnabled                       bool
+	gatewayProtocolDiscoveryEnabled      bool
+	gatewayAuthenticatedDiscoveryEnabled bool
+	gatewayTaskLedgerDiscoveryEnabled    bool
+	messagesEnabled                      bool
+	skillsEnabled                        bool
+	pluginsEnabled                       bool
+	mcpEnabled                           bool
+	memoryEnabled                        bool
+	cronEnabled                          bool
+	browserEnabled                       bool
+	canvasEnabled                        bool
+	nodesEnabled                         bool
+	voiceEnabled                         bool
+	talkEnabled                          bool
+	webchatEnabled                       bool
+	pairingEnabled                       bool
+	execApprovals                        bool
+	hostToolsEnabled                     bool
+	publicPosting                        bool
+	webSearchEnabled                     bool
+	multiAgentEnabled                    bool
+	appSDKEnabled                        bool
+	pluginSDKEnabled                     bool
+	localModelsEnabled                   bool
+	highRiskExecution                    bool
+	sandboxRequired                      bool
+	sandboxMode                          string
+	sandboxDocker                        bool
+	sandboxSSH                           bool
+	sandboxOpenShell                     bool
+	channelsEnabled                      []string
+	providersEnabled                     []string
+	companionApps                        []string
 
 	inventoryMu        sync.Mutex
 	inventoryLoaded    bool
@@ -1005,40 +1067,43 @@ func (*openClawAdapter) RuntimeID() string { return "openclaw" }
 
 func newOpenClawAdapterFromEnv() *openClawAdapter {
 	return &openClawAdapter{
-		enabled:          envEnabled("OPENCLAW_AGENT_ENABLED"),
-		executable:       firstNonEmpty(os.Getenv("OPENCLAW_EXECUTABLE"), "openclaw"),
-		workspace:        strings.TrimSpace(os.Getenv("OPENCLAW_WORKSPACE")),
-		workspaceRoot:    strings.TrimSpace(os.Getenv("AGENT_RUNTIME_WORKSPACE_ROOT")),
-		ecosystemPath:    strings.TrimSpace(firstNonEmpty(os.Getenv("OPENCLAW_ECOSYSTEM_PATH"), os.Getenv("OPENCLAW_WORKSPACE"))),
-		ecosystemRoots:   csvValues(os.Getenv("OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS")),
-		stateDir:         strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR")),
-		configPath:       strings.TrimSpace(os.Getenv("OPENCLAW_CONFIG_PATH")),
-		gatewayURL:       strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_URL")),
-		gatewayToken:     strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_TOKEN")),
-		thinking:         firstNonEmpty(os.Getenv("OPENCLAW_THINKING"), "high"),
-		timeout:          time.Duration(boundedIntEnv("OPENCLAW_TIMEOUT_SECONDS", defaultTimeoutSeconds, 1, 900)) * time.Second,
-		outputLimit:      int64(boundedIntEnv("AGENT_RUNTIME_OUTPUT_LIMIT_BYTES", defaultOutputLimit, 4096, maxOutputLimit)),
-		envAllow:         csvValues(os.Getenv("OPENCLAW_ENV_ALLOWLIST")),
-		allowedHost:      csvMap(firstNonEmpty(os.Getenv("AGENT_RUNTIME_ALLOWED_HOSTS"), "localhost,127.0.0.1,::1,host.docker.internal,openclaw")),
-		agentCLIEnabled:  envEnabledDefault("OPENCLAW_AGENT_CLI_ENABLED", true),
-		gatewayEnabled:   envEnabled("OPENCLAW_GATEWAY_ENABLED"),
-		messagesEnabled:  envEnabled("OPENCLAW_MESSAGES_ENABLED"),
-		skillsEnabled:    envEnabled("OPENCLAW_SKILLS_ENABLED"),
-		pluginsEnabled:   envEnabled("OPENCLAW_PLUGINS_ENABLED"),
-		mcpEnabled:       envEnabled("OPENCLAW_MCP_ENABLED"),
-		memoryEnabled:    envEnabled("OPENCLAW_MEMORY_ENABLED"),
-		cronEnabled:      envEnabled("OPENCLAW_CRON_ENABLED"),
-		browserEnabled:   envEnabled("OPENCLAW_BROWSER_ENABLED"),
-		canvasEnabled:    envEnabled("OPENCLAW_CANVAS_ENABLED"),
-		nodesEnabled:     envEnabled("OPENCLAW_NODES_ENABLED"),
-		voiceEnabled:     envEnabled("OPENCLAW_VOICE_ENABLED"),
-		talkEnabled:      envEnabled("OPENCLAW_TALK_ENABLED"),
-		webchatEnabled:   envEnabled("OPENCLAW_WEBCHAT_ENABLED"),
-		pairingEnabled:   envEnabled("OPENCLAW_PAIRING_ENABLED"),
-		execApprovals:    envEnabled("OPENCLAW_EXEC_APPROVALS_ENABLED"),
-		hostToolsEnabled: envEnabled("OPENCLAW_HOST_TOOLS_ENABLED"),
-		publicPosting:    envEnabled("OPENCLAW_PUBLIC_POSTING_ENABLED"),
-		webSearchEnabled: envEnabled("OPENCLAW_WEB_SEARCH_ENABLED"),
+		enabled:                              envEnabled("OPENCLAW_AGENT_ENABLED"),
+		executable:                           firstNonEmpty(os.Getenv("OPENCLAW_EXECUTABLE"), "openclaw"),
+		workspace:                            strings.TrimSpace(os.Getenv("OPENCLAW_WORKSPACE")),
+		workspaceRoot:                        strings.TrimSpace(os.Getenv("AGENT_RUNTIME_WORKSPACE_ROOT")),
+		ecosystemPath:                        strings.TrimSpace(firstNonEmpty(os.Getenv("OPENCLAW_ECOSYSTEM_PATH"), os.Getenv("OPENCLAW_WORKSPACE"))),
+		ecosystemRoots:                       csvValues(os.Getenv("OPENCLAW_ECOSYSTEM_ALLOWED_ROOTS")),
+		stateDir:                             strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR")),
+		configPath:                           strings.TrimSpace(os.Getenv("OPENCLAW_CONFIG_PATH")),
+		gatewayURL:                           strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_URL")),
+		gatewayToken:                         strings.TrimSpace(os.Getenv("OPENCLAW_GATEWAY_TOKEN")),
+		thinking:                             firstNonEmpty(os.Getenv("OPENCLAW_THINKING"), "high"),
+		timeout:                              time.Duration(boundedIntEnv("OPENCLAW_TIMEOUT_SECONDS", defaultTimeoutSeconds, 1, 900)) * time.Second,
+		outputLimit:                          int64(boundedIntEnv("AGENT_RUNTIME_OUTPUT_LIMIT_BYTES", defaultOutputLimit, 4096, maxOutputLimit)),
+		envAllow:                             csvValues(os.Getenv("OPENCLAW_ENV_ALLOWLIST")),
+		allowedHost:                          csvMap(firstNonEmpty(os.Getenv("AGENT_RUNTIME_ALLOWED_HOSTS"), "localhost,127.0.0.1,::1,host.docker.internal,openclaw")),
+		agentCLIEnabled:                      envEnabledDefault("OPENCLAW_AGENT_CLI_ENABLED", true),
+		gatewayEnabled:                       envEnabled("OPENCLAW_GATEWAY_ENABLED"),
+		gatewayProtocolDiscoveryEnabled:      envEnabled("OPENCLAW_GATEWAY_PROTOCOL_DISCOVERY_ENABLED"),
+		gatewayAuthenticatedDiscoveryEnabled: envEnabled("OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED"),
+		gatewayTaskLedgerDiscoveryEnabled:    envEnabled("OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED"),
+		messagesEnabled:                      envEnabled("OPENCLAW_MESSAGES_ENABLED"),
+		skillsEnabled:                        envEnabled("OPENCLAW_SKILLS_ENABLED"),
+		pluginsEnabled:                       envEnabled("OPENCLAW_PLUGINS_ENABLED"),
+		mcpEnabled:                           envEnabled("OPENCLAW_MCP_ENABLED"),
+		memoryEnabled:                        envEnabled("OPENCLAW_MEMORY_ENABLED"),
+		cronEnabled:                          envEnabled("OPENCLAW_CRON_ENABLED"),
+		browserEnabled:                       envEnabled("OPENCLAW_BROWSER_ENABLED"),
+		canvasEnabled:                        envEnabled("OPENCLAW_CANVAS_ENABLED"),
+		nodesEnabled:                         envEnabled("OPENCLAW_NODES_ENABLED"),
+		voiceEnabled:                         envEnabled("OPENCLAW_VOICE_ENABLED"),
+		talkEnabled:                          envEnabled("OPENCLAW_TALK_ENABLED"),
+		webchatEnabled:                       envEnabled("OPENCLAW_WEBCHAT_ENABLED"),
+		pairingEnabled:                       envEnabled("OPENCLAW_PAIRING_ENABLED"),
+		execApprovals:                        envEnabled("OPENCLAW_EXEC_APPROVALS_ENABLED"),
+		hostToolsEnabled:                     envEnabled("OPENCLAW_HOST_TOOLS_ENABLED"),
+		publicPosting:                        envEnabled("OPENCLAW_PUBLIC_POSTING_ENABLED"),
+		webSearchEnabled:                     envEnabled("OPENCLAW_WEB_SEARCH_ENABLED"),
 
 		multiAgentEnabled:  envEnabled("OPENCLAW_MULTI_AGENT_ENABLED"),
 		appSDKEnabled:      envEnabled("OPENCLAW_APP_SDK_ENABLED"),
@@ -1067,10 +1132,10 @@ func (a *openClawAdapter) Info() Info {
 	if strings.TrimSpace(a.workspaceRoot) == "" {
 		missing = append(missing, "AGENT_RUNTIME_WORKSPACE_ROOT")
 	}
-	if a.gatewayEnabled && strings.TrimSpace(a.gatewayToken) == "" {
-		missing = append(missing, "OPENCLAW_GATEWAY_TOKEN")
+	gatewayReason := ""
+	if a.gatewayEnabled {
+		gatewayReason = a.validGatewayURL()
 	}
-	gatewayReason := a.validGatewayURL()
 	workspaceReason := a.workspaceBlockedReason()
 	if workspaceReason != "" {
 		missing = append(missing, workspaceReason)
@@ -1111,6 +1176,29 @@ func (a *openClawAdapter) HealthCheck(ctx context.Context) Health {
 		health.Reason = "OPENCLAW_AGENT_ENABLED is false"
 		return health
 	}
+	if reason := a.validGatewayURL(); reason != "" {
+		health.Status = "blocked"
+		health.Reason = reason
+		return health
+	}
+	if a.gatewayEnabled {
+		if strings.TrimSpace(a.gatewayURL) == "" {
+			health.Status = "blocked"
+			health.Reason = "OPENCLAW_GATEWAY_URL is required when OPENCLAW_GATEWAY_ENABLED=true"
+			return health
+		}
+		if a.gatewayTaskLedgerDiscoveryEnabled && !a.gatewayAuthenticatedDiscoveryEnabled {
+			health.Status = "blocked"
+			health.Reason = "OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED requires OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED=true"
+			return health
+		}
+		if a.gatewayTaskLedgerDiscoveryEnabled && strings.TrimSpace(a.gatewayToken) == "" {
+			health.Status = "blocked"
+			health.Reason = "OPENCLAW_GATEWAY_TASK_LEDGER_DISCOVERY_ENABLED requires OPENCLAW_GATEWAY_TOKEN"
+			return health
+		}
+		return a.gatewayHealthCheck(ctx, started)
+	}
 	if !a.agentCLIEnabled {
 		health.Status = "blocked"
 		health.Reason = "OPENCLAW_AGENT_CLI_ENABLED is false"
@@ -1129,16 +1217,6 @@ func (a *openClawAdapter) HealthCheck(ctx context.Context) Health {
 	if stat, err := os.Stat(a.workspace); err != nil || !stat.IsDir() {
 		health.Status = "blocked"
 		health.Reason = "OpenClaw workspace is not an accessible directory"
-		return health
-	}
-	if reason := a.validGatewayURL(); reason != "" {
-		health.Status = "blocked"
-		health.Reason = reason
-		return health
-	}
-	if a.gatewayEnabled && a.gatewayToken == "" {
-		health.Status = "blocked"
-		health.Reason = "OPENCLAW_GATEWAY_TOKEN is required when OPENCLAW_GATEWAY_ENABLED=true"
 		return health
 	}
 	if blocked := a.highRiskExecutionBlockers(); len(blocked) > 0 {
@@ -1163,6 +1241,367 @@ func (a *openClawAdapter) HealthCheck(ctx context.Context) Health {
 	health.Reason = "OpenClaw executable and workspace are available: " + filepath.Base(path) + "; " + strings.Join(a.ecosystemReadiness(), ", ")
 	health.LatencyMs = time.Since(started).Milliseconds()
 	return health
+}
+
+func (a *openClawAdapter) gatewayHealthCheck(ctx context.Context, started time.Time) Health {
+	health := Health{RuntimeID: "openclaw", Status: "unavailable", CheckedAt: time.Now().UTC()}
+	endpoint, err := openClawGatewayHealthURL(a.gatewayURL)
+	if err != nil {
+		health.Status = "blocked"
+		health.Reason = "OpenClaw Gateway health endpoint is invalid"
+		return health
+	}
+	timeout := a.timeout
+	if timeout <= 0 {
+		timeout = defaultTimeoutSeconds * time.Second
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		health.Status = "blocked"
+		health.Reason = "OpenClaw Gateway health request could not be created"
+		return health
+	}
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		health.Reason = "OpenClaw Gateway health endpoint is unavailable"
+		return health
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		health.Reason = "OpenClaw Gateway health endpoint returned an unexpected status"
+		return health
+	}
+	var payload struct {
+		OK     bool   `json:"ok"`
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4*1024)).Decode(&payload); err != nil || !payload.OK || strings.ToLower(strings.TrimSpace(payload.Status)) != "live" {
+		health.Reason = "OpenClaw Gateway health endpoint returned an unexpected health response"
+		return health
+	}
+	health.Status = "available"
+	if a.gatewayAuthenticatedDiscoveryEnabled {
+		if strings.TrimSpace(a.gatewayToken) == "" {
+			health.Reason = "OpenClaw Companion gateway health endpoint is live; authenticated operator.read discovery was skipped because OPENCLAW_GATEWAY_TOKEN is not configured"
+		} else if evidence, err := a.gatewayAuthenticatedOperatorReadDiscovery(ctx); err != nil {
+			health.Status = "unavailable"
+			health.Reason = "OpenClaw Gateway authenticated operator.read discovery was unavailable, malformed, or over-scoped"
+			return health
+		} else {
+			health.Version = evidence.Version
+			health.GatewayTaskLedger = evidence.TaskLedger
+			if evidence.TaskLedger != nil {
+				health.Reason = "OpenClaw Companion gateway health endpoint is live and authenticated operator.read discovery verified a bounded task-ledger summary; HAI closes the connection without enabling task execution"
+			} else {
+				health.Reason = "OpenClaw Companion gateway health endpoint is live and authenticated operator.read discovery was verified; HAI closes the connection without calling Gateway RPCs or enabling task execution"
+			}
+		}
+	} else if a.gatewayProtocolDiscoveryEnabled {
+		if err := a.gatewayProtocolChallengeCheck(ctx); err != nil {
+			health.Status = "unavailable"
+			health.Reason = "OpenClaw Gateway protocol challenge was unavailable or malformed"
+			return health
+		}
+		health.Reason = "OpenClaw Companion gateway health endpoint is live and its protocol challenge was verified; discovery is read-only and execution still requires HAI's approved OpenClaw CLI/workspace path"
+	} else {
+		health.Reason = "OpenClaw Companion gateway health endpoint is live; discovery is read-only and execution still requires HAI's approved OpenClaw CLI/workspace path"
+	}
+	health.LatencyMs = time.Since(started).Milliseconds()
+	return health
+}
+
+func (a *openClawAdapter) gatewayProtocolChallengeCheck(ctx context.Context) error {
+	connection, err := a.openClawGatewayPreAuthConnection(ctx)
+	if err != nil {
+		return err
+	}
+	return connection.Close()
+}
+
+type openClawGatewayReadOnlyEvidence struct {
+	Version    string
+	TaskLedger *GatewayTaskLedgerSummary
+}
+
+func (a *openClawAdapter) gatewayAuthenticatedOperatorReadDiscovery(ctx context.Context) (openClawGatewayReadOnlyEvidence, error) {
+	connection, err := a.openClawGatewayPreAuthConnection(ctx)
+	if err != nil {
+		return openClawGatewayReadOnlyEvidence{}, err
+	}
+	defer connection.Close()
+
+	requestID := uuid.NewString()
+	request := map[string]any{
+		"type":   "req",
+		"id":     requestID,
+		"method": "connect",
+		"params": map[string]any{
+			"minProtocol": openClawGatewayProtocolVersion,
+			"maxProtocol": openClawGatewayProtocolVersion,
+			"client": map[string]any{
+				"id":       "gateway-client",
+				"version":  "hai-openclaw-discovery/1",
+				"platform": "linux",
+				"mode":     "backend",
+			},
+			"role":        "operator",
+			"scopes":      []string{"operator.read"},
+			"caps":        []string{},
+			"commands":    []string{},
+			"permissions": map[string]bool{},
+			"auth":        map[string]string{"token": a.gatewayToken},
+			"locale":      "en-US",
+			"userAgent":   "hai-openclaw-discovery/1",
+		},
+	}
+	if err := websocket.JSON.Send(connection, request); err != nil {
+		return openClawGatewayReadOnlyEvidence{}, err
+	}
+
+	var response struct {
+		Type    string `json:"type"`
+		ID      string `json:"id"`
+		OK      bool   `json:"ok"`
+		Payload struct {
+			Type     string      `json:"type"`
+			Protocol json.Number `json:"protocol"`
+			Server   struct {
+				Version string `json:"version"`
+				ConnID  string `json:"connId"`
+			} `json:"server"`
+			Features json.RawMessage `json:"features"`
+			Snapshot json.RawMessage `json:"snapshot"`
+			Auth     struct {
+				Role   string   `json:"role"`
+				Scopes []string `json:"scopes"`
+			} `json:"auth"`
+			Policy struct {
+				MaxPayload       json.Number `json:"maxPayload"`
+				MaxBufferedBytes json.Number `json:"maxBufferedBytes"`
+			} `json:"policy"`
+		} `json:"payload"`
+	}
+	if err := websocket.JSON.Receive(connection, &response); err != nil {
+		return openClawGatewayReadOnlyEvidence{}, err
+	}
+	if response.Type != "res" || response.ID != requestID || !response.OK || response.Payload.Type != "hello-ok" {
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("unexpected authenticated gateway response")
+	}
+	protocol, err := response.Payload.Protocol.Int64()
+	serverVersion := strings.TrimSpace(response.Payload.Server.Version)
+	if err != nil || protocol != openClawGatewayProtocolVersion || !validGatewayEvidenceValue(serverVersion) || !validGatewayEvidenceValue(strings.TrimSpace(response.Payload.Server.ConnID)) || !presentGatewayJSON(response.Payload.Features) || !presentGatewayJSON(response.Payload.Snapshot) {
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("invalid authenticated gateway hello response")
+	}
+	maxPayload, err := response.Payload.Policy.MaxPayload.Int64()
+	if err != nil || maxPayload <= 0 {
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("invalid authenticated gateway payload policy")
+	}
+	maxBufferedBytes, err := response.Payload.Policy.MaxBufferedBytes.Int64()
+	if err != nil || maxBufferedBytes <= 0 {
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("invalid authenticated gateway buffer policy")
+	}
+	if response.Payload.Auth.Role != "operator" || len(response.Payload.Auth.Scopes) != 1 || response.Payload.Auth.Scopes[0] != "operator.read" {
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("authenticated gateway negotiated unexpected operator scope")
+	}
+	evidence := openClawGatewayReadOnlyEvidence{Version: serverVersion}
+	if !a.gatewayTaskLedgerDiscoveryEnabled {
+		return evidence, nil
+	}
+
+	var features struct {
+		Methods []string `json:"methods"`
+	}
+	if err := json.Unmarshal(response.Payload.Features, &features); err != nil || !containsExact(features.Methods, "tasks.list") {
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("gateway does not advertise read-only tasks.list")
+	}
+	ledgerRequestID := uuid.NewString()
+	ledgerRequest := map[string]any{
+		"type":   "req",
+		"id":     ledgerRequestID,
+		"method": "tasks.list",
+		"params": map[string]any{"limit": openClawGatewayTaskLedgerLimit},
+	}
+	if err := websocket.JSON.Send(connection, ledgerRequest); err != nil {
+		return openClawGatewayReadOnlyEvidence{}, err
+	}
+	var ledgerResponse struct {
+		Type    string          `json:"type"`
+		ID      string          `json:"id"`
+		OK      bool            `json:"ok"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := websocket.JSON.Receive(connection, &ledgerResponse); err != nil {
+		return openClawGatewayReadOnlyEvidence{}, err
+	}
+	if ledgerResponse.Type != "res" || ledgerResponse.ID != ledgerRequestID || !ledgerResponse.OK || !presentGatewayJSON(ledgerResponse.Payload) {
+		return openClawGatewayReadOnlyEvidence{}, fmt.Errorf("unexpected read-only task ledger response")
+	}
+	ledger, err := openClawGatewayTaskLedgerFromResponse(ledgerResponse.Payload)
+	if err != nil {
+		return openClawGatewayReadOnlyEvidence{}, err
+	}
+	evidence.TaskLedger = &ledger
+	return evidence, nil
+}
+
+func openClawGatewayTaskLedgerFromResponse(payload json.RawMessage) (GatewayTaskLedgerSummary, error) {
+	var response struct {
+		Tasks      json.RawMessage `json:"tasks"`
+		NextCursor *string         `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil || !presentGatewayJSON(response.Tasks) {
+		return GatewayTaskLedgerSummary{}, fmt.Errorf("invalid read-only task ledger payload")
+	}
+	var tasks []struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(response.Tasks, &tasks); err != nil || len(tasks) > openClawGatewayTaskLedgerLimit {
+		return GatewayTaskLedgerSummary{}, fmt.Errorf("invalid bounded read-only task ledger")
+	}
+	summary := GatewayTaskLedgerSummary{SampledTasks: len(tasks), StatusCounts: map[string]int{}}
+	for _, task := range tasks {
+		status := strings.TrimSpace(task.Status)
+		if !validOpenClawGatewayTaskStatus(status) {
+			return GatewayTaskLedgerSummary{}, fmt.Errorf("invalid read-only task status")
+		}
+		summary.StatusCounts[status]++
+	}
+	if response.NextCursor != nil && strings.TrimSpace(*response.NextCursor) != "" {
+		summary.Truncated = true
+	}
+	return summary, nil
+}
+
+func validOpenClawGatewayTaskStatus(status string) bool {
+	switch status {
+	case "queued", "running", "completed", "failed", "cancelled", "timed_out":
+		return true
+	default:
+		return false
+	}
+}
+
+func containsExact(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func presentGatewayJSON(value json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(value)
+	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
+}
+
+func validGatewayEvidenceValue(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *openClawAdapter) openClawGatewayPreAuthConnection(ctx context.Context) (*websocket.Conn, error) {
+	endpoint, err := openClawGatewayProtocolURL(a.gatewayURL)
+	if err != nil {
+		return nil, err
+	}
+	config, err := websocket.NewConfig(endpoint, "http://hai.local")
+	if err != nil {
+		return nil, err
+	}
+	timeout := a.timeout
+	if timeout <= 0 {
+		timeout = defaultTimeoutSeconds * time.Second
+	}
+	config.Dialer = &net.Dialer{Timeout: timeout}
+	connection, err := config.DialContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	connection.MaxPayloadBytes = 64 * 1024
+	if err := connection.SetDeadline(time.Now().Add(timeout)); err != nil {
+		_ = connection.Close()
+		return nil, err
+	}
+	var challenge struct {
+		Type    string `json:"type"`
+		Event   string `json:"event"`
+		Payload struct {
+			Nonce string      `json:"nonce"`
+			TS    json.Number `json:"ts"`
+		} `json:"payload"`
+	}
+	if err := websocket.JSON.Receive(connection, &challenge); err != nil {
+		_ = connection.Close()
+		return nil, err
+	}
+	if challenge.Type != "event" || challenge.Event != "connect.challenge" || strings.TrimSpace(challenge.Payload.Nonce) == "" {
+		_ = connection.Close()
+		return nil, fmt.Errorf("unexpected protocol challenge frame")
+	}
+	ts, err := challenge.Payload.TS.Int64()
+	if err != nil || ts < 0 {
+		_ = connection.Close()
+		return nil, fmt.Errorf("invalid protocol challenge timestamp")
+	}
+	return connection, nil
+}
+
+func openClawGatewayHealthURL(rawURL string) (string, error) {
+	endpoint, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" {
+		return "", fmt.Errorf("invalid gateway URL")
+	}
+	switch strings.ToLower(endpoint.Scheme) {
+	case "ws":
+		endpoint.Scheme = "http"
+	case "wss":
+		endpoint.Scheme = "https"
+	case "http", "https":
+	default:
+		return "", fmt.Errorf("unsupported gateway URL scheme")
+	}
+	endpoint.Path = "/health"
+	endpoint.RawPath = ""
+	endpoint.RawQuery = ""
+	endpoint.Fragment = ""
+	return endpoint.String(), nil
+}
+
+func openClawGatewayProtocolURL(rawURL string) (string, error) {
+	endpoint, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" || endpoint.User != nil {
+		return "", fmt.Errorf("invalid gateway URL")
+	}
+	switch strings.ToLower(endpoint.Scheme) {
+	case "http":
+		endpoint.Scheme = "ws"
+	case "https":
+		endpoint.Scheme = "wss"
+	case "ws", "wss":
+	default:
+		return "", fmt.Errorf("unsupported gateway URL scheme")
+	}
+	if endpoint.Path == "" {
+		endpoint.Path = "/"
+	}
+	endpoint.RawPath = ""
+	endpoint.RawQuery = ""
+	endpoint.Fragment = ""
+	return endpoint.String(), nil
 }
 
 func (a *openClawAdapter) ListSkills(context.Context) []Skill {
@@ -1210,11 +1649,10 @@ func (a *openClawAdapter) ExecuteTask(parent context.Context, task Task) Result 
 	if reason := a.workspaceBlockedReason(); reason != "" {
 		return Result{RuntimeID: "openclaw", Status: "blocked", Message: reason, ExitCode: -1}
 	}
-	if reason := a.validGatewayURL(); reason != "" {
-		return Result{RuntimeID: "openclaw", Status: "blocked", Message: reason, ExitCode: -1}
-	}
-	if a.gatewayEnabled && a.gatewayToken == "" {
-		return Result{RuntimeID: "openclaw", Status: "blocked", Message: "OPENCLAW_GATEWAY_TOKEN is required when OPENCLAW_GATEWAY_ENABLED=true", ExitCode: -1}
+	if a.gatewayEnabled {
+		if reason := a.validGatewayURL(); reason != "" {
+			return Result{RuntimeID: "openclaw", Status: "blocked", Message: reason, ExitCode: -1}
+		}
 	}
 	if blocked := a.highRiskExecutionBlockers(); len(blocked) > 0 {
 		return Result{RuntimeID: "openclaw", Status: "blocked", Message: strings.Join(blocked, "; "), ExitCode: -1}
@@ -1255,7 +1693,7 @@ func (a *openClawAdapter) ExecuteTask(parent context.Context, task Task) Result 
 		status = "failed"
 		message = safety.RedactSecrets(strings.TrimSpace(stderr.String()))
 		if message == "" {
-			message = err.Error()
+			message = "OpenClaw process failed without diagnostic output"
 		}
 		exitCode = -1
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -1553,7 +1991,10 @@ func (a *openClawAdapter) controls() []string {
 		controls = append(controls, "OpenClaw sandbox requirement disabled; use only with a disposable local workspace")
 	}
 	if a.gatewayEnabled {
-		controls = append(controls, "OpenClaw Gateway access requires OPENCLAW_GATEWAY_TOKEN and keeps Gateway scopes/pairing authoritative")
+		controls = append(controls, "health-only Gateway discovery is token-free; authenticated operator.read discovery requires OPENCLAW_GATEWAY_TOKEN and keeps Gateway scopes/pairing authoritative")
+	}
+	if a.gatewayTaskLedgerDiscoveryEnabled && !a.gatewayAuthenticatedDiscoveryEnabled {
+		controls = append(controls, "Gateway task-ledger discovery is blocked until OPENCLAW_GATEWAY_AUTH_DISCOVERY_ENABLED=true")
 	}
 	if a.messagesEnabled || len(a.channelsEnabled) > 0 {
 		controls = append(controls, "messaging surfaces are visible but outbound sends require separate HAI approval workflows")
@@ -2172,7 +2613,7 @@ func (a *openClawAdapter) openClawSetupChecklist(inventory openClawEcosystemInve
 	if inventory.status != "available" {
 		items = append(items, "set OPENCLAW_ECOSYSTEM_PATH to openclaw-main.zip or an extracted OpenClaw checkout for read-only inventory")
 	}
-	if a.gatewayEnabled {
+	if a.gatewayAuthenticatedDiscoveryEnabled || a.gatewayTaskLedgerDiscoveryEnabled {
 		items = append(items, "set scoped OPENCLAW_GATEWAY_TOKEN and constrain OPENCLAW_GATEWAY_URL with AGENT_RUNTIME_ALLOWED_HOSTS")
 	}
 	if !a.enabled {
@@ -3053,6 +3494,9 @@ func (a *openClawAdapter) validGatewayURL() string {
 	parsed, err := url.Parse(a.gatewayURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "OPENCLAW_GATEWAY_URL must be an absolute URL"
+	}
+	if parsed.User != nil {
+		return "OPENCLAW_GATEWAY_URL must not include credentials; use OPENCLAW_GATEWAY_TOKEN"
 	}
 	switch parsed.Scheme {
 	case "ws", "wss", "http", "https":
