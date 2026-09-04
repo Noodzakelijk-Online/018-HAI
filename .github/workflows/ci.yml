@@ -130,7 +130,7 @@ jobs:
       - name: Production dependency audit
         run: |
           for attempt in 1 2 3; do
-            if npm audit --omit=dev --audit-level=high; then
+            if timeout 90s npm audit --omit=dev --audit-level=high; then
               exit 0
             fi
             if [ "$attempt" -eq 3 ]; then
