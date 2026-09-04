@@ -240,6 +240,26 @@ describe('ConnectedSourcesComponent pursuit handoff', () => {
     expect(component.sourceCanConnect()).toBeTrue();
   });
 
+  it('applies connector defaults through the reactive form control without ngModel events', () => {
+    const { component, sourceService } = createComponent();
+    sourceService.connectors.and.returnValue(of([]));
+    sourceService.sources.and.returnValue(of([]));
+    sourceService.extractions.and.returnValue(of({ items: [], totalCount: 0, limit: 100 }));
+    sourceService.auditLogs.and.returnValue(of([]));
+    sourceService.syncJobs.and.returnValue(of([]));
+    component.ngOnInit();
+
+    component.sourceForm.patchValue({ connectorKey: 'github' });
+
+    expect(component.sourceForm.value).toEqual(jasmine.objectContaining({
+      connectorKey: 'github',
+      name: 'GitHub repository',
+      syncTarget: 'Noodzakelijk-Online/018-HAI',
+      localOnly: false,
+    }));
+    component.ngOnDestroy();
+  });
+
   it('does not prefill a manual import with synthetic source content', () => {
     const { component } = createComponent();
 

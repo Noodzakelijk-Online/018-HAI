@@ -107,6 +107,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   private lastSelectedConnectorKey = 'local-folder';
   private refreshSubscription?: Subscription;
   private connectorSubscription?: Subscription;
+  private connectorChangeSubscription?: Subscription;
   private connectionHealthSubscription?: Subscription;
 
   sourceForm: FormGroup = this.fb.group({
@@ -178,6 +179,9 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.themeMode = this.themeService.mode();
+    this.connectorChangeSubscription = this.sourceForm.get('connectorKey')?.valueChanges.subscribe(
+      (connectorKey) => this.connectorChanged(String(connectorKey || ''))
+    );
     this.updateSourceActions();
     this.refresh();
   }
@@ -185,6 +189,7 @@ export class ConnectedSourcesComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.refreshSubscription?.unsubscribe();
     this.connectorSubscription?.unsubscribe();
+    this.connectorChangeSubscription?.unsubscribe();
     this.connectionHealthSubscription?.unsubscribe();
   }
 

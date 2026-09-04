@@ -152,7 +152,7 @@
             <form nz-form [formGroup]="sourceForm" class="operation-form" data-testid="source-connect-form">
               <label>
                 <span>Connector</span>
-                <nz-select formControlName="connectorKey" (ngModelChange)="connectorChanged($event)" data-testid="source-connector">
+                <nz-select formControlName="connectorKey" data-testid="source-connector">
                   <nz-option
                     *ngFor="let connector of connectors"
                     [nzValue]="connector.connectorKey"
